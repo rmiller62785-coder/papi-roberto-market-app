@@ -1,58 +1,11 @@
-type ChartResult = {
-  meta?: { currency?: string; exchangeTimezoneName?: string; regularMarketPrice?: number; regularMarketTime?: number; dataGranularity?: string };
-  timestamp?: number[];
-  indicators?: { quote?: Array<{ high?: Array<number | null>; low?: Array<number | null>; close?: Array<number | null>; volume?: Array<number | null> }> };
-};
+type Quote={high?:Array<number|null>;low?:Array<number|null>;open?:Array<number|null>;close?:Array<number|null>;volume?:Array<number|null>};
+type Chart={meta?:{regularMarketPrice?:number;previousClose?:number;chartPreviousClose?:number;marketState?:string};timestamp?:number[];indicators?:{quote?:Quote[]}};
+const headers={"User-Agent":"Mozilla/5.0 NVDA-Live-Structure/2.0",Accept:"application/json"};
+async function yahoo(interval:string,range:string,prepost=true){const u=new URL("https://query1.finance.yahoo.com/v8/finance/chart/NVDA");u.searchParams.set("interval",interval);u.searchParams.set("range",range);u.searchParams.set("includePrePost",String(prepost));const r=await fetch(u,{headers,cache:"no-store"});if(!r.ok)throw new Error("public feed failed");const j=await r.json() as {chart?:{result?:Chart[]}};const x=j.chart?.result?.[0];if(!x)throw new Error("empty feed");return x}
+function ny(epoch:number){return Object.fromEntries(new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(new Date(epoch*1000)).map(p=>[p.type,p.value]))}
+function valid(v:unknown):v is number{return typeof v==="number"&&Number.isFinite(v)}
+function sessionLabel(){const p=ny(Date.now()/1000),n=Number(p.hour)*60+Number(p.minute);return n<240?"CLOSED":n<570?"PREMARKET":n<960?"MARKET OPEN":n<1200?"AFTER-HOURS":"CLOSED"}
 
-const demoDaily = [
-  { date: "Jul 01", high: 199.23, low: 193.72, close: 197.92 },
-  { date: "Jul 02", high: 200.04, low: 192.41, close: 194.43 },
-  { date: "Jul 06", high: 197.14, low: 192.65, close: 196.43 },
-  { date: "Jul 07", high: 198.40, low: 191.14, close: 196.93 },
-];
+async function massiveToday(key:string){const date=new Intl.DateTimeFormat("en-CA",{timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());const base="https://api.massive.com";const [aggR,lastR]=await Promise.all([fetch(`${base}/v2/aggs/ticker/NVDA/range/1/minute/${date}/${date}?adjusted=true&sort=asc&limit=50000&apiKey=${encodeURIComponent(key)}`,{cache:"no-store"}),fetch(`${base}/v2/last/trade/NVDA?apiKey=${encodeURIComponent(key)}`,{cache:"no-store"})]);if(!aggR.ok||!lastR.ok)throw new Error("Massive feed unavailable");const agg=await aggR.json() as {results?:Array<{t:number;o:number;h:number;l:number;c:number;v:number}>};const last=await lastR.json() as {results?:{p?:number;t?:number}};return{bars:(agg.results??[]).map(x=>({time:x.t,open:x.o,high:x.h,low:x.l,close:x.c,volume:x.v})),price:last.results?.p??agg.results?.at(-1)?.c??null,asOf:last.results?.t?new Date(last.results.t/1e6).toISOString():new Date().toISOString()}}
 
-async function chart(symbol: string, interval: string, range: string, prepost = false): Promise<ChartResult> {
-  const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`);
-  url.searchParams.set("interval", interval);
-  url.searchParams.set("range", range);
-  url.searchParams.set("includePrePost", String(prepost));
-  const response = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 Aperture/1.0", Accept: "application/json" }, cache: "no-store" });
-  if (!response.ok) throw new Error(`Feed returned ${response.status}`);
-  const json = await response.json() as { chart?: { result?: ChartResult[] } };
-  const result = json.chart?.result?.[0];
-  if (!result) throw new Error("No quote data");
-  return result;
-}
-
-function easternParts(epoch: number) {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date(epoch * 1000));
-  return Object.fromEntries(parts.map((p) => [p.type, p.value]));
-}
-
-export async function GET(request: Request) {
-  const symbol = (new URL(request.url).searchParams.get("symbol") || "NVDA").toUpperCase().replace(/[^A-Z.-]/g, "");
-  try {
-    const [dailyChart, minuteChart] = await Promise.all([chart(symbol, "1d", "1mo"), chart(symbol, "1m", "1d", true)]);
-    const dailyQuote = dailyChart.indicators?.quote?.[0];
-    const daily = (dailyChart.timestamp ?? []).map((time, i) => ({
-      date: new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "2-digit" }).format(new Date(time * 1000)),
-      high: dailyQuote?.high?.[i], low: dailyQuote?.low?.[i], close: dailyQuote?.close?.[i],
-    })).filter((bar): bar is { date: string; high: number; low: number; close: number } => [bar.high, bar.low, bar.close].every((v) => typeof v === "number"));
-    const quote = minuteChart.indicators?.quote?.[0];
-    const rows = (minuteChart.timestamp ?? []).map((time, i) => ({ time, parts: easternParts(time), high: quote?.high?.[i], low: quote?.low?.[i], close: quote?.close?.[i], volume: quote?.volume?.[i] ?? 0 })).filter((row) => typeof row.close === "number");
-    const today = rows.at(-1)?.parts;
-    const sameDay = (r: typeof rows[number]) => r.parts.year === today?.year && r.parts.month === today?.month && r.parts.day === today?.day;
-    const pre = rows.filter((r) => sameDay(r) && Number(r.parts.hour) < 9 || sameDay(r) && Number(r.parts.hour) === 9 && Number(r.parts.minute) < 30);
-    const first = rows.find((r) => sameDay(r) && Number(r.parts.hour) === 9 && Number(r.parts.minute) === 30);
-    const last = rows.at(-1);
-    return Response.json({
-      symbol, asOf: new Date().toISOString(), currency: dailyChart.meta?.currency ?? "USD", exchangeTimezone: dailyChart.meta?.exchangeTimezoneName ?? "America/New_York",
-      daily: daily.slice(-8),
-      premarket: { high: pre.length ? Math.max(...pre.map((r) => r.high ?? r.close!)) : null, low: pre.length ? Math.min(...pre.map((r) => r.low ?? r.close!)) : null, price: pre.at(-1)?.close ?? last?.close ?? minuteChart.meta?.regularMarketPrice ?? null, volume: pre.reduce((sum, r) => sum + r.volume, 0), asOf: pre.at(-1) ? new Date(pre.at(-1)!.time * 1000).toISOString() : null },
-      firstMinute: { close: first?.close ?? null, volume: first?.volume ?? 0, asOf: first ? new Date(first.time * 1000).toISOString() : null },
-      source: "Public market feed · verify with broker",
-    }, { headers: { "Cache-Control": "no-store" } });
-  } catch {
-    return Response.json({ symbol, asOf: new Date().toISOString(), currency: "USD", exchangeTimezone: "America/New_York", daily: demoDaily, premarket: { high: 197.42, low: 195.88, price: 196.74, volume: 1843200, asOf: null }, firstMinute: { close: null, volume: 0, asOf: null }, source: "Sample data", demo: true }, { headers: { "Cache-Control": "no-store" } });
-  }
-}
+export async function GET(){try{const key=(globalThis as unknown as {process?:{env?:Record<string,string>}}).process?.env?.MASSIVE_API_KEY;const [dailyChart,minuteChart]=await Promise.all([yahoo("1d","1mo",false),yahoo("1m","1d",true)]);const dq=dailyChart.indicators?.quote?.[0],mq=minuteChart.indicators?.quote?.[0];const daily=(dailyChart.timestamp??[]).map((t,i)=>({date:new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",month:"short",day:"2-digit"}).format(new Date(t*1000)),high:dq?.high?.[i],low:dq?.low?.[i],close:dq?.close?.[i]})).filter((x):x is {date:string;high:number;low:number;close:number}=>valid(x.high)&&valid(x.low)&&valid(x.close)).slice(-10);let bars=(minuteChart.timestamp??[]).map((t,i)=>({time:t*1000,open:mq?.open?.[i],high:mq?.high?.[i],low:mq?.low?.[i],close:mq?.close?.[i],volume:mq?.volume?.[i]??0})).filter((x):x is {time:number;open:number;high:number;low:number;close:number;volume:number}=>valid(x.open)&&valid(x.high)&&valid(x.low)&&valid(x.close));let price=minuteChart.meta?.regularMarketPrice??bars.at(-1)?.close??null,asOf=bars.length?new Date(bars.at(-1)!.time).toISOString():new Date().toISOString(),source="Public consolidated feed · may be delayed",realtime=false;if(key){try{const live=await massiveToday(key);if(live.bars.length)bars=live.bars;if(valid(live.price))price=live.price;asOf=live.asOf;source="Massive SIP consolidated trades";realtime=true}catch{/* keep resilient public fallback */}}const parts=bars.map(b=>({b,p:ny(b.time/1000)})),today=parts.at(-1)?.p;const same=(p:Record<string,string>)=>p.year===today?.year&&p.month===today?.month&&p.day===today?.day;const pre=parts.filter(({p})=>same(p)&&(Number(p.hour)<9||(Number(p.hour)===9&&Number(p.minute)<30))).map(x=>x.b),regular=parts.filter(({p})=>same(p)&&((Number(p.hour)===9&&Number(p.minute)>=30)||(Number(p.hour)>9&&Number(p.hour)<16))).map(x=>x.b),first=parts.find(({p})=>same(p)&&Number(p.hour)===9&&Number(p.minute)===30)?.b;return Response.json({symbol:"NVDA",price,previousClose:daily.at(-2)?.close??minuteChart.meta?.chartPreviousClose??minuteChart.meta?.previousClose??null,asOf,session:sessionLabel(),source,realtime,bars,daily,day:{open:regular.at(0)?.open??bars.at(0)?.open??null,high:regular.length?Math.max(...regular.map(x=>x.high)):bars.length?Math.max(...bars.map(x=>x.high)):null,low:regular.length?Math.min(...regular.map(x=>x.low)):bars.length?Math.min(...bars.map(x=>x.low)):null,volume:regular.reduce((s,x)=>s+x.volume,0)},premarket:{high:pre.length?Math.max(...pre.map(x=>x.high)):null,low:pre.length?Math.min(...pre.map(x=>x.low)):null,volume:pre.reduce((s,x)=>s+x.volume,0)},firstMinute:{close:first?.close??null,volume:first?.volume??0}},{headers:{"Cache-Control":"no-store, no-cache, must-revalidate","CDN-Cache-Control":"no-store"}})}catch(e){return Response.json({error:"Market data unavailable",detail:e instanceof Error?e.message:"unknown"},{status:503,headers:{"Cache-Control":"no-store"}})}}

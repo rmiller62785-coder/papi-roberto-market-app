@@ -1,180 +1,40 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-type DailyBar = { date: string; high: number; low: number; close: number };
-type MarketPayload = {
-  symbol: string;
-  asOf: string;
-  currency: string;
-  exchangeTimezone: string;
-  delayedBy?: number;
-  daily: DailyBar[];
-  premarket: { high: number | null; low: number | null; price: number | null; volume: number; asOf: string | null };
-  firstMinute: { close: number | null; volume: number; asOf: string | null };
-  source: string;
-  demo?: boolean;
-};
+type Bar = { time: number; open: number; high: number; low: number; close: number; volume: number };
+type Daily = { date: string; high: number; low: number; close: number };
+type Payload = { symbol: "NVDA"; price: number | null; previousClose: number | null; asOf: string; session: string; source: string; realtime: boolean; bars: Bar[]; daily: Daily[]; day: { open: number|null; high:number|null; low:number|null; volume:number }; premarket:{high:number|null;low:number|null;volume:number}; firstMinute:{close:number|null;volume:number} };
 
-const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
-const num = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const money = (v:number|null|undefined) => Number.isFinite(v) ? `$${v!.toFixed(2)}` : "—";
+const compact = new Intl.NumberFormat("en-US",{notation:"compact",maximumFractionDigits:1});
+function ema(values:number[], period:number){ if(!values.length)return[]; const k=2/(period+1); const out=[values[0]]; for(let i=1;i<values.length;i++)out.push(values[i]*k+out[i-1]*(1-k)); return out; }
 
-function fmt(value: number | null | undefined) {
-  return value == null || !Number.isFinite(value) ? "—" : usd.format(value);
+function SessionChart({bars,ema9,ema21}:{bars:Bar[];ema9:number[];ema21:number[]}){
+  const canvas=useRef<HTMLCanvasElement>(null);
+  useEffect(()=>{ const el=canvas.current;if(!el||bars.length<2)return; const rect=el.getBoundingClientRect(),dpr=window.devicePixelRatio||1;el.width=rect.width*dpr;el.height=rect.height*dpr;const c=el.getContext("2d");if(!c)return;c.scale(dpr,dpr);const w=rect.width,h=rect.height,p={l:12,r:58,t:15,b:24};const vals=[...bars.map(b=>b.close),...ema9,...ema21];const min=Math.min(...vals),max=Math.max(...vals),span=Math.max(max-min,.01);const x=(i:number)=>p.l+i*(w-p.l-p.r)/(bars.length-1);const y=(v:number)=>p.t+(max-v)*(h-p.t-p.b)/span;c.clearRect(0,0,w,h);c.strokeStyle="rgba(118,151,176,.14)";c.lineWidth=1;for(let i=0;i<5;i++){const yy=p.t+i*(h-p.t-p.b)/4;c.beginPath();c.moveTo(p.l,yy);c.lineTo(w-p.r,yy);c.stroke();c.fillStyle="#8ea5b7";c.font="10px system-ui";c.fillText((max-i*span/4).toFixed(2),w-p.r+8,yy+3)}const line=(arr:number[],color:string,width:number)=>{c.beginPath();arr.forEach((v,i)=>i?c.lineTo(x(i),y(v)):c.moveTo(x(i),y(v)));c.strokeStyle=color;c.lineWidth=width;c.stroke()};line(bars.map(b=>b.close),"#f4f8fb",1.4);line(ema21,"#a98cff",1.7);line(ema9,"#f5c75b",2);const last=bars.at(-1)!;c.fillStyle="#f5c75b";c.beginPath();c.arc(x(bars.length-1),y(last.close),4,0,Math.PI*2);c.fill();},[bars,ema9,ema21]);
+  return <canvas ref={canvas} aria-label="NVDA full-session price chart with EMA 9 and EMA 21"/>;
 }
 
-export default function Home() {
-  const [data, setData] = useState<MarketPayload | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [days, setDays] = useState(4);
-  const [account, setAccount] = useState(25000);
-  const [riskPct, setRiskPct] = useState(0.5);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const response = await fetch("/api/market?symbol=NVDA", { cache: "no-store" });
-      if (!response.ok) throw new Error("Market feed is temporarily unavailable.");
-      setData(await response.json());
-      setLastRefresh(new Date());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not refresh market data.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const saved = localStorage.getItem("nvda-plan-settings");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setAccount(Number(parsed.account) || 25000);
-        setRiskPct(Number(parsed.riskPct) || 0.5);
-        setDays(parsed.days === 3 ? 3 : 4);
-      } catch { /* use defaults */ }
-    }
-    refresh();
-    const timer = window.setInterval(refresh, 60_000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
-
-  useEffect(() => {
-    localStorage.setItem("nvda-plan-settings", JSON.stringify({ account, riskPct, days }));
-  }, [account, riskPct, days]);
-
-  const plan = useMemo(() => {
-    if (!data?.daily.length) return null;
-    const bars = data.daily.slice(-days);
-    const high = Math.max(...bars.map((bar) => bar.high));
-    const low = Math.min(...bars.map((bar) => bar.low));
-    const close = bars[bars.length - 1].close;
-    const blockPivot = (high + low + close) / 3;
-    const weights = bars.map((_, index) => index + 1);
-    const weightTotal = weights.reduce((a, b) => a + b, 0);
-    const weightedPivot = bars.reduce((sum, bar, index) => sum + ((bar.high + bar.low + bar.close) / 3) * weights[index], 0) / weightTotal;
-    const lowerThird = low + (high - low) / 3;
-    const upperThird = low + ((high - low) * 2) / 3;
-    const pivotLow = Math.min(blockPivot, weightedPivot);
-    const pivotHigh = Math.max(blockPivot, weightedPivot);
-    const observed = data.firstMinute.close ?? data.premarket.price;
-    let signal: "LONG" | "WAIT" | "DEFENSIVE" | "PENDING" = "PENDING";
-    if (observed != null) {
-      signal = observed > upperThird ? "LONG" : observed < lowerThird ? "DEFENSIVE" : "WAIT";
-    }
-    const entry = signal === "LONG" ? Math.max(upperThird, observed ?? upperThird) : upperThird;
-    const stop = upperThird - Math.max(0.25, (high - low) * 0.03);
-    const riskDollars = account * (riskPct / 100);
-    const shares = Math.max(0, Math.floor(Math.min(account / entry, riskDollars / Math.max(entry - stop, 0.01))));
-    return { bars, high, low, close, blockPivot, weightedPivot, lowerThird, upperThird, pivotLow, pivotHigh, signal, observed, entry, stop, shares, riskDollars };
-  }, [data, days, account, riskPct]);
-
-  const signalCopy = plan?.signal === "LONG"
-    ? { eyebrow: "Bullish confirmation", title: "Upper third reclaimed", body: `Price is above ${fmt(plan.upperThird)}. Look for a hold or clean retest before entering; do not chase an opening spike.` }
-    : plan?.signal === "DEFENSIVE"
-      ? { eyebrow: "Capital protection", title: "Lower third lost", body: `Price is below ${fmt(plan.lowerThird)}. For a cash-only long plan, stand aside rather than forcing a trade.` }
-      : plan?.signal === "WAIT"
-        ? { eyebrow: "No-trade zone", title: "Patience is the position", body: `Price is inside the middle third. Watch ${fmt(plan.pivotLow)}–${fmt(plan.pivotHigh)} for a reaction and wait for direction.` }
-        : { eyebrow: "Before the bell", title: "Waiting for 9:31 AM", body: "Premarket builds the context. The first completed regular-session minute confirms the signal." };
-
-  return (
-    <main>
-      <header className="topbar">
-        <a className="brand" href="#top" aria-label="Aperture home"><span className="brandMark">A</span><span>APERTURE</span></a>
-        <div className="marketState"><span className="pulse" /> NVDA MORNING PLAN</div>
-        <button className="refresh" onClick={refresh} disabled={loading}>{loading ? "Refreshing…" : "Refresh data"}</button>
-      </header>
-
-      <section className="hero" id="top">
-        <div>
-          <p className="kicker">Automated opening analysis · Cash shares only</p>
-          <h1>Know your level.<br /><em>Then wait.</em></h1>
-          <p className="lede">A disciplined NVDA plan built from recent official-session structure, premarket pressure, and the first completed minute after the open.</p>
-        </div>
-        <div className={`signalCard ${plan?.signal?.toLowerCase() ?? "pending"}`}>
-          <div className="signalTop"><span>{signalCopy.eyebrow}</span><span>{plan?.signal ?? "PENDING"}</span></div>
-          <h2>{signalCopy.title}</h2>
-          <p>{signalCopy.body}</p>
-          <div className="observed"><span>Observed price</span><strong>{fmt(plan?.observed)}</strong></div>
-        </div>
-      </section>
-
-      {error && <div className="alert">{error} <button onClick={refresh}>Try again</button></div>}
-      {data?.demo && <div className="demo">Live feed unavailable — showing clearly labeled sample data so the planner remains usable.</div>}
-
-      <section className="levels" aria-label="Key trading levels">
-        <article><span>Structural high</span><strong>{fmt(plan?.high)}</strong><small>Profit reference</small></article>
-        <article className="accent"><span>Upper third</span><strong>{fmt(plan?.upperThird)}</strong><small>Long trigger</small></article>
-        <article><span>Pivot cluster</span><strong>{fmt(plan?.pivotLow)}–{fmt(plan?.pivotHigh)}</strong><small>Decision zone</small></article>
-        <article className="red"><span>Lower third</span><strong>{fmt(plan?.lowerThird)}</strong><small>Stand-aside line</small></article>
-        <article><span>Structural low</span><strong>{fmt(plan?.low)}</strong><small>Range floor</small></article>
-      </section>
-
-      <section className="grid">
-        <div className="panel mapPanel">
-          <div className="panelHead"><div><p className="sectionNo">01 / RANGE MAP</p><h3>The market in thirds</h3></div><div className="segmented" aria-label="Lookback days"><button className={days === 3 ? "active" : ""} onClick={() => setDays(3)}>3 days</button><button className={days === 4 ? "active" : ""} onClick={() => setDays(4)}>4 days</button></div></div>
-          <div className="rangeMap">
-            <div className="zone upper"><span>UPPER THIRD · BUYER CONTROL</span><b>{fmt(plan?.high)}</b><b>{fmt(plan?.upperThird)}</b></div>
-            <div className="zone middle"><span>MIDDLE THIRD · ROTATION</span><b>{fmt(plan?.upperThird)}</b><div className="pivotLine">PIVOT {fmt(plan?.pivotLow)}–{fmt(plan?.pivotHigh)}</div><b>{fmt(plan?.lowerThird)}</b></div>
-            <div className="zone lower"><span>LOWER THIRD · STRUCTURAL WEAKNESS</span><b>{fmt(plan?.lowerThird)}</b><b>{fmt(plan?.low)}</b></div>
-          </div>
-        </div>
-
-        <aside className="panel tape">
-          <p className="sectionNo">02 / LIVE CONTEXT</p><h3>Premarket tape</h3>
-          <dl>
-            <div><dt>Premarket high</dt><dd>{fmt(data?.premarket.high)}</dd></div>
-            <div><dt>Current / last</dt><dd>{fmt(data?.premarket.price)}</dd></div>
-            <div><dt>Premarket low</dt><dd>{fmt(data?.premarket.low)}</dd></div>
-            <div><dt>Premarket volume</dt><dd>{data ? num.format(data.premarket.volume) : "—"}</dd></div>
-            <div className="firstMinute"><dt>9:30–9:31 close</dt><dd>{fmt(data?.firstMinute.close)}</dd></div>
-          </dl>
-          <p className="source">Source: {data?.source ?? "Connecting…"}<br />{data?.asOf ? `Updated ${new Date(data.asOf).toLocaleString()}` : ""}</p>
-        </aside>
-      </section>
-
-      <section className="grid lowerGrid">
-        <div className="panel">
-          <p className="sectionNo">03 / POSITION SIZER</p><h3>Risk before reward</h3>
-          <div className="inputs"><label>Cash available<input type="number" min="0" value={account} onChange={(e) => setAccount(Number(e.target.value))} /></label><label>Max risk<input type="number" min="0.1" max="5" step="0.1" value={riskPct} onChange={(e) => setRiskPct(Number(e.target.value))} /><span>%</span></label></div>
-          <div className="sizing"><div><span>Maximum shares</span><strong>{plan?.shares ?? 0}</strong></div><div><span>Planned entry</span><strong>{fmt(plan?.entry)}</strong></div><div><span>Protective stop</span><strong>{fmt(plan?.stop)}</strong></div><div><span>Max planned loss</span><strong>{fmt(plan?.riskDollars)}</strong></div></div>
-          <p className="fineprint">Sizing uses the smaller of cash capacity and risk capacity. Slippage can increase realized loss.</p>
-        </div>
-        <div className="panel checklist">
-          <p className="sectionNo">04 / EXECUTION CHECKLIST</p><h3>Permission to trade</h3>
-          <ol><li><span>1</span><div><b>Before 9:30</b><p>Map the thirds and premarket location. No order yet.</p></div></li><li><span>2</span><div><b>At 9:31</b><p>Wait for the first one-minute candle to complete.</p></div></li><li><span>3</span><div><b>Confirm, don’t predict</b><p>Only consider a long above the upper-third line with a hold or retest.</p></div></li><li><span>4</span><div><b>Honor the stop</b><p>Size first. If the setup fails, exit without negotiation.</p></div></li></ol>
-        </div>
-      </section>
-
-      <section className="history panel">
-        <div><p className="sectionNo">INPUT DATA</p><h3>{days}-session calculation</h3></div>
-        <div className="tableWrap"><table><thead><tr><th>Session</th><th>High</th><th>Low</th><th>Close</th><th>Daily pivot</th></tr></thead><tbody>{plan?.bars.map((bar) => <tr key={bar.date}><td>{bar.date}</td><td>{fmt(bar.high)}</td><td>{fmt(bar.low)}</td><td>{fmt(bar.close)}</td><td>{fmt((bar.high + bar.low + bar.close) / 3)}</td></tr>)}</tbody></table></div>
-      </section>
-
-      <footer><div><b>APERTURE</b><span>Opening discipline for active investors.</span></div><p>Educational planning tool only. Not investment advice. Quotes may be delayed or incomplete; verify all prices with your broker before trading.</p><span>{lastRefresh ? `Auto-refreshing every minute · Last checked ${lastRefresh.toLocaleTimeString()}` : "Connecting…"}</span></footer>
-    </main>
-  );
+export default function Home(){
+ const [data,setData]=useState<Payload|null>(null),[error,setError]=useState(""),[ticks,setTicks]=useState(0);const [days,setDays]=useState<3|4>(4);
+ const refresh=useCallback(async()=>{try{const r=await fetch(`/api/market?symbol=NVDA&t=${Date.now()}`,{cache:"no-store"});if(!r.ok)throw new Error();setData(await r.json());setError("");setTicks(x=>x+1)}catch{setError("Feed retrying automatically")}},[]);
+ useEffect(()=>{refresh();const id=window.setInterval(refresh,1000);return()=>clearInterval(id)},[refresh]);
+ const analysis=useMemo(()=>{if(!data?.daily.length)return null;const d=data.daily.slice(-days),closes=data.bars.map(b=>b.close),e9=ema(closes,9),e21=ema(closes,21),last=closes.at(-1)??data.price??0,prev=closes.at(-2)??last;const high=Math.max(...d.map(x=>x.high)),low=Math.min(...d.map(x=>x.low)),close=d.at(-1)!.close,block=(high+low+close)/3,weights=d.map((_,i)=>i+1),weighted=d.reduce((s,b,i)=>s+((b.high+b.low+b.close)/3)*weights[i],0)/weights.reduce((a,b)=>a+b,0),lo=low+(high-low)/3,hi=low+2*(high-low)/3;const fast=e9.at(-1)??last,slow=e21.at(-1)??last,fastPrev=e9.at(-4)??fast;const bullish=last>fast&&fast>slow&&fast>fastPrev,bearish=last<fast&&fast<slow&&fast<fastPrev;const regime=bullish?"BUYERS IN CONTROL":bearish?"SELLERS IN CONTROL":"MIXED / ROTATING";const tone=bullish?"up":bearish?"down":"flat";const zone=last>hi?"UPPER THIRD":last<lo?"LOWER THIRD":"MIDDLE THIRD";return{d,e9,e21,last,change:last-(data.previousClose??last),changePct:(last/(data.previousClose??last)-1)*100,high,low,block,weighted,lo,hi,fast,slow,spread:fast-slow,slope:fast-fastPrev,regime,tone,zone,minuteMove:last-prev}},[data,days]);
+ return <main className="app-shell">
+  <header className="topbar"><div className="brand-block"><div className="brand-mark">N</div><div><div className="eyebrow">PAPI ROBERTO MARKET INTELLIGENCE</div><h1>Nvidia <span>Live Structure</span></h1></div></div><div className="top-status"><div className={`status-chip ${data?.realtime?"ok":""}`}><i className="status-dot"/><strong>{data?.realtime?"SIP REAL-TIME":"PUBLIC FEED"}</strong></div><div className="status-chip"><strong>1 SEC</strong> refresh</div><div className="status-chip"><strong>{data?.session??"—"}</strong></div></div></header>
+  {error&&<div className="feed-alert">{error}</div>}
+  <section className="market-grid">
+   <article className="panel market-card"><div className="panel-kicker">Live reference price</div><div className="market-price">{money(analysis?.last)}</div><div className={`market-change ${analysis?.change&&analysis.change>0?"up":analysis?.change&&analysis.change<0?"down":""}`}>{analysis?`${analysis.change>=0?"+":""}${analysis.change.toFixed(2)} · ${analysis.changePct>=0?"+":""}${analysis.changePct.toFixed(2)}% vs prior close`:"Connecting…"}</div><div className="quote-row"><span>Open</span><strong>{money(data?.day.open)}</strong><span>High</span><strong>{money(data?.day.high)}</strong><span>Low</span><strong>{money(data?.day.low)}</strong><span>Volume</span><strong>{data?compact.format(data.day.volume):"—"}</strong></div><div className="market-meta">{data?.source??"Connecting to NVDA feed…"}<br/>{data?.asOf?`Last observation ${new Date(data.asOf).toLocaleTimeString()}`:""}</div><div className="target-box"><div><span>Structural zone</span><strong>{analysis?.zone??"—"}</strong></div><div><span>EMA regime</span><strong className={analysis?.tone}>{analysis?.regime??"—"}</strong></div></div></article>
+   <article className="panel chart-card"><div className="panel-heading"><div><div className="panel-kicker">Today · complete session</div><h2>NVDA price action</h2></div><div className="chart-legend"><span><i className="price-dot"/>Price</span><span><i className="ema9-dot"/>EMA 9</span><span><i className="ema21-dot"/>EMA 21</span></div></div><div className="canvas-wrap">{data?.bars.length?<SessionChart bars={data.bars} ema9={analysis?.e9??[]} ema21={analysis?.e21??[]}/>:<div className="loading">Waiting for session bars…</div>}</div><div className="chart-foot"><span>Premarket through after-hours when available</span><span>{data?.bars.length??0} one-minute bars</span></div></article>
+   <article className={`panel ema-card ${analysis?.tone??"flat"}`}><div className="panel-kicker">EMA behavior · descriptive, not forecast</div><div className="ema-status">{analysis?.regime??"CALCULATING"}</div><p className="ema-explain">{analysis?.tone==="up"?"Price is above both averages, EMA 9 is above EMA 21, and the fast average is rising. Buyers currently have the cleaner short-term structure.":analysis?.tone==="down"?"Price is below both averages, EMA 9 is below EMA 21, and the fast average is falling. Sellers currently control the short-term structure.":"The averages and price are not aligned. Momentum is rotating; wait for price and both EMA slopes to agree."}</p><div className="ema-stack"><div><span>EMA 9 · fast</span><strong>{money(analysis?.fast)}</strong><small className={analysis&&analysis.slope>0?"up":"down"}>{analysis?`${analysis.slope>=0?"▲":"▼"} ${Math.abs(analysis.slope).toFixed(3)} slope`:"—"}</small></div><div><span>EMA 21 · trend</span><strong>{money(analysis?.slow)}</strong><small>slower confirmation</small></div><div><span>Fast / slow spread</span><strong>{analysis?`${analysis.spread>=0?"+":""}${analysis.spread.toFixed(3)}`:"—"}</strong><small>{analysis&&Math.abs(analysis.spread)<.08?"compressed":"separated"}</small></div><div><span>Current minute</span><strong>{analysis?`${analysis.minuteMove>=0?"+":""}${analysis.minuteMove.toFixed(2)}`:"—"}</strong><small>vs prior minute</small></div></div></article>
+  </section>
+  <section className="section-block"><div className="section-heading"><div><div className="panel-kicker">Structure before action</div><h2>Pivot and rule-of-thirds map</h2></div><div className="day-switch"><button className={days===3?"active":""} onClick={()=>setDays(3)}>3 sessions</button><button className={days===4?"active":""} onClick={()=>setDays(4)}>4 sessions</button></div></div><div className="structure-grid">
+   <article className="panel thirds-card"><div className="third upper"><div><b>UPPER THIRD</b><span>Buyer control / extension</span></div><strong>{money(analysis?.hi)} → {money(analysis?.high)}</strong></div><div className="third middle"><div><b>MIDDLE THIRD</b><span>Rotation / no-trade pressure</span></div><strong>{money(analysis?.lo)} → {money(analysis?.hi)}</strong><i style={{left:analysis?`${Math.max(0,Math.min(100,(analysis.last-analysis.low)/(analysis.high-analysis.low)*100))}%`:"50%"}}/></div><div className="third lower"><div><b>LOWER THIRD</b><span>Weakness / capital protection</span></div><strong>{money(analysis?.low)} → {money(analysis?.lo)}</strong></div></article>
+   <article className="panel level-card"><div className="panel-kicker">Decision levels</div><div className="big-level">{money(analysis?Math.min(analysis.block,analysis.weighted):null)}–{money(analysis?Math.max(analysis.block,analysis.weighted):null)}</div><p>Block and recency-weighted pivots. Treat this cluster as an equilibrium area, not an automatic entry.</p><dl><div><dt>Upper-third trigger</dt><dd>{money(analysis?.hi)}</dd></div><div><dt>Lower-third line</dt><dd>{money(analysis?.lo)}</dd></div><div><dt>Range high</dt><dd>{money(analysis?.high)}</dd></div><div><dt>Range low</dt><dd>{money(analysis?.low)}</dd></div></dl></article>
+   <article className="panel context-card"><div className="panel-kicker">Opening context</div><h3>Premarket + first minute</h3><dl><div><dt>Premarket high</dt><dd>{money(data?.premarket.high)}</dd></div><div><dt>Premarket low</dt><dd>{money(data?.premarket.low)}</dd></div><div><dt>Premarket volume</dt><dd>{data?compact.format(data.premarket.volume):"—"}</dd></div><div className="highlight"><dt>9:30–9:31 close</dt><dd>{money(data?.firstMinute.close)}</dd></div></dl><p>EMA context stays active for the entire session. The 9:31 observation is a checkpoint, not an end time.</p></article>
+  </div></section>
+  <section className="section-block"><div className="section-heading"><div><div className="panel-kicker">Exact source data</div><h2>Recent official sessions</h2></div><div className="section-note">No model forecasts · no probability claims</div></div><article className="panel table-panel"><table><thead><tr><th>Date</th><th>High</th><th>Low</th><th>Close</th><th>Daily pivot</th></tr></thead><tbody>{analysis?.d.map(d=><tr key={d.date}><td>{d.date}</td><td>{money(d.high)}</td><td>{money(d.low)}</td><td>{money(d.close)}</td><td>{money((d.high+d.low+d.close)/3)}</td></tr>)}</tbody></table></article></section>
+  <footer><strong>NVDA ONLY</strong> · Educational market-structure display, not investment advice. A one-second screen refresh does not guarantee a one-second exchange feed. Verify prices and order details with your broker.<p>{ticks.toLocaleString()} successful refreshes this session.</p></footer>
+ </main>
 }
