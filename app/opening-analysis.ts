@@ -33,6 +33,10 @@ export type OpeningAnalysisInput = {
   ema21: number | null;
   /** Current EMA 9 minus an earlier EMA 9 observation. */
   ema9Slope: number | null;
+  historicalFirstMinuteRanges?: number[];
+  historicalFirstMinuteVolumes?: number[];
+  firstMinuteClose?: number | null;
+  firstMinuteVolume?: number | null;
 };
 
 export type OpeningAnalysis = {
@@ -54,6 +58,8 @@ export type OpeningAnalysis = {
     stop: number | null;
     target: number | null;
     confidence: "LOW" | "MODERATE";
+    status: "PREOPEN" | "AWAITING_931" | "CONFIRMED" | "REJECTED" | "LOW_VOLUME";
+    volumeRatio: number | null;
     zone: "LOWER THIRD" | "MIDDLE THIRD" | "UPPER THIRD" | "UNKNOWN";
     evidence: string[];
     invalidation: string;
@@ -72,6 +78,14 @@ const median = (values: number[]) => {
   return sorted.length % 2
     ? sorted[middle]
     : (sorted[middle - 1] + sorted[middle]) / 2;
+};
+
+const percentile = (values: number[], p: number) => {
+  const sorted = values.filter((v) => Number.isFinite(v) && v >= 0).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const index = (sorted.length - 1) * p;
+  const low = Math.floor(index), high = Math.ceil(index);
+  return sorted[low] + (sorted[high] - sorted[low]) * (index - low);
 };
 
 const between = (value: number, low: number, high: number) =>
@@ -156,24 +170,43 @@ export function computeOpeningAnalysis(input: OpeningAnalysisInput): OpeningAnal
   if (side === "LONG" && finite(price) && Math.max(price, input.upperThird, input.pivotHigh) >= input.rangeHigh) side = "WAIT";
   if (side === "SHORT" && finite(price) && Math.min(price, input.lowerThird, input.pivotLow) <= input.rangeLow) side = "WAIT";
 
-  const direction: Direction = side === "LONG" ? "UP" : side === "SHORT" ? "DOWN" : "MIXED";
-  // Opening one-minute movement is displayed as a historical-range heuristic:
-  // 1.5%-3.5% of typical daily range, widened by 5%-10% of premarket range.
-  const moveLow = typicalDailyRange == null && premarketRange == null
+  const setupSide = side;
+  // Prefer actual NVDA 9:30-9:31 ranges. Fall back to a transparent range
+  // heuristic only when the historical opening sample is unavailable.
+  const historicalRanges = input.historicalFirstMinuteRanges ?? [];
+  const historicalMoveLow = historicalRanges.length >= 3 ? percentile(historicalRanges, 0.25) : null;
+  const historicalMoveHigh = historicalRanges.length >= 3 ? percentile(historicalRanges, 0.75) : null;
+  const fallbackMoveLow = typicalDailyRange == null && premarketRange == null
     ? null
     : Math.max((typicalDailyRange ?? 0) * 0.015, (premarketRange ?? 0) * 0.05);
-  const moveHigh = typicalDailyRange == null && premarketRange == null
+  const fallbackMoveHigh = typicalDailyRange == null && premarketRange == null
     ? null
     : Math.max((typicalDailyRange ?? 0) * 0.035, (premarketRange ?? 0) * 0.1);
+  const moveLow = historicalMoveLow ?? fallbackMoveLow;
+  const moveHigh = historicalMoveHigh ?? fallbackMoveHigh;
 
   const riskUnit = finite(price)
     ? Math.max(price * 0.0015, (moveHigh ?? price * 0.002) * 0.65)
     : null;
-  const entry = side === "WAIT" || !finite(price)
+  const setupEntry = setupSide === "WAIT" || !finite(price)
     ? null
-    : side === "LONG"
+    : setupSide === "LONG"
       ? Math.max(price, input.upperThird, input.pivotHigh)
       : Math.min(price, input.lowerThird, input.pivotLow);
+  const typicalOpeningVolume = median(input.historicalFirstMinuteVolumes ?? []);
+  const volumeRatio = finite(input.firstMinuteVolume) && finite(typicalOpeningVolume) && typicalOpeningVolume > 0
+    ? input.firstMinuteVolume / typicalOpeningVolume
+    : null;
+  let status: OpeningAnalysis["plan"]["status"] = "PREOPEN";
+  if (setupSide !== "WAIT") status = "AWAITING_931";
+  if (setupSide !== "WAIT" && finite(input.firstMinuteClose) && finite(setupEntry)) {
+    const held = setupSide === "LONG" ? input.firstMinuteClose >= setupEntry : input.firstMinuteClose <= setupEntry;
+    if (!held) { side = "WAIT"; status = "REJECTED"; }
+    else if (finite(volumeRatio) && volumeRatio < 0.65) { side = "WAIT"; status = "LOW_VOLUME"; }
+    else status = "CONFIRMED";
+  }
+  const entry = side === "WAIT" ? null : setupEntry;
+  const direction: Direction = side === "LONG" ? "UP" : side === "SHORT" ? "DOWN" : "MIXED";
   const stop = finite(entry) && finite(riskUnit)
     ? side === "LONG"
       ? Math.min(entry - 0.01, Math.max(input.upperThird - riskUnit * 0.15, entry - riskUnit))
@@ -200,6 +233,12 @@ export function computeOpeningAnalysis(input: OpeningAnalysisInput): OpeningAnal
       : emaBear
         ? "Price, EMA 9, EMA 21, and EMA 9 slope are aligned downward."
         : "EMA structure is mixed or incomplete; directional confirmation is absent.",
+    historicalRanges.length >= 3
+      ? `Opening movement uses ${historicalRanges.length} prior NVDA first-minute candles.`
+      : "Opening movement uses the daily/premarket range fallback because fewer than three prior first-minute candles are available.",
+    finite(volumeRatio)
+      ? `First-minute volume is ${volumeRatio.toFixed(2)}x its recent opening median.`
+      : "First-minute relative volume is awaiting a completed 9:30–9:31 candle.",
   ];
 
   const alignedSignals = [zone !== "MIDDLE THIRD" && zone !== "UNKNOWN", !inPivot, emaBull || emaBear]
@@ -226,6 +265,8 @@ export function computeOpeningAnalysis(input: OpeningAnalysisInput): OpeningAnal
       stop: finite(stop) ? roundPrice(stop) : null,
       target: finite(target) ? roundPrice(target) : null,
       confidence: side !== "WAIT" && alignedSignals === 3 ? "MODERATE" : "LOW",
+      status,
+      volumeRatio: finite(volumeRatio) ? Math.round(volumeRatio * 100) / 100 : null,
       zone,
       evidence,
       invalidation: side === "LONG"
