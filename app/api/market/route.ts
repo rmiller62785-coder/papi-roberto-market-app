@@ -20,6 +20,7 @@ function targetSessionDate(){const p=ny(Date.now()/1000),minute=Number(p.hour)*6
 function sessionLabel(){const p=ny(Date.now()/1000),n=Number(p.hour)*60+Number(p.minute);return n<240?"CLOSED":n<570?"PREMARKET":n<960?"MARKET OPEN":n<1200?"AFTER-HOURS":"CLOSED"}
 function chartBars(chart:Chart){const q=chart.indicators?.quote?.[0];return(chart.timestamp??[]).map((t,i)=>({time:t*1000,open:q?.open?.[i],high:q?.high?.[i],low:q?.low?.[i],close:q?.close?.[i],volume:q?.volume?.[i]??0})).filter((x):x is Bar=>valid(x.open)&&valid(x.high)&&valid(x.low)&&valid(x.close))}
 
+// The key stays server-side; browser clients receive only normalized NVDA data.
 type FinnhubQuote={c?:number;h?:number;l?:number;o?:number;pc?:number;t?:number};
 async function finnhubQuote(key:string){const r=await fetch("https://finnhub.io/api/v1/quote?symbol=NVDA",{headers:{"X-Finnhub-Token":key,Accept:"application/json"},cache:"no-store"});if(!r.ok)throw new Error(`Finnhub quote failed (${r.status})`);const q=await r.json() as FinnhubQuote;if(!valid(q.c)||q.c<=0)throw new Error("Finnhub returned no NVDA quote");return q}
 
