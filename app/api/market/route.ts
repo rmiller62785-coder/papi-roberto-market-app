@@ -1,41 +1,650 @@
-type Quote={high?:Array<number|null>;low?:Array<number|null>;open?:Array<number|null>;close?:Array<number|null>;volume?:Array<number|null>};
-type Chart={meta?:{regularMarketPrice?:number;previousClose?:number;chartPreviousClose?:number};timestamp?:number[];indicators?:{quote?:Quote[]}};
-type Bar={time:number;open:number;high:number;low:number;close:number;volume:number};
-const headers={"User-Agent":"Mozilla/5.0 NVDA-Live-Structure/3.0",Accept:"application/json"};
-const etDate=(d:Date)=>new Intl.DateTimeFormat("en-CA",{timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit"}).format(d);
-const displayDate=(d:Date)=>new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",month:"short",day:"2-digit"}).format(d);
+type Quote = {
+  high?: Array<number | null>;
+  low?: Array<number | null>;
+  open?: Array<number | null>;
+  close?: Array<number | null>;
+  volume?: Array<number | null>;
+};
 
-async function yahoo(interval:string,range:string,prepost=true){const u=new URL("https://query1.finance.yahoo.com/v8/finance/chart/NVDA");u.searchParams.set("interval",interval);u.searchParams.set("range",range);u.searchParams.set("includePrePost",String(prepost));const r=await fetch(u,{headers,cache:"no-store"});if(!r.ok)throw new Error("public feed failed");const j=await r.json() as {chart?:{result?:Chart[]}};const x=j.chart?.result?.[0];if(!x)throw new Error("empty feed");return x}
-let historyCache:{expires:number;daily:Chart;minute:Chart}|null=null;
-async function marketHistory(){if(historyCache&&historyCache.expires>Date.now())return historyCache;const[daily,minute]=await Promise.all([yahoo("1d","1mo",false),yahoo("1m","5d",true)]);historyCache={expires:Date.now()+60_000,daily,minute};return historyCache}
-function ny(epoch:number){return Object.fromEntries(new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(new Date(epoch*1000)).map(p=>[p.type,p.value]))}
-function valid(v:unknown):v is number{return typeof v==="number"&&Number.isFinite(v)}
-const keyFromParts=(p:Record<string,string>)=>`${p.year}-${p.month}-${p.day}`;
-function observedFixed(year:number,month:number,day:number){const d=new Date(Date.UTC(year,month,day)),w=d.getUTCDay();if(w===6)d.setUTCDate(d.getUTCDate()-1);if(w===0)d.setUTCDate(d.getUTCDate()+1);return d.toISOString().slice(0,10)}
-function nthWeekday(year:number,month:number,weekday:number,n:number){const d=new Date(Date.UTC(year,month,1));d.setUTCDate(1+(7+weekday-d.getUTCDay())%7+(n-1)*7);return d.toISOString().slice(0,10)}
-function lastWeekday(year:number,month:number,weekday:number){const d=new Date(Date.UTC(year,month+1,0));d.setUTCDate(d.getUTCDate()-(7+d.getUTCDay()-weekday)%7);return d.toISOString().slice(0,10)}
-function easterSunday(year:number){const a=year%19,b=Math.floor(year/100),c=year%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),month=Math.floor((h+l-7*m+114)/31)-1,day=(h+l-7*m+114)%31+1;return new Date(Date.UTC(year,month,day))}
-function marketHoliday(key:string){const year=Number(key.slice(0,4)),goodFriday=easterSunday(year);goodFriday.setUTCDate(goodFriday.getUTCDate()-2);return new Set([observedFixed(year,0,1),observedFixed(year+1,0,1),nthWeekday(year,0,1,3),nthWeekday(year,1,1,3),goodFriday.toISOString().slice(0,10),lastWeekday(year,4,1),observedFixed(year,5,19),observedFixed(year,6,4),nthWeekday(year,8,1,1),nthWeekday(year,10,4,4),observedFixed(year,11,25)]).has(key)}
-function targetSessionDate(){const p=ny(Date.now()/1000),minute=Number(p.hour)*60+Number(p.minute),d=new Date(Date.UTC(Number(p.year),Number(p.month)-1,Number(p.day)));if(minute>=960)d.setUTCDate(d.getUTCDate()+1);while(d.getUTCDay()===0||d.getUTCDay()===6||marketHoliday(d.toISOString().slice(0,10)))d.setUTCDate(d.getUTCDate()+1);return d.toISOString().slice(0,10)}
-function sessionLabel(){const p=ny(Date.now()/1000),n=Number(p.hour)*60+Number(p.minute);return n<240?"CLOSED":n<570?"PREMARKET":n<960?"MARKET OPEN":n<1200?"AFTER-HOURS":"CLOSED"}
-function chartBars(chart:Chart){const q=chart.indicators?.quote?.[0];return(chart.timestamp??[]).map((t,i)=>({time:t*1000,open:q?.open?.[i],high:q?.high?.[i],low:q?.low?.[i],close:q?.close?.[i],volume:q?.volume?.[i]??0})).filter((x):x is Bar=>valid(x.open)&&valid(x.high)&&valid(x.low)&&valid(x.close))}
+type Chart = {
+  meta?: {
+    regularMarketPrice?: number;
+    previousClose?: number;
+    chartPreviousClose?: number;
+  };
+  timestamp?: number[];
+  indicators?: { quote?: Quote[] };
+};
+
+type Bar = {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+type FinnhubQuote = {
+  c?: number;
+  h?: number;
+  l?: number;
+  o?: number;
+  pc?: number;
+  t?: number;
+};
+
+type HistoryCache = {
+  expires: number;
+  fetchedAt: number;
+  daily: Chart;
+  minute: Chart;
+};
+
+type Session = "CLOSED" | "PREMARKET" | "MARKET OPEN" | "AFTER-HOURS";
+type SourceStatus = "ok" | "stale" | "error" | "not_configured";
+
+const HISTORY_CACHE_MS = 60_000;
+const HISTORY_STALE_MS = 120_000;
+const OPEN_QUOTE_STALE_MS = 90_000;
+const headers = {
+  "User-Agent": "Mozilla/5.0 NVDA-Live-Structure/4.0",
+  Accept: "application/json",
+};
+
+const etDate = (date: Date) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+
+const displayDate = (date: Date) =>
+  new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    month: "short",
+    day: "2-digit",
+  }).format(date);
+
+async function yahoo(interval: string, range: string, prepost = true) {
+  const url = new URL("https://query1.finance.yahoo.com/v8/finance/chart/NVDA");
+  url.searchParams.set("interval", interval);
+  url.searchParams.set("range", range);
+  url.searchParams.set("includePrePost", String(prepost));
+  const response = await fetch(url, { headers, cache: "no-store" });
+  if (!response.ok) throw new Error("Yahoo chart feed failed");
+  const json = (await response.json()) as { chart?: { result?: Chart[] } };
+  const chart = json.chart?.result?.[0];
+  if (!chart) throw new Error("Yahoo chart feed returned no NVDA data");
+  return chart;
+}
+
+let historyCache: HistoryCache | null = null;
+
+/**
+ * Yahoo history is deliberately cached for one minute. A request to this route
+ * therefore does not imply that a new Yahoo observation was fetched.
+ */
+async function marketHistory(): Promise<HistoryCache & { cacheHit: boolean }> {
+  const now = Date.now();
+  if (historyCache && historyCache.expires > now) {
+    return { ...historyCache, cacheHit: true };
+  }
+  const [daily, minute] = await Promise.all([
+    yahoo("1d", "1mo", false),
+    yahoo("1m", "5d", true),
+  ]);
+  const fetchedAt = Date.now();
+  historyCache = {
+    expires: fetchedAt + HISTORY_CACHE_MS,
+    fetchedAt,
+    daily,
+    minute,
+  };
+  return { ...historyCache, cacheHit: false };
+}
+
+function ny(epochSeconds: number) {
+  return Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })
+      .formatToParts(new Date(epochSeconds * 1000))
+      .map((part) => [part.type, part.value]),
+  );
+}
+
+function valid(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+const keyFromParts = (parts: Record<string, string>) =>
+  `${parts.year}-${parts.month}-${parts.day}`;
+
+function observedFixed(year: number, month: number, day: number) {
+  const date = new Date(Date.UTC(year, month, day));
+  const weekday = date.getUTCDay();
+  if (weekday === 6) date.setUTCDate(date.getUTCDate() - 1);
+  if (weekday === 0) date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function nthWeekday(year: number, month: number, weekday: number, n: number) {
+  const date = new Date(Date.UTC(year, month, 1));
+  date.setUTCDate(1 + ((7 + weekday - date.getUTCDay()) % 7) + (n - 1) * 7);
+  return date.toISOString().slice(0, 10);
+}
+
+function lastWeekday(year: number, month: number, weekday: number) {
+  const date = new Date(Date.UTC(year, month + 1, 0));
+  date.setUTCDate(date.getUTCDate() - ((7 + date.getUTCDay() - weekday) % 7));
+  return date.toISOString().slice(0, 10);
+}
+
+function easterSunday(year: number) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31) - 1;
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(year, month, day));
+}
+
+function marketHoliday(key: string) {
+  const year = Number(key.slice(0, 4));
+  const goodFriday = easterSunday(year);
+  goodFriday.setUTCDate(goodFriday.getUTCDate() - 2);
+  return new Set([
+    observedFixed(year, 0, 1),
+    observedFixed(year + 1, 0, 1),
+    nthWeekday(year, 0, 1, 3),
+    nthWeekday(year, 1, 1, 3),
+    goodFriday.toISOString().slice(0, 10),
+    lastWeekday(year, 4, 1),
+    observedFixed(year, 5, 19),
+    observedFixed(year, 6, 4),
+    nthWeekday(year, 8, 1, 1),
+    nthWeekday(year, 10, 4, 4),
+    observedFixed(year, 11, 25),
+  ]).has(key);
+}
+
+function shiftDateKey(key: string, days: number) {
+  const date = new Date(`${key}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function previousMarketSession(key: string) {
+  let prior = shiftDateKey(key, -1);
+  while (new Date(`${prior}T00:00:00Z`).getUTCDay() % 6 === 0 || marketHoliday(prior)) {
+    prior = shiftDateKey(prior, -1);
+  }
+  return prior;
+}
+
+function earlyClose(key: string) {
+  const year = Number(key.slice(0, 4));
+  const thanksgiving = nthWeekday(year, 10, 4, 4);
+  const dayAfterThanksgiving = shiftDateKey(thanksgiving, 1);
+  const beforeIndependenceHoliday = previousMarketSession(observedFixed(year, 6, 4));
+  const christmasEve = `${year}-12-24`;
+  return (
+    key === dayAfterThanksgiving ||
+    key === beforeIndependenceHoliday ||
+    (key === christmasEve && !marketHoliday(key))
+  );
+}
+
+const regularCloseMinute = (key: string) => (earlyClose(key) ? 13 * 60 : 16 * 60);
+
+function targetSessionDate(nowMs = Date.now()) {
+  const parts = ny(nowMs / 1000);
+  const minute = Number(parts.hour) * 60 + Number(parts.minute);
+  const currentKey = keyFromParts(parts);
+  const date = new Date(
+    Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)),
+  );
+  if (minute >= regularCloseMinute(currentKey)) date.setUTCDate(date.getUTCDate() + 1);
+  while (
+    date.getUTCDay() === 0 ||
+    date.getUTCDay() === 6 ||
+    marketHoliday(date.toISOString().slice(0, 10))
+  ) {
+    date.setUTCDate(date.getUTCDate() + 1);
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+/** Market state is calendar/time based and never inferred from feed success. */
+function sessionState(nowMs = Date.now()): {
+  session: Session;
+  regularMarketOpen: boolean;
+  reason: "weekend" | "holiday" | "early_close" | "outside_regular_hours" | null;
+  regularCloseMinute: number;
+} {
+  const parts = ny(nowMs / 1000);
+  const key = keyFromParts(parts);
+  const date = new Date(`${key}T00:00:00Z`);
+  if (date.getUTCDay() === 0 || date.getUTCDay() === 6) {
+    return { session: "CLOSED", regularMarketOpen: false, reason: "weekend", regularCloseMinute: 960 };
+  }
+  if (marketHoliday(key)) {
+    return { session: "CLOSED", regularMarketOpen: false, reason: "holiday", regularCloseMinute: 960 };
+  }
+  const minute = Number(parts.hour) * 60 + Number(parts.minute);
+  const closeMinute = regularCloseMinute(key);
+  const session: Session =
+    minute < 240
+      ? "CLOSED"
+      : minute < 570
+        ? "PREMARKET"
+        : minute < closeMinute
+          ? "MARKET OPEN"
+          : minute < 1200
+            ? "AFTER-HOURS"
+            : "CLOSED";
+  return {
+    session,
+    regularMarketOpen: session === "MARKET OPEN",
+    reason: session === "MARKET OPEN"
+      ? null
+      : earlyClose(key) && minute >= closeMinute
+        ? "early_close"
+        : "outside_regular_hours",
+    regularCloseMinute: closeMinute,
+  };
+}
+
+function chartBars(chart: Chart) {
+  const quote = chart.indicators?.quote?.[0];
+  return (chart.timestamp ?? [])
+    .map((timestamp, index) => ({
+      time: timestamp * 1000,
+      open: quote?.open?.[index],
+      high: quote?.high?.[index],
+      low: quote?.low?.[index],
+      close: quote?.close?.[index],
+      volume: quote?.volume?.[index] ?? 0,
+    }))
+    .filter(
+      (bar): bar is Bar =>
+        valid(bar.open) && valid(bar.high) && valid(bar.low) && valid(bar.close),
+    );
+}
 
 // The key stays server-side; browser clients receive only normalized NVDA data.
-type FinnhubQuote={c?:number;h?:number;l?:number;o?:number;pc?:number;t?:number};
-async function finnhubQuote(key:string){const r=await fetch("https://finnhub.io/api/v1/quote?symbol=NVDA",{headers:{"X-Finnhub-Token":key,Accept:"application/json"},cache:"no-store"});if(!r.ok)throw new Error(`Finnhub quote failed (${r.status})`);const q=await r.json() as FinnhubQuote;if(!valid(q.c)||q.c<=0)throw new Error("Finnhub returned no NVDA quote");return q}
+async function finnhubQuote(key: string) {
+  const response = await fetch("https://finnhub.io/api/v1/quote?symbol=NVDA", {
+    headers: { "X-Finnhub-Token": key, Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`Finnhub quote failed (${response.status})`);
+  const quote = (await response.json()) as FinnhubQuote;
+  if (!valid(quote.c) || quote.c <= 0) throw new Error("Finnhub returned no NVDA quote");
+  return quote;
+}
 
-export async function GET(){try{
- const finnhubKey=(globalThis as unknown as {process?:{env?:Record<string,string>}}).process?.env?.FINNHUB_API_KEY,targetDate=targetSessionDate(),todayKey=etDate(new Date());
- const history=await marketHistory(),dailyChart=history.daily,minuteChart=history.minute;
- const dq=dailyChart.indicators?.quote?.[0];
- const daily=(dailyChart.timestamp??[]).map((t,i)=>({date:displayDate(new Date(t*1000)),dateKey:etDate(new Date(t*1000)),high:dq?.high?.[i],low:dq?.low?.[i],close:dq?.close?.[i]})).filter((x):x is {date:string;dateKey:string;high:number;low:number;close:number}=>x.dateKey<targetDate&&valid(x.high)&&valid(x.low)&&valid(x.close)).slice(-10).map(({date,high,low,close})=>({date,high,low,close}));
- const historicalBars=chartBars(minuteChart),historicalParts=historicalBars.map(b=>({b,p:ny(b.time/1000)}));
- const firstMinuteHistory=historicalParts.filter(({p})=>keyFromParts(p)<targetDate&&Number(p.hour)===9&&Number(p.minute)===30).slice(-10).map(({b,p})=>({date:keyFromParts(p),range:b.high-b.low,volume:b.volume,close:b.close}));
- let price=minuteChart.meta?.regularMarketPrice??historicalBars.at(-1)?.close??null,asOf=historicalBars.length?new Date(historicalBars.at(-1)!.time).toISOString():new Date().toISOString(),source="Public consolidated feed · may be delayed",realtime=false,liveQuote:FinnhubQuote|null=null;
- if(finnhubKey){try{liveQuote=await finnhubQuote(finnhubKey);price=liveQuote.c!;asOf=liveQuote.t?new Date(liveQuote.t*1000).toISOString():new Date().toISOString();source="Finnhub real-time NVDA quote";realtime=true}catch{/* resilient public fallback */}}
- const parts=historicalBars.map(b=>({b,p:ny(b.time/1000),date:keyFromParts(ny(b.time/1000))}));
- const targetBars=parts.filter(x=>x.date===targetDate),latestDate=parts.at(-1)?.date,displayBars=(targetBars.length?targetBars:parts.filter(x=>x.date===latestDate)).map(x=>x.b);
- const pre=targetBars.filter(({p})=>Number(p.hour)<9||(Number(p.hour)===9&&Number(p.minute)<30)).map(x=>x.b),regular=targetBars.filter(({p})=>(Number(p.hour)===9&&Number(p.minute)>=30)||(Number(p.hour)>9&&Number(p.hour)<16)).map(x=>x.b),first=targetBars.find(({p})=>Number(p.hour)===9&&Number(p.minute)===30)?.b;
- const session=sessionLabel(),quoteDay=targetDate===todayKey&&session==="MARKET OPEN"&&liveQuote;
- return Response.json({symbol:"NVDA",targetDate,price,previousClose:daily.at(-1)?.close??liveQuote?.pc??minuteChart.meta?.chartPreviousClose??minuteChart.meta?.previousClose??null,asOf,checkedAt:new Date().toISOString(),session,source,realtime,bars:displayBars,daily,firstMinuteHistory,day:{open:quoteDay&&valid(liveQuote?.o)?liveQuote!.o!:regular.at(0)?.open??null,high:quoteDay&&valid(liveQuote?.h)?liveQuote!.h!:regular.length?Math.max(...regular.map(x=>x.high)):null,low:quoteDay&&valid(liveQuote?.l)?liveQuote!.l!:regular.length?Math.min(...regular.map(x=>x.low)):null,volume:regular.reduce((s,x)=>s+x.volume,0)},premarket:{high:pre.length?Math.max(...pre.map(x=>x.high)):null,low:pre.length?Math.min(...pre.map(x=>x.low)):null,current:targetDate===todayKey&&session==="PREMARKET"&&liveQuote?liveQuote.c:pre.at(-1)?.close??null,volume:pre.reduce((s,x)=>s+x.volume,0)},firstMinute:{close:first?.close??null,high:first?.high??null,low:first?.low??null,volume:first?.volume??0}},{headers:{"Cache-Control":"no-store, no-cache, must-revalidate","CDN-Cache-Control":"no-store"}})
-}catch(e){return Response.json({error:"Market data unavailable",detail:e instanceof Error?e.message:"unknown"},{status:503,headers:{"Cache-Control":"no-store"}})}}
+const iso = (value: number | null | undefined) =>
+  valid(value) ? new Date(value).toISOString() : null;
+
+export async function GET() {
+  const endpointCheckedAtMs = Date.now();
+  try {
+    const finnhubKey = (globalThis as unknown as {
+      process?: { env?: Record<string, string> };
+    }).process?.env?.FINNHUB_API_KEY;
+    const targetDate = targetSessionDate(endpointCheckedAtMs);
+    const todayKey = etDate(new Date(endpointCheckedAtMs));
+    const marketState = sessionState(endpointCheckedAtMs);
+    const history = await marketHistory();
+    const nowParts = ny(endpointCheckedAtMs / 1000);
+    const nowMinute = Number(nowParts.hour) * 60 + Number(nowParts.minute);
+    const fetchedParts = ny(history.fetchedAt / 1000);
+    const fetchedMinute = Number(fetchedParts.hour) * 60 + Number(fetchedParts.minute);
+    const todaySessionFinalized =
+      nowMinute >= marketState.regularCloseMinute &&
+      fetchedMinute >= marketState.regularCloseMinute;
+    const dailyChart = history.daily;
+    const minuteChart = history.minute;
+    const dailyQuote = dailyChart.indicators?.quote?.[0];
+    const daily = (dailyChart.timestamp ?? [])
+      .map((timestamp, index) => ({
+        date: displayDate(new Date(timestamp * 1000)),
+        dateKey: etDate(new Date(timestamp * 1000)),
+        high: dailyQuote?.high?.[index],
+        low: dailyQuote?.low?.[index],
+        close: dailyQuote?.close?.[index],
+      }))
+      .filter(
+        (row): row is {
+          date: string;
+          dateKey: string;
+          high: number;
+          low: number;
+          close: number;
+        } =>
+          row.dateKey < targetDate &&
+          (row.dateKey < todayKey || todaySessionFinalized) &&
+          valid(row.high) &&
+          valid(row.low) &&
+          valid(row.close),
+      )
+      .slice(-10)
+      .map(({ date, high, low, close }) => ({ date, high, low, close }));
+
+    const historicalBars = chartBars(minuteChart);
+    const historicalParts = historicalBars.map((bar) => ({
+      bar,
+      parts: ny(bar.time / 1000),
+    }));
+    const firstMinuteHistory = historicalParts
+      .filter(
+        ({ parts }) =>
+          keyFromParts(parts) < targetDate &&
+          Number(parts.hour) === 9 &&
+          Number(parts.minute) === 30,
+      )
+      .slice(-10)
+      .map(({ bar, parts }) => ({
+        date: keyFromParts(parts),
+        range: bar.high - bar.low,
+        volume: bar.volume,
+        close: bar.close,
+      }));
+
+    const latestHistoryBar = historicalBars.at(-1) ?? null;
+    let price = minuteChart.meta?.regularMarketPrice ?? latestHistoryBar?.close ?? null;
+    let legacyAsOf = latestHistoryBar
+      ? new Date(latestHistoryBar.time).toISOString()
+      : new Date(history.fetchedAt).toISOString();
+    let quoteObservedAtMs = latestHistoryBar?.time ?? null;
+    let quoteFetchedAtMs: number | null = history.fetchedAt;
+    let source = "Yahoo Finance NVDA chart fallback · may be delayed";
+    let realtime = false;
+    let liveQuote: FinnhubQuote | null = null;
+    let finnhubStatus: SourceStatus = finnhubKey ? "error" : "not_configured";
+    let finnhubDetail = finnhubKey
+      ? "Finnhub quote request did not complete"
+      : "FINNHUB_API_KEY is not configured";
+
+    if (finnhubKey) {
+      try {
+        liveQuote = await finnhubQuote(finnhubKey);
+        quoteFetchedAtMs = Date.now();
+        quoteObservedAtMs = liveQuote.t ? liveQuote.t * 1000 : null;
+        price = liveQuote.c!;
+        // Preserve the legacy non-null asOf field, but expose whether this value
+        // is a provider observation or only the fetch time in freshness.quote.
+        legacyAsOf = quoteObservedAtMs == null
+          ? ""
+          : new Date(quoteObservedAtMs).toISOString();
+        source = "Finnhub NVDA quote snapshot";
+        realtime = quoteObservedAtMs != null;
+        finnhubStatus = quoteObservedAtMs != null ? "ok" : "stale";
+        finnhubDetail = liveQuote.t
+          ? "Quote snapshot returned with provider observation time"
+          : "Quote snapshot returned without a provider observation time";
+      } catch (error) {
+        finnhubDetail =
+          error instanceof Error ? error.message : "Finnhub quote request failed";
+      }
+    }
+
+    const parts = historicalBars.map((bar) => {
+      const timeParts = ny(bar.time / 1000);
+      return { bar, parts: timeParts, date: keyFromParts(timeParts) };
+    });
+    const targetBars = parts.filter((item) => item.date === targetDate);
+    const latestDate = parts.at(-1)?.date;
+    const displayBars = (targetBars.length
+      ? targetBars
+      : parts.filter((item) => item.date === latestDate)
+    ).map((item) => item.bar);
+    const analysisBars = displayBars.filter(
+      (bar) => bar.time + 60_000 <= endpointCheckedAtMs,
+    );
+    const premarket = targetBars
+      .filter(
+        ({ parts: timeParts }) =>
+          Number(timeParts.hour) < 9 ||
+          (Number(timeParts.hour) === 9 && Number(timeParts.minute) < 30),
+      )
+      .map((item) => item.bar);
+    const targetCloseMinute = regularCloseMinute(targetDate);
+    const regular = targetBars
+      .filter(
+        ({ parts: timeParts }) => {
+          const minute = Number(timeParts.hour) * 60 + Number(timeParts.minute);
+          return minute >= 570 && minute < targetCloseMinute;
+        },
+      )
+      .map((item) => item.bar);
+    const firstItem = targetBars.find(
+      ({ parts: timeParts }) =>
+        Number(timeParts.hour) === 9 && Number(timeParts.minute) === 30,
+    );
+    const first = firstItem?.bar;
+
+    // A visible 9:30 bar may still be changing. It is complete only after the
+    // clock has passed 9:31 ET and Yahoo has published a later bar watermark.
+    const hasLaterWatermark = targetBars.some(({ parts: timeParts }) => {
+      const minute = Number(timeParts.hour) * 60 + Number(timeParts.minute);
+      return minute >= 571;
+    });
+    const firstMinuteComplete = Boolean(
+      first &&
+        (targetDate < todayKey ||
+          (targetDate === todayKey && nowMinute >= 571 && hasLaterWatermark)),
+    );
+    const firstMinuteStatus = !first
+      ? "NOT_STARTED"
+      : firstMinuteComplete
+        ? "COMPLETE"
+        : "FORMING_931";
+
+    const quoteDay =
+      targetDate === todayKey && marketState.session === "MARKET OPEN" && liveQuote;
+    const endpointCompletedAtMs = Date.now();
+    const historyCacheAgeMs = Math.max(0, endpointCompletedAtMs - history.fetchedAt);
+    const quoteAgeMs = valid(quoteObservedAtMs)
+      ? Math.max(0, endpointCompletedAtMs - quoteObservedAtMs)
+      : null;
+    const quoteStale = Boolean(
+      marketState.regularMarketOpen &&
+        (!valid(quoteAgeMs) || quoteAgeMs > OPEN_QUOTE_STALE_MS),
+    );
+    if (finnhubStatus === "ok" && quoteStale) finnhubStatus = "stale";
+    if (finnhubStatus === "stale") realtime = false;
+
+    const latestDailyTimestamp = dailyChart.timestamp?.at(-1);
+    const earliestDailyTimestamp = dailyChart.timestamp?.at(0);
+    const dailyObservedAtMs = valid(latestDailyTimestamp)
+      ? latestDailyTimestamp * 1000
+      : null;
+    const historyObservedAtMs = latestHistoryBar?.time ?? null;
+    const historyWindowStartObservedAtMs = Math.min(
+      ...[
+        valid(earliestDailyTimestamp) ? earliestDailyTimestamp * 1000 : null,
+        historicalBars.at(0)?.time ?? null,
+      ].filter(valid),
+    );
+    const observedCandidates = [
+      quoteObservedAtMs,
+      historyObservedAtMs,
+      dailyObservedAtMs,
+      Number.isFinite(historyWindowStartObservedAtMs) ? historyWindowStartObservedAtMs : null,
+    ].filter(valid);
+    const newestInputObservedAtMs = observedCandidates.length
+      ? Math.max(...observedCandidates)
+      : null;
+    const oldestInputObservedAtMs = observedCandidates.length
+      ? Math.min(...observedCandidates)
+      : null;
+
+    return Response.json(
+      {
+        symbol: "NVDA",
+        targetDate,
+        price,
+        previousClose:
+          daily.at(-1)?.close ??
+          liveQuote?.pc ??
+          minuteChart.meta?.chartPreviousClose ??
+          minuteChart.meta?.previousClose ??
+          null,
+        // Backward-compatible aliases. checkedAt is the endpoint completion,
+        // while asOf remains the selected quote's best available timestamp.
+        asOf: legacyAsOf,
+        checkedAt: new Date(endpointCompletedAtMs).toISOString(),
+        session: marketState.session,
+        source,
+        realtime,
+        marketState: {
+          ...marketState,
+          evaluatedAt: new Date(endpointCheckedAtMs).toISOString(),
+        },
+        freshness: {
+          endpoint: {
+            checkedAt: new Date(endpointCheckedAtMs).toISOString(),
+            completedAt: new Date(endpointCompletedAtMs).toISOString(),
+          },
+          quote: {
+            provider: liveQuote ? "finnhub" : "yahoo",
+            observedAt: iso(quoteObservedAtMs),
+            fetchedAt: iso(quoteFetchedAtMs),
+            ageMs: quoteAgeMs,
+            stale: quoteStale,
+            marketClosed: !marketState.regularMarketOpen,
+            observationTimeSource:
+              quoteObservedAtMs == null ? "unavailable" : "provider",
+          },
+          history: {
+            provider: "yahoo",
+            fetchedAt: new Date(history.fetchedAt).toISOString(),
+            latestMinuteObservedAt: iso(historyObservedAtMs),
+            latestDailyObservedAt: iso(dailyObservedAtMs),
+            historyWindowStartObservedAt: iso(historyWindowStartObservedAtMs),
+            cacheHit: history.cacheHit,
+            cacheAgeMs: historyCacheAgeMs,
+            cacheTtlMs: HISTORY_CACHE_MS,
+            stale: historyCacheAgeMs > HISTORY_STALE_MS,
+          },
+          derived: {
+            calculatedAt: new Date(endpointCompletedAtMs).toISOString(),
+            oldestInputObservedAt: iso(oldestInputObservedAtMs),
+            newestInputObservedAt: iso(newestInputObservedAtMs),
+            note: "Calculation time is not a new market observation.",
+          },
+        },
+        sources: [
+          {
+            id: "finnhub",
+            role: "reference_quote",
+            status: finnhubStatus,
+            observedAt: liveQuote?.t ? new Date(liveQuote.t * 1000).toISOString() : null,
+            fetchedAt: liveQuote ? iso(quoteFetchedAtMs) : null,
+            coverage:
+              "NVDA quote snapshot; exchange coverage and latency depend on the Finnhub plan; not an order book.",
+            detail: finnhubDetail,
+          },
+          {
+            id: "yahoo",
+            role: "minute_and_daily_history",
+            status: historyCacheAgeMs > HISTORY_STALE_MS ? "stale" : "ok",
+            observedAt: iso(historyObservedAtMs),
+            fetchedAt: new Date(history.fetchedAt).toISOString(),
+            coverage:
+              "NVDA public chart history with pre/post-market bars where available; may be delayed and is not guaranteed consolidated market data.",
+            detail: history.cacheHit
+              ? "Served from the app's one-minute history cache"
+              : "Fresh history request completed",
+          },
+        ],
+        bars: displayBars,
+        analysisBars,
+        daily,
+        firstMinuteHistory,
+        day: {
+          open:
+            quoteDay && valid(liveQuote?.o)
+              ? liveQuote!.o!
+              : (regular.at(0)?.open ?? null),
+          high:
+            quoteDay && valid(liveQuote?.h)
+              ? liveQuote!.h!
+              : regular.length
+                ? Math.max(...regular.map((bar) => bar.high))
+                : null,
+          low:
+            quoteDay && valid(liveQuote?.l)
+              ? liveQuote!.l!
+              : regular.length
+                ? Math.min(...regular.map((bar) => bar.low))
+                : null,
+          volume: regular.reduce((sum, bar) => sum + bar.volume, 0),
+        },
+        premarket: {
+          high: premarket.length
+            ? Math.max(...premarket.map((bar) => bar.high))
+            : null,
+          low: premarket.length
+            ? Math.min(...premarket.map((bar) => bar.low))
+            : null,
+          current:
+            targetDate === todayKey &&
+            marketState.session === "PREMARKET" &&
+            liveQuote
+              ? liveQuote.c
+              : (premarket.at(-1)?.close ?? null),
+          volume: premarket.reduce((sum, bar) => sum + bar.volume, 0),
+        },
+        firstMinute: {
+          close: first?.close ?? null,
+          high: first?.high ?? null,
+          low: first?.low ?? null,
+          volume: first?.volume ?? 0,
+          observedAt: first ? new Date(first.time).toISOString() : null,
+          complete: firstMinuteComplete,
+          status: firstMinuteStatus,
+          completionWatermarkAt: firstMinuteComplete
+            ? iso(targetBars.at(-1)?.bar.time)
+            : null,
+        },
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          "CDN-Cache-Control": "no-store",
+        },
+      },
+    );
+  } catch (error) {
+    // A 503 means the required Yahoo history source failed. It is independent
+    // of the market's open/closed state, which is returned on successful calls.
+    return Response.json(
+      {
+        error: "Market data unavailable",
+        detail: error instanceof Error ? error.message : "unknown",
+        checkedAt: new Date().toISOString(),
+      },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+}

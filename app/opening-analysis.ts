@@ -37,6 +37,11 @@ export type OpeningAnalysisInput = {
   historicalFirstMinuteVolumes?: number[];
   firstMinuteClose?: number | null;
   firstMinuteVolume?: number | null;
+  /**
+   * True only after the data provider has finalized the 9:30-9:31 ET candle.
+   * A close/volume value can exist while that candle is still forming.
+   */
+  firstMinuteComplete?: boolean;
 };
 
 export type OpeningAnalysis = {
@@ -58,7 +63,13 @@ export type OpeningAnalysis = {
     stop: number | null;
     target: number | null;
     confidence: "LOW" | "MODERATE";
-    status: "PREOPEN" | "AWAITING_931" | "CONFIRMED" | "REJECTED" | "LOW_VOLUME";
+    status:
+      | "PREOPEN"
+      | "AWAITING_931"
+      | "FORMING_931"
+      | "CONFIRMED"
+      | "REJECTED"
+      | "LOW_VOLUME";
     volumeRatio: number | null;
     zone: "LOWER THIRD" | "MIDDLE THIRD" | "UPPER THIRD" | "UNKNOWN";
     evidence: string[];
@@ -133,7 +144,14 @@ export function computeOpeningAnalysis(input: OpeningAnalysisInput): OpeningAnal
       )
     : null;
 
-  const price = finite(reference) ? reference : openingMedian;
+  // The premarket reference anchors the expected-open estimate. Once live
+  // trading begins, position state must use the current reference price rather
+  // than remaining pinned to the final premarket candle.
+  const price = finite(input.referencePrice)
+    ? input.referencePrice
+    : finite(reference)
+      ? reference
+      : openingMedian;
   const zone = !finite(price)
     ? "UNKNOWN"
     : price < input.lowerThird
@@ -194,12 +212,23 @@ export function computeOpeningAnalysis(input: OpeningAnalysisInput): OpeningAnal
       ? Math.max(price, input.upperThird, input.pivotHigh)
       : Math.min(price, input.lowerThird, input.pivotLow);
   const typicalOpeningVolume = median(input.historicalFirstMinuteVolumes ?? []);
-  const volumeRatio = finite(input.firstMinuteVolume) && finite(typicalOpeningVolume) && typicalOpeningVolume > 0
+  const firstMinuteComplete = input.firstMinuteComplete === true;
+  // Never compare or confirm using partial 9:30 candle volume. A provider may
+  // expose close and volume fields before the one-minute bar is finalized.
+  const volumeRatio = firstMinuteComplete && finite(input.firstMinuteVolume) && finite(typicalOpeningVolume) && typicalOpeningVolume > 0
     ? input.firstMinuteVolume / typicalOpeningVolume
     : null;
   let status: OpeningAnalysis["plan"]["status"] = "PREOPEN";
   if (setupSide !== "WAIT") status = "AWAITING_931";
-  if (setupSide !== "WAIT" && finite(input.firstMinuteClose) && finite(setupEntry)) {
+  if (setupSide !== "WAIT" && finite(input.firstMinuteClose) && !firstMinuteComplete) {
+    status = "FORMING_931";
+  }
+  if (
+    setupSide !== "WAIT" &&
+    firstMinuteComplete &&
+    finite(input.firstMinuteClose) &&
+    finite(setupEntry)
+  ) {
     const held = setupSide === "LONG" ? input.firstMinuteClose >= setupEntry : input.firstMinuteClose <= setupEntry;
     if (!held) { side = "WAIT"; status = "REJECTED"; }
     else if (finite(volumeRatio) && volumeRatio < 0.65) { side = "WAIT"; status = "LOW_VOLUME"; }
@@ -236,9 +265,13 @@ export function computeOpeningAnalysis(input: OpeningAnalysisInput): OpeningAnal
     historicalRanges.length >= 3
       ? `Opening movement uses ${historicalRanges.length} prior NVDA first-minute candles.`
       : "Opening movement uses the daily/premarket range fallback because fewer than three prior first-minute candles are available.",
-    finite(volumeRatio)
-      ? `First-minute volume is ${volumeRatio.toFixed(2)}x its recent opening median.`
-      : "First-minute relative volume is awaiting a completed 9:30–9:31 candle.",
+    !firstMinuteComplete
+      ? finite(input.firstMinuteClose)
+        ? "The 9:30–9:31 candle is still forming; its close and volume cannot confirm a position."
+        : "First-minute confirmation is waiting for a completed 9:30–9:31 candle."
+      : finite(volumeRatio)
+        ? `First-minute volume is ${volumeRatio.toFixed(2)}x its recent opening median.`
+        : "The completed first-minute candle has no usable historical volume baseline.",
   ];
 
   const alignedSignals = [zone !== "MIDDLE THIRD" && zone !== "UNKNOWN", !inPivot, emaBull || emaBear]

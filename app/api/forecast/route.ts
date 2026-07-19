@@ -27,6 +27,18 @@ type FeedStatus = {
   detail: string;
   lastChecked: number;
 };
+type FactorSource = {
+  kind: "api" | "internal";
+  apiBacked: boolean;
+  provider: string;
+  knowledgeBase: {
+    label: string;
+    path: string;
+  };
+  feedIds: string[];
+  status: FeedStatus["status"];
+  lastChecked: number | null;
+};
 type Quote = { c?: number; h?: number; l?: number; o?: number; pc?: number; t?: number };
 type MarketContext = {
   available: boolean;
@@ -50,6 +62,102 @@ const defaults = [
   { key: "pay_period", label: "Pay-period proximity (experimental)", category: "Calendar", directionWeight: 0, rangeWeight: 0 },
 ];
 
+const factorSourceDefinitions: Record<
+  string,
+  Omit<FactorSource, "status" | "lastChecked">
+> = {
+  geopolitical: {
+    kind: "api",
+    apiBacked: true,
+    provider: "Finnhub News + GDELT",
+    knowledgeBase: {
+      label: "News ingestion, classification, clustering, and geopolitical signal in pullIntelligence() / signals()",
+      path: "app/api/forecast/route.ts",
+    },
+    feedIds: ["finnhub_news", "gdelt"],
+  },
+  news_intensity: {
+    kind: "api",
+    apiBacked: true,
+    provider: "Finnhub News + GDELT",
+    knowledgeBase: {
+      label: "News ingestion, event clustering, freshness decay, and news-load signal in pullIntelligence() / signals()",
+      path: "app/api/forecast/route.ts",
+    },
+    feedIds: ["finnhub_news", "gdelt"],
+  },
+  nvda_earnings: {
+    kind: "api",
+    apiBacked: true,
+    provider: "Finnhub Earnings Calendar",
+    knowledgeBase: {
+      label: "NVDA earnings-calendar ingestion and target-session match in pullIntelligence() / signals()",
+      path: "app/api/forecast/route.ts",
+    },
+    feedIds: ["earnings"],
+  },
+  macro_release: {
+    kind: "api",
+    apiBacked: true,
+    provider: "U.S. Bureau of Labor Statistics",
+    knowledgeBase: {
+      label: "BLS calendar ingestion and target-session macro-release match in pullIntelligence() / signals()",
+      path: "app/api/forecast/route.ts",
+    },
+    feedIds: ["bls"],
+  },
+  sec_filing: {
+    kind: "api",
+    apiBacked: true,
+    provider: "SEC EDGAR",
+    knowledgeBase: {
+      label: "NVIDIA filing ingestion and recent-filing signal in pullIntelligence() / signals()",
+      path: "app/api/forecast/route.ts",
+    },
+    feedIds: ["sec"],
+  },
+  market_confirmation: {
+    kind: "api",
+    apiBacked: true,
+    provider: "Finnhub QQQ + SOXX Quotes",
+    knowledgeBase: {
+      label: "QQQ/SOXX cross-market quote normalization and confirmation signal in pullIntelligence() / signals()",
+      path: "app/api/forecast/route.ts",
+    },
+    feedIds: ["cross_market"],
+  },
+  cross_market_volatility: {
+    kind: "api",
+    apiBacked: true,
+    provider: "Finnhub QQQ + SOXX Quotes",
+    knowledgeBase: {
+      label: "QQQ/SOXX intraday-range calculation and volatility signal in pullIntelligence() / signals()",
+      path: "app/api/forecast/route.ts",
+    },
+    feedIds: ["cross_market"],
+  },
+  monday: {
+    kind: "internal",
+    apiBacked: false,
+    provider: "Internal Calendar Engine",
+    knowledgeBase: {
+      label: "Target-date weekday rule in signals(); no external API",
+      path: "app/api/forecast/route.ts",
+    },
+    feedIds: [],
+  },
+  pay_period: {
+    kind: "internal",
+    apiBacked: false,
+    provider: "Internal Calendar Engine",
+    knowledgeBase: {
+      label: "Target-date day-of-month proximity rule in signals(); no external API",
+      path: "app/api/forecast/route.ts",
+    },
+    feedIds: [],
+  },
+};
+
 const schema = [
   `CREATE TABLE IF NOT EXISTS forecast_weights (key TEXT PRIMARY KEY NOT NULL,label TEXT NOT NULL,category TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,direction_weight REAL NOT NULL DEFAULT 0,range_weight REAL NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS market_events (id TEXT PRIMARY KEY NOT NULL,source TEXT NOT NULL,category TEXT NOT NULL,headline TEXT NOT NULL,summary TEXT NOT NULL,url TEXT NOT NULL,event_time INTEGER NOT NULL,severity REAL NOT NULL,created_at INTEGER NOT NULL)`,
@@ -67,6 +175,26 @@ function db() {
 }
 function finnhubKey() {
   return (globalThis as unknown as { process?: { env?: Record<string, string> } }).process?.env?.FINNHUB_API_KEY;
+}
+function weightsAdminEmails() {
+  const value = (globalThis as unknown as { process?: { env?: Record<string, string> } }).process?.env?.WEIGHTS_ADMIN_EMAILS ?? "";
+  return new Set(value.split(",").map((email) => email.trim().toLowerCase()).filter(Boolean));
+}
+function researchWriteError(request: Request) {
+  const authenticatedEmail = request.headers.get("oai-authenticated-user-email")?.trim();
+  if (!authenticatedEmail) return json({ error: "Authentication required for research writes" }, 401);
+  if (!weightsAdminEmails().has(authenticatedEmail.toLowerCase())) {
+    return json({ error: "This account is not authorized for shared research writes" }, 403);
+  }
+  const origin = request.headers.get("origin");
+  if (!origin) return null;
+  try {
+    return new URL(origin).origin === new URL(request.url).origin
+      ? null
+      : json({ error: "Cross-origin research writes are not allowed" }, 403);
+  } catch {
+    return json({ error: "Invalid request origin" }, 403);
+  }
 }
 async function ensure() {
   const d = db();
@@ -86,6 +214,43 @@ async function ensure() {
 const clean = (value: unknown) => (typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "");
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const valid = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+function factorSource(key: string, feeds: FeedStatus[], evaluatedAt: number): FactorSource {
+  const definition = factorSourceDefinitions[key];
+  if (!definition) {
+    return {
+      kind: "internal",
+      apiBacked: false,
+      provider: "Unmapped Forecast Configuration",
+      knowledgeBase: {
+        label: "No registered API or internal signal implementation",
+        path: "app/api/forecast/route.ts",
+      },
+      feedIds: [],
+      status: "offline",
+      lastChecked: null,
+    };
+  }
+  if (!definition.feedIds.length) {
+    return { ...definition, status: "live", lastChecked: evaluatedAt };
+  }
+  const feedById = new Map(feeds.map((feed) => [feed.id, feed]));
+  const related = definition.feedIds.map((id) => feedById.get(id));
+  const statuses = related.map((feed) => feed?.status ?? "offline");
+  const status: FeedStatus["status"] = statuses.every((value) => value === "live")
+    ? "live"
+    : statuses.every((value) => value === "offline")
+      ? "offline"
+      : "limited";
+  const checks = related.map((feed) => feed?.lastChecked).filter(valid);
+  return {
+    ...definition,
+    status,
+    // A composite is only as fresh as its oldest required source. Missing
+    // dependencies remain visibly unstamped instead of borrowing another
+    // feed's recent check time.
+    lastChecked: checks.length === definition.feedIds.length ? Math.min(...checks) : null,
+  };
+}
 function classify(headline: string, summary: string) {
   const text = `${headline} ${summary}`.toLowerCase();
   if (/iran|israel|missile|airstrike|air strike|war|hormuz|blockade|military strike|invasion|retaliat|ceasefire|sanction/.test(text))
@@ -111,6 +276,86 @@ function etDate(value: number) {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date(value));
+}
+function newYorkWallTime(date: string, time: string) {
+  const target = Date.UTC(
+    Number(date.slice(0, 4)),
+    Number(date.slice(4, 6)) - 1,
+    Number(date.slice(6, 8)),
+    Number(time.slice(0, 2)),
+    Number(time.slice(2, 4)),
+  );
+  let candidate = target;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).formatToParts(new Date(candidate)).map((part) => [part.type, part.value]),
+    );
+    const rendered = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour) % 24,
+      Number(parts.minute),
+    );
+    candidate += target - rendered;
+  }
+  return candidate;
+}
+function shiftDateKey(key: string, days: number) {
+  const date = new Date(`${key}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+function observedFixedDate(year: number, month: number, day: number) {
+  const date = new Date(Date.UTC(year, month, day));
+  const weekday = date.getUTCDay();
+  if (weekday === 6) date.setUTCDate(date.getUTCDate() - 1);
+  if (weekday === 0) date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+function nthWeekdayDate(year: number, month: number, weekday: number, n: number) {
+  const date = new Date(Date.UTC(year, month, 1));
+  date.setUTCDate(1 + ((7 + weekday - date.getUTCDay()) % 7) + (n - 1) * 7);
+  return date.toISOString().slice(0, 10);
+}
+function priorWeekday(key: string) {
+  let value = shiftDateKey(key, -1);
+  while ([0, 6].includes(new Date(`${value}T00:00:00Z`).getUTCDay())) value = shiftDateKey(value, -1);
+  return value;
+}
+function earlyCloseDate(key: string) {
+  const year = Number(key.slice(0, 4));
+  const afterThanksgiving = shiftDateKey(nthWeekdayDate(year, 10, 4, 4), 1);
+  const beforeIndependence = priorWeekday(observedFixedDate(year, 6, 4));
+  const christmasEve = `${year}-12-24`;
+  return key === afterThanksgiving || key === beforeIndependence ||
+    (key === christmasEve && observedFixedDate(year, 11, 25) !== christmasEve);
+}
+function regularMarketOpenNow(value = Date.now()) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(value)).map((part) => [part.type, part.value]),
+  );
+  const minute = Number(parts.hour) * 60 + Number(parts.minute);
+  const key = `${parts.year}-${parts.month}-${parts.day}`;
+  const closeMinute = earlyCloseDate(key) ? 780 : 960;
+  return !["Sat", "Sun"].includes(parts.weekday) && minute >= 570 && minute < closeMinute;
 }
 function eventTopic(event: EventRow) {
   const text = `${event.headline} ${event.summary}`.toLowerCase();
@@ -229,8 +474,12 @@ async function pullIntelligence(): Promise<PullResult> {
       detail: `${newsEndpoints}/2 news feeds responding`,
       lastChecked: checkedAt,
     });
-    if (earnings.status === "fulfilled") {
-      const list = ((earnings.value as { earningsCalendar?: Array<Record<string, unknown>> }).earningsCalendar ?? []);
+    const earningsList = earnings.status === "fulfilled" &&
+      Array.isArray((earnings.value as { earningsCalendar?: unknown }).earningsCalendar)
+      ? (earnings.value as { earningsCalendar: Array<Record<string, unknown>> }).earningsCalendar
+      : null;
+    if (earningsList) {
+      const list = earningsList;
       for (const item of list) {
         const date = clean(item.date);
         if (!date) continue;
@@ -249,29 +498,45 @@ async function pullIntelligence(): Promise<PullResult> {
     feeds.push({
       id: "earnings",
       label: "Earnings calendar",
-      status: earnings.status === "fulfilled" ? "live" : "offline",
-      detail: earnings.status === "fulfilled" ? "NVDA calendar checked" : "Calendar request failed",
+      status: earningsList ? "live" : earnings.status === "fulfilled" ? "limited" : "offline",
+      detail: earningsList
+        ? "NVDA calendar checked"
+        : earnings.status === "fulfilled"
+          ? "Calendar response did not contain the expected data shape"
+          : "Calendar request failed",
       lastChecked: checkedAt,
     });
+    let crossMarketStatus: FeedStatus["status"] = "offline";
     if (qqq.status === "fulfilled" && soxx.status === "fulfilled") {
       const qqqMove = changePct(qqq.value);
       const soxxMove = changePct(soxx.value);
       const ranges = [rangePct(qqq.value), rangePct(soxx.value)].filter(valid);
       const combined = valid(qqqMove) && valid(soxxMove) ? (qqqMove + soxxMove) / 2 : 0;
+      const observedTimes = [qqq.value.t, soxx.value.t].filter(valid).map((value) => value * 1000);
+      const oldestObservation = observedTimes.length === 2 ? Math.min(...observedTimes) : null;
+      const quoteDegraded = oldestObservation == null || !regularMarketOpenNow(checkedAt) || checkedAt - oldestObservation > 90_000;
+      const valuesAvailable = valid(qqqMove) && valid(soxxMove);
       market = {
-        available: true,
+        available: valuesAvailable && !quoteDegraded,
         signal: clamp(combined / 1.5, -1, 1),
         qqqChangePct: qqqMove,
         soxxChangePct: soxxMove,
         intradayRangePct: ranges.length ? ranges.reduce((sum, value) => sum + value, 0) / ranges.length : null,
-        asOf: Math.max((qqq.value.t ?? 0) * 1000, (soxx.value.t ?? 0) * 1000) || checkedAt,
+        asOf: oldestObservation,
       };
+      crossMarketStatus = valuesAvailable ? (quoteDegraded ? "limited" : "live") : "limited";
+    } else if (qqq.status === "fulfilled" || soxx.status === "fulfilled") {
+      crossMarketStatus = "limited";
     }
     feeds.push({
       id: "cross_market",
       label: "QQQ + SOXX",
-      status: market.available ? "live" : qqq.status === "fulfilled" || soxx.status === "fulfilled" ? "limited" : "offline",
-      detail: market.available ? "Cross-market confirmation active" : "One or more quotes unavailable",
+      status: crossMarketStatus,
+      detail: crossMarketStatus === "live"
+        ? "Cross-market confirmation active"
+        : crossMarketStatus === "limited"
+          ? "Quotes were checked but one or more inputs are closed, stale, untimestamped, or incomplete"
+          : "Both cross-market quotes are unavailable",
       lastChecked: checkedAt,
     });
   } else {
@@ -358,7 +623,7 @@ async function pullIntelligence(): Promise<PullResult> {
       if (!raw || !summary || !/consumer price|producer price|employment situation|job openings|productivity/i.test(summary)) continue;
       const date = raw[1];
       const time = raw[2] ?? "0830";
-      const stamp = Date.parse(`${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T${time.slice(0, 2)}:${time.slice(2)}:00-04:00`);
+      const stamp = newYorkWallTime(date, time);
       if (stamp < Date.now() - 864e5 || stamp > Date.now() + 45 * 864e5) continue;
       rows.push({
         id: `bls-${date}-${summary}`,
@@ -407,7 +672,10 @@ function signals(events: EventRow[], targetDate: string, market: MarketContext) 
         1,
       )
     : 0;
-  const newsLoad = recent.reduce(
+  const newsEvents = recent.filter(
+    (event) => !["Earnings", "Macro", "SEC filing"].includes(event.category),
+  );
+  const newsLoad = newsEvents.reduce(
     (sum, event) => sum + freshness(event) * (event.severity / 3) * Math.min(1.5, 0.75 + (event.clusterCount ?? 1) * 0.1),
     0,
   );
@@ -490,6 +758,7 @@ export async function GET(request: Request) {
     }
     const configuredWeights = await weights();
     const currentSignals = signals(intelligence.rows, targetDate, intelligence.market);
+    const signalEvaluatedAt = Date.now();
     const contributions = configuredWeights.map((weight) => {
       const signal = currentSignals[weight.key as keyof typeof currentSignals] ?? 0;
       return {
@@ -500,6 +769,7 @@ export async function GET(request: Request) {
         signal,
         directionBps: Boolean(weight.enabled) ? signal * weight.directionWeight : 0,
         rangePct: Boolean(weight.enabled) ? Math.abs(signal) * weight.rangeWeight : 0,
+        source: factorSource(weight.key, intelligence.feeds, signalEvaluatedAt),
       };
     });
     const snapshots = await d
@@ -508,7 +778,10 @@ export async function GET(request: Request) {
       )
       .all();
     return json({
-      weights: configuredWeights,
+      weights: configuredWeights.map((weight) => ({
+        ...weight,
+        source: factorSource(weight.key, intelligence.feeds, signalEvaluatedAt),
+      })),
       events: intelligence.rows.slice(0, 40),
       feeds: intelligence.feeds,
       marketContext: intelligence.market,
@@ -527,27 +800,45 @@ export async function GET(request: Request) {
 
 export async function PUT(request: Request) {
   try {
+    const authorizationError = researchWriteError(request);
+    if (authorizationError) return authorizationError;
     await ensure();
     const body = (await request.json()) as { weights?: Array<Partial<Weight>> };
-    if (!Array.isArray(body.weights)) return json({ error: "weights array required" }, 400);
+    if (!Array.isArray(body.weights) || body.weights.length === 0) return json({ error: "non-empty weights array required" }, 400);
+    const knownKeys = new Set(defaults.map((item) => item.key));
+    const seenKeys = new Set<string>();
+    const invalid = body.weights.find((weight) => {
+      const enabledValid = typeof weight.enabled === "boolean" || weight.enabled === 0 || weight.enabled === 1;
+      const directionValid = valid(weight.directionWeight) && weight.directionWeight >= -100 && weight.directionWeight <= 100;
+      const rangeValid = valid(weight.rangeWeight) && weight.rangeWeight >= -0.75 && weight.rangeWeight <= 2;
+      const keyValid = typeof weight.key === "string" && knownKeys.has(weight.key) && !seenKeys.has(weight.key);
+      if (typeof weight.key === "string") seenKeys.add(weight.key);
+      return !keyValid || !enabledValid || !directionValid || !rangeValid;
+    });
+    if (invalid) return json({ error: "Every weight must be a unique known factor with complete, in-range values" }, 400);
     const d = db();
     const now = Date.now();
     await d.batch(
-      body.weights
-        .filter((weight) => typeof weight.key === "string")
-        .map((weight) =>
+      body.weights.map((weight) =>
           d
             .prepare(`UPDATE forecast_weights SET enabled=?,direction_weight=?,range_weight=?,updated_at=? WHERE key=?`)
             .bind(
-              weight.enabled ? 1 : 0,
-              Math.max(-100, Math.min(100, Number(weight.directionWeight) || 0)),
-              Math.max(-0.75, Math.min(2, Number(weight.rangeWeight) || 0)),
+              weight.enabled === true || weight.enabled === 1 ? 1 : 0,
+              weight.directionWeight,
+              weight.rangeWeight,
               now,
               weight.key,
             ),
         ),
     );
-    return json({ weights: await weights() });
+    const [updatedWeights, intelligence] = await Promise.all([weights(), pullIntelligence()]);
+    const evaluatedAt = Date.now();
+    return json({
+      weights: updatedWeights.map((weight) => ({
+        ...weight,
+        source: factorSource(weight.key, intelligence.feeds, evaluatedAt),
+      })),
+    });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Unable to update weights" }, 503);
   }
@@ -555,6 +846,8 @@ export async function PUT(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const authorizationError = researchWriteError(request);
+    if (authorizationError) return authorizationError;
     await ensure();
     const body = (await request.json()) as Record<string, unknown>;
     const numericKeys = ["baseMedian", "adjustedMedian", "adjustedLow", "adjustedHigh"] as const;
@@ -568,7 +861,7 @@ export async function POST(request: Request) {
     const d = db();
     await d
       .prepare(
-        `INSERT INTO forecast_snapshots (target_date,captured_at,interval_label,base_median,adjusted_median,adjusted_low,adjusted_high,factors_json,actual_open,median_error) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(target_date,interval_label) DO UPDATE SET captured_at=excluded.captured_at,base_median=excluded.base_median,adjusted_median=excluded.adjusted_median,adjusted_low=excluded.adjusted_low,adjusted_high=excluded.adjusted_high,factors_json=excluded.factors_json,actual_open=COALESCE(excluded.actual_open,actual_open),median_error=COALESCE(excluded.median_error,median_error)`,
+        `INSERT INTO forecast_snapshots (target_date,captured_at,interval_label,base_median,adjusted_median,adjusted_low,adjusted_high,factors_json,actual_open,median_error) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(target_date,interval_label) DO NOTHING`,
       )
       .bind(
         body.targetDate,
@@ -585,7 +878,7 @@ export async function POST(request: Request) {
       .run();
     if (actual != null) {
       await d
-        .prepare(`UPDATE forecast_snapshots SET actual_open=?,median_error=ABS(?-adjusted_median) WHERE target_date=?`)
+        .prepare(`UPDATE forecast_snapshots SET actual_open=COALESCE(actual_open,?),median_error=COALESCE(median_error,ABS(?-adjusted_median)) WHERE target_date=?`)
         .bind(actual, actual, body.targetDate)
         .run();
     }
