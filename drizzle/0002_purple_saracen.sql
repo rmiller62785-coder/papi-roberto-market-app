@@ -1,4 +1,4 @@
-CREATE TABLE `automation_capture_health` (
+CREATE TABLE IF NOT EXISTS `automation_capture_health` (
 	`id` integer PRIMARY KEY NOT NULL,
 	`last_attempt_at` integer NOT NULL,
 	`last_success_at` integer,
