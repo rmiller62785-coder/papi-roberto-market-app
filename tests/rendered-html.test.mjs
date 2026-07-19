@@ -41,8 +41,9 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(page, /appliedRangePct/);
   assert.match(page, /MANUAL SCENARIO — NOT A LIVE ORDER/);
   assert.match(page, /STALE DATA — WAIT FOR RECOVERY/);
-  assert.match(page, /intervalLabel!=="T-5M"/);
-  assert.match(page, /outcomeRef/);
+  assert.match(page, /Capture mode: unattended server schedule/);
+  assert.match(page, /forecast\?\.automation\?\.lastSuccessAt/);
+  assert.doesNotMatch(page, /outcomeRef|snapshotRef|savedPlanRef/);
   assert.match(page, /COMPLETED BAR/);
   assert.match(page, /language-toggle/);
   assert.match(styles, /\.research-alert/);
@@ -91,6 +92,8 @@ test("pairs free event, calendar, filing, and cross-market sources", async () =>
   assert.match(forecast, /forecast_preopen_freezes/);
   assert.match(forecast, /PREOPEN_FROZEN_RESEARCH/);
   assert.match(forecast, /No pre-open feature snapshot exists/);
+  assert.match(forecast, /automation_capture_health/);
+  assert.match(forecast, /lastPreopenAt/);
   assert.match(market, /analysisBars/);
   assert.match(market, /targetSession/);
   assert.match(market, /regularCloseMinute/);

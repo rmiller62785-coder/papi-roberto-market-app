@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { createD1ScheduledCaptureStore, runScheduledCapture } from "../app/scheduled-capture";
 
 interface Env {
   ASSETS: Fetcher;
@@ -17,6 +18,11 @@ interface Env {
 interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException(): void;
+}
+
+interface ScheduledController {
+  cron: string;
+  scheduledTime: number;
 }
 
 // Image security config. SVG sources with .svg extension auto-skip the
@@ -41,6 +47,20 @@ const worker = {
     }
 
     return handler.fetch(request, env, ctx);
+  },
+
+  scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    const store = createD1ScheduledCaptureStore(env.DB);
+    ctx.waitUntil(
+      runScheduledCapture({
+        scheduledTime: controller.scheduledTime,
+        fetchApp: (path) =>
+          handler.fetch(new Request(new URL(path, "https://nvda-scheduler.internal")), env, ctx),
+        store,
+      })
+        .then((result) => console.log("NVDA scheduled capture", result))
+        .catch((error) => console.error("NVDA scheduled capture failed", error)),
+    );
   },
 };
 

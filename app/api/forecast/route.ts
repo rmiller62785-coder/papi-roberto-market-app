@@ -215,6 +215,7 @@ const schema = [
   `CREATE TABLE IF NOT EXISTS forecast_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,target_date TEXT NOT NULL,captured_at INTEGER NOT NULL,interval_label TEXT NOT NULL,base_median REAL NOT NULL,adjusted_median REAL NOT NULL,adjusted_low REAL NOT NULL,adjusted_high REAL NOT NULL,factors_json TEXT NOT NULL,actual_open REAL,median_error REAL)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS forecast_snapshots_target_interval_idx ON forecast_snapshots (target_date,interval_label)`,
   `CREATE TABLE IF NOT EXISTS forecast_preopen_freezes (target_date TEXT PRIMARY KEY NOT NULL,frozen_at INTEGER NOT NULL,payload_json TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS automation_capture_health (id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),last_attempt_at INTEGER NOT NULL,last_success_at INTEGER,last_preopen_at INTEGER,last_outcome_at INTEGER,scheduled_at INTEGER NOT NULL,phase TEXT NOT NULL,status TEXT NOT NULL,target_date TEXT,detail TEXT)`,
 ];
 
 let intelligenceCache: { targetDate: string; expires: number; value: PullResult } | null = null;
@@ -1201,11 +1202,14 @@ export async function GET(request: Request) {
         };
       }
     }
-    const snapshots = await d
-      .prepare(
+    const [snapshots, automation] = await Promise.all([
+      d.prepare(
         `SELECT id,target_date AS targetDate,captured_at AS capturedAt,interval_label AS intervalLabel,base_median AS baseMedian,adjusted_median AS adjustedMedian,adjusted_low AS adjustedLow,adjusted_high AS adjustedHigh,actual_open AS actualOpen,median_error AS medianError FROM forecast_snapshots ORDER BY captured_at DESC LIMIT 100`,
-      )
-      .all();
+      ).all(),
+      d.prepare(
+        `SELECT last_attempt_at AS lastAttemptAt,last_success_at AS lastSuccessAt,last_preopen_at AS lastPreopenAt,last_outcome_at AS lastOutcomeAt,scheduled_at AS scheduledAt,phase,status,target_date AS targetDate,detail FROM automation_capture_health WHERE id=1`,
+      ).first(),
+    ]);
     return json({
       weights: servedForecastBlock.weights,
       events: intelligence.rows.slice(0, 40),
@@ -1219,6 +1223,17 @@ export async function GET(request: Request) {
       methodology: servedForecastBlock.methodology,
       computedAt: servedForecastBlock.computedAt,
       snapshots: snapshots.results,
+      automation: automation ?? {
+        lastAttemptAt: null,
+        lastSuccessAt: null,
+        lastPreopenAt: null,
+        lastOutcomeAt: null,
+        scheduledAt: null,
+        phase: null,
+        status: "awaiting_first_run",
+        targetDate: null,
+        detail: "Cloudflare schedule is configured; no eligible capture window has completed yet.",
+      },
     });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Forecast intelligence unavailable" }, 503);

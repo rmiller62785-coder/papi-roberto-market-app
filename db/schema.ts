@@ -40,3 +40,22 @@ export const forecastSnapshots = sqliteTable("forecast_snapshots", {
   adjustedLow: real("adjusted_low").notNull(), adjustedHigh: real("adjusted_high").notNull(),
   factorsJson: text("factors_json").notNull(), actualOpen: real("actual_open"), medianError: real("median_error"),
 });
+
+export const forecastPreopenFreezes = sqliteTable("forecast_preopen_freezes", {
+  targetDate: text("target_date").primaryKey(),
+  frozenAt: integer("frozen_at").notNull(),
+  payloadJson: text("payload_json").notNull(),
+});
+
+export const automationCaptureHealth = sqliteTable("automation_capture_health", {
+  id: integer("id").primaryKey(),
+  lastAttemptAt: integer("last_attempt_at").notNull(),
+  lastSuccessAt: integer("last_success_at"),
+  lastPreopenAt: integer("last_preopen_at"),
+  lastOutcomeAt: integer("last_outcome_at"),
+  scheduledAt: integer("scheduled_at").notNull(),
+  phase: text("phase").notNull(),
+  status: text("status").notNull(),
+  targetDate: text("target_date"),
+  detail: text("detail"),
+});
