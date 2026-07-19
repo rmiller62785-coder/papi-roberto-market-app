@@ -1230,7 +1230,9 @@ export async function PUT(request: Request) {
     const authorizationError = researchWriteError(request);
     if (authorizationError) return authorizationError;
     await ensure();
-    const body = (await request.json()) as { weights?: Array<Partial<Weight>> };
+    const body = (await request.json()) as {
+      weights?: Array<Omit<Partial<Weight>, "enabled"> & { enabled?: number | boolean }>;
+    };
     if (!Array.isArray(body.weights) || body.weights.length === 0) return json({ error: "non-empty weights array required" }, 400);
     const knownKeys = new Set(defaults.map((item) => item.key));
     const seenKeys = new Set<string>();
