@@ -59,6 +59,25 @@ function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function libraryWriteError(request: Request) {
+  const email = request.headers.get("oai-authenticated-user-email")?.trim().toLowerCase();
+  const configured = (globalThis as unknown as { process?: { env?: Record<string, string> } }).process?.env?.WEIGHTS_ADMIN_EMAILS ?? "";
+  const allowed = new Set(configured.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean));
+  if (!email) return noStore({ error: "Authentication required for Library writes" }, { status: 401 });
+  if (!allowed.has(email)) return noStore({ error: "This account is not authorized for Library writes" }, { status: 403 });
+  const origin = request.headers.get("origin");
+  if (origin) {
+    try {
+      if (new URL(origin).host !== new URL(request.url).host) {
+        return noStore({ error: "Cross-origin Library writes are not allowed" }, { status: 403 });
+      }
+    } catch {
+      return noStore({ error: "Invalid request origin" }, { status: 403 });
+    }
+  }
+  return null;
+}
+
 function parsePlan(value: unknown): PlanInput | string {
   if (!value || typeof value !== "object") return "A JSON plan is required";
   const plan = value as Record<string, unknown>;
@@ -136,8 +155,13 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const authorizationError = libraryWriteError(request);
+    if (authorizationError) return authorizationError;
     const parsed = parsePlan(await request.json());
     if (typeof parsed === "string") return noStore({ error: parsed }, { status: 400 });
+    if (parsed.actualOpen != null || parsed.firstMinuteClose != null) {
+      return noStore({ error: "Create the point-in-time plan before outcomes; use PATCH to attach outcomes." }, { status: 409 });
+    }
 
     const db = database();
     await ensureSchema(db);
@@ -149,17 +173,10 @@ export async function POST(request: Request) {
         created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(date) DO UPDATE SET
-        signal = excluded.signal,
-        open_range_low = excluded.open_range_low,
-        open_range_high = excluded.open_range_high,
-        entry = excluded.entry,
-        stop = excluded.stop,
-        target = excluded.target,
-        expected_move = excluded.expected_move,
-        confidence = excluded.confidence,
-        rationale = excluded.rationale,
-        actual_open = excluded.actual_open,
-        first_minute_close = excluded.first_minute_close,
+        -- Freeze the original forecast/plan. Later writes may attach outcomes
+        -- but must never rewrite the recommendation with hindsight.
+        actual_open = COALESCE(library_plans.actual_open, excluded.actual_open),
+        first_minute_close = COALESCE(library_plans.first_minute_close, excluded.first_minute_close),
         updated_at = excluded.updated_at`)
       .bind(
         parsed.date,
@@ -191,5 +208,42 @@ export async function POST(request: Request) {
       { error: error instanceof Error ? error.message : "Unable to save plan" },
       { status: 503 },
     );
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const authorizationError = libraryWriteError(request);
+    if (authorizationError) return authorizationError;
+    const body = (await request.json()) as Record<string, unknown>;
+    if (typeof body.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(body.date)) {
+      return noStore({ error: "date must use YYYY-MM-DD" }, { status: 400 });
+    }
+    const actualOpen = body.actualOpen == null ? null : body.actualOpen;
+    const firstMinuteClose = body.firstMinuteClose == null ? null : body.firstMinuteClose;
+    if ((actualOpen != null && !finite(actualOpen)) || (firstMinuteClose != null && !finite(firstMinuteClose))) {
+      return noStore({ error: "Outcomes must be finite numbers or null" }, { status: 400 });
+    }
+    if (actualOpen == null && firstMinuteClose == null) {
+      return noStore({ error: "At least one outcome is required" }, { status: 400 });
+    }
+    const db = database();
+    await ensureSchema(db);
+    const result = await db
+      .prepare(`UPDATE library_plans SET
+        actual_open = COALESCE(actual_open, ?),
+        first_minute_close = COALESCE(first_minute_close, ?),
+        updated_at = ?
+        WHERE date = ?`)
+      .bind(actualOpen, firstMinuteClose, Date.now(), body.date)
+      .run();
+    if (!result.meta.changes) {
+      return noStore({ error: "No frozen pre-open plan exists for this date" }, { status: 404 });
+    }
+    const saved = await db.prepare(`SELECT ${selectColumns} FROM library_plans WHERE date = ?`).bind(body.date).first();
+    return noStore({ plan: saved });
+  } catch (error) {
+    if (error instanceof SyntaxError) return noStore({ error: "Request body must be valid JSON" }, { status: 400 });
+    return noStore({ error: error instanceof Error ? error.message : "Unable to attach outcomes" }, { status: 503 });
   }
 }

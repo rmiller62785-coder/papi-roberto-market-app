@@ -12,7 +12,7 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   ]);
 
   assert.match(page, /Nvidia/);
-  assert.match(page, /Expected open range/);
+  assert.match(page, /Transparent forecast bridge/);
   assert.match(page, /SessionChart/);
   assert.match(page, /research-alert/);
   assert.match(page, /Finnhub quote updated/);
@@ -34,6 +34,15 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(page, /firstMinuteComplete:manualMode\?false:data\.firstMinute\.complete/);
   assert.match(page, /FORMING_931/);
   assert.match(page, /FORMING BAR — WAIT FOR 9:31 CLOSE/);
+  assert.match(page, /INSUFFICIENT_TARGET_SESSION/);
+  assert.match(page, /targetSessionEvidence/);
+  assert.match(page, /Two linked views, one safety gate/);
+  assert.match(page, /Base-band method and limitation/);
+  assert.match(page, /appliedRangePct/);
+  assert.match(page, /MANUAL SCENARIO — NOT A LIVE ORDER/);
+  assert.match(page, /STALE DATA — WAIT FOR RECOVERY/);
+  assert.match(page, /intervalLabel!=="T-5M"/);
+  assert.match(page, /outcomeRef/);
   assert.match(page, /COMPLETED BAR/);
   assert.match(page, /language-toggle/);
   assert.match(styles, /\.research-alert/);
@@ -46,9 +55,10 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
 });
 
 test("pairs free event, calendar, filing, and cross-market sources", async () => {
-  const [forecast, market] = await Promise.all([
+  const [forecast, market, library] = await Promise.all([
     readFile(new URL("app/api/forecast/route.ts", root), "utf8"),
     readFile(new URL("app/api/market/route.ts", root), "utf8"),
+    readFile(new URL("app/api/library/route.ts", root), "utf8"),
   ]);
 
   assert.match(forecast, /Finnhub news/);
@@ -56,6 +66,10 @@ test("pairs free event, calendar, filing, and cross-market sources", async () =>
   assert.match(forecast, /SEC EDGAR/);
   assert.match(forecast, /BLS calendar/);
   assert.match(forecast, /QQQ \+ SOXX/);
+  assert.match(forecast, /Polymarket Gamma \+ CLOB/);
+  assert.match(forecast, /NQ \+ ES overnight futures/);
+  assert.match(forecast, /aggregateForecastContributions/);
+  assert.match(forecast, /DEGRADED_RANGE_ONLY/);
   assert.match(forecast, /clusterEvents/);
   assert.match(forecast, /buildFlag/);
   assert.match(forecast, /DIRECTION UNCONFIRMED/);
@@ -72,8 +86,17 @@ test("pairs free event, calendar, filing, and cross-market sources", async () =>
   assert.match(forecast, /Math\.min\(\.\.\.checks\)/);
   assert.match(forecast, /newYorkWallTime/);
   assert.match(forecast, /earlyCloseDate/);
+  assert.match(forecast, /safetyCapApplied/);
+  assert.match(forecast, /Opening forecasts freeze at 09:30 ET/);
+  assert.match(forecast, /forecast_preopen_freezes/);
+  assert.match(forecast, /PREOPEN_FROZEN_RESEARCH/);
+  assert.match(forecast, /No pre-open feature snapshot exists/);
   assert.match(market, /analysisBars/);
+  assert.match(market, /targetSession/);
   assert.match(market, /regularCloseMinute/);
   assert.match(market, /historyWindowStartObservedAt/);
   assert.match(market, /quoteObservedAtMs != null \? "ok" : "stale"/);
+  assert.match(library, /Freeze the original forecast\/plan/);
+  assert.match(library, /export async function PATCH/);
+  assert.match(library, /libraryWriteError/);
 });

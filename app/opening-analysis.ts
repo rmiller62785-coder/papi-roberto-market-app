@@ -10,6 +10,11 @@ export type Direction = "UP" | "DOWN" | "MIXED";
 export type PositionSide = "LONG" | "SHORT" | "WAIT";
 
 export type DailyObservation = {
+  /** ISO session date when available. Required for target-date leakage guards. */
+  date?: string;
+  /** Optional provider-normalized ISO key when `date` is display-formatted. */
+  dateKey?: string;
+  open?: number;
   high: number;
   low: number;
   close: number;
@@ -17,12 +22,16 @@ export type DailyObservation = {
 
 export type OpeningAnalysisInput = {
   daily: DailyObservation[];
+  /** Target session in YYYY-MM-DD form. Rows on/after it are never consumed. */
+  targetDate?: string;
   previousClose: number | null;
   referencePrice: number | null;
   premarketHigh: number | null;
   premarketLow: number | null;
   /** Optional live premarket price; referencePrice is used when omitted. */
   premarketCurrent?: number | null;
+  /** Point-in-time anchor reserved for estimating the open after live trading starts. */
+  openingReferencePrice?: number | null;
   rangeLow: number;
   lowerThird: number;
   upperThird: number;
@@ -42,6 +51,11 @@ export type OpeningAnalysisInput = {
    * A close/volume value can exist while that candle is still forming.
    */
   firstMinuteComplete?: boolean;
+  /**
+   * True only when the target session itself has supplied a qualified bar.
+   * Prior-session bars may inform context, but they must never create an order.
+   */
+  targetSessionEvidence?: boolean;
 };
 
 export type OpeningAnalysis = {
@@ -49,6 +63,16 @@ export type OpeningAnalysis = {
     median: number | null;
     low: number | null;
     high: number | null;
+    baseHalfWidth: number | null;
+    historicalGapSample: number;
+    coverageState: "UNCALIBRATED_PROXY";
+    method:
+      | "HISTORICAL_OVERNIGHT_GAP"
+      | "PREMARKET_RANGE"
+      | "DAILY_RANGE_FALLBACK"
+      | "PRICE_FLOOR_FALLBACK"
+      | "UNAVAILABLE";
+    rationale: string;
     basis: string;
   };
   scalp: {
@@ -69,7 +93,8 @@ export type OpeningAnalysis = {
       | "FORMING_931"
       | "CONFIRMED"
       | "REJECTED"
-      | "LOW_VOLUME";
+      | "LOW_VOLUME"
+      | "INSUFFICIENT_TARGET_SESSION";
     volumeRatio: number | null;
     zone: "LOWER THIRD" | "MIDDLE THIRD" | "UPPER THIRD" | "UNKNOWN";
     evidence: string[];
@@ -102,12 +127,81 @@ const percentile = (values: number[], p: number) => {
 const between = (value: number, low: number, high: number) =>
   value >= Math.min(low, high) && value <= Math.max(low, high);
 
+const ISO_SESSION_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const MINIMUM_GAP_SAMPLE = 5;
+
+const sessionDate = (day: DailyObservation) =>
+  typeof day.dateKey === "string" && ISO_SESSION_DATE.test(day.dateKey)
+    ? day.dateKey
+    : typeof day.date === "string" && ISO_SESSION_DATE.test(day.date)
+      ? day.date
+      : null;
+
+function priorChronologicalDaily(
+  daily: DailyObservation[],
+  targetDate: string | undefined,
+) {
+  const hasTargetCutoff = typeof targetDate === "string" && ISO_SESSION_DATE.test(targetDate);
+  const rows = daily
+    .map((day, suppliedIndex) => ({ day, suppliedIndex }))
+    .filter(({ day }) => {
+      if (!hasTargetCutoff) return true;
+      // Undated rows cannot be proven point-in-time safe for a dated target.
+      const date = sessionDate(day);
+      return date != null && date < targetDate!;
+    });
+
+  if (rows.every(({ day }) => sessionDate(day) != null)) {
+    rows.sort((a, b) => sessionDate(a.day)!.localeCompare(sessionDate(b.day)!) || a.suppliedIndex - b.suppliedIndex);
+  }
+  return rows.map(({ day }) => day);
+}
+
+function historicalOvernightGapRates(daily: DailyObservation[]) {
+  const rates: number[] = [];
+  for (let index = 1; index < daily.length; index += 1) {
+    const prior = daily[index - 1];
+    const current = daily[index];
+    const priorDate = sessionDate(prior);
+    const currentDate = sessionDate(current);
+    const interveningWeekdays = priorDate && currentDate
+      ? countWeekdaysBetween(priorDate, currentDate)
+      : Number.POSITIVE_INFINITY;
+    if (
+      priorDate == null ||
+      currentDate == null ||
+      currentDate <= priorDate ||
+      interveningWeekdays !== 0 ||
+      !finite(prior.close) ||
+      prior.close <= 0 ||
+      !finite(current.open)
+    ) continue;
+    rates.push(Math.abs(current.open / prior.close - 1));
+  }
+  return rates;
+}
+
+function countWeekdaysBetween(start: string, end: string) {
+  const cursor = new Date(`${start}T00:00:00Z`);
+  const last = new Date(`${end}T00:00:00Z`);
+  let weekdays = 0;
+  cursor.setUTCDate(cursor.getUTCDate() + 1);
+  while (cursor < last) {
+    if (![0, 6].includes(cursor.getUTCDay())) weekdays += 1;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return weekdays;
+}
+
 export function computeOpeningAnalysis(input: OpeningAnalysisInput): OpeningAnalysis {
-  const recent = input.daily.slice(-10);
+  const eligibleDaily = priorChronologicalDaily(input.daily, input.targetDate);
+  const recent = eligibleDaily.slice(-10);
   const typicalDailyRange = median(
     recent.map((day) => Math.max(0, day.high - day.low)),
   );
-  const reference = finite(input.premarketCurrent)
+  const reference = finite(input.openingReferencePrice)
+    ? input.openingReferencePrice
+    : finite(input.premarketCurrent)
     ? input.premarketCurrent
     : input.referencePrice;
   const hasPremarketRange =
@@ -134,15 +228,44 @@ export function computeOpeningAnalysis(input: OpeningAnalysisInput): OpeningAnal
   const premarketRange = hasPremarketRange
     ? input.premarketHigh! - input.premarketLow!
     : null;
-  // The band is an uncertainty display, not a confidence interval. It combines
-  // 15% of observed premarket range with 1.5% of typical daily range.
-  const openingHalfWidth = finite(openingMedian)
-    ? Math.max(
-        openingMedian * 0.0005,
-        (premarketRange ?? 0) * 0.15,
-        (typicalDailyRange ?? 0) * 0.015,
-      )
+  // The band is an uncalibrated uncertainty proxy, not a confidence interval. When at
+  // least five point-in-time-safe session pairs expose an official open, use
+  // the 75th percentile absolute overnight gap, scaled to the current median.
+  // Premarket dispersion remains an independent widening component. The old
+  // daily-range heuristic remains only as a transparent insufficient-data
+  // fallback.
+  const historicalGapRates = historicalOvernightGapRates(eligibleDaily);
+  const historicalGapRate = historicalGapRates.length >= MINIMUM_GAP_SAMPLE
+    ? percentile(historicalGapRates, 0.75)
     : null;
+  const priceFloorHalfWidth = finite(openingMedian) ? openingMedian * 0.0005 : null;
+  const premarketHalfWidth = premarketRange == null ? null : premarketRange * 0.15;
+  const historicalGapHalfWidth = finite(openingMedian) && finite(historicalGapRate)
+    ? openingMedian * historicalGapRate
+    : null;
+  const dailyRangeFallbackHalfWidth = typicalDailyRange == null
+    ? null
+    : typicalDailyRange * 0.015;
+  const candidates = [
+    priceFloorHalfWidth,
+    premarketHalfWidth,
+    historicalGapHalfWidth ?? dailyRangeFallbackHalfWidth,
+  ].filter(finite);
+  const openingHalfWidth = finite(openingMedian) && candidates.length
+    ? Math.max(...candidates)
+    : null;
+  const openingMethod: OpeningAnalysis["opening"]["method"] = !finite(openingHalfWidth)
+    ? "UNAVAILABLE"
+    : finite(historicalGapHalfWidth) && openingHalfWidth === historicalGapHalfWidth
+      ? "HISTORICAL_OVERNIGHT_GAP"
+      : finite(premarketHalfWidth) && openingHalfWidth === premarketHalfWidth
+        ? "PREMARKET_RANGE"
+        : finite(dailyRangeFallbackHalfWidth) && openingHalfWidth === dailyRangeFallbackHalfWidth
+          ? "DAILY_RANGE_FALLBACK"
+          : "PRICE_FLOOR_FALLBACK";
+  const openingRationale = finite(historicalGapHalfWidth)
+    ? `Uncalibrated proxy band uses the wider of current premarket dispersion and the 75th-percentile absolute overnight gap from ${historicalGapRates.length} adjacent weekday session pairs; ${input.targetDate ? "rows on or after the target date are excluded" : "the supplied history is treated as prior-session data"}. It is not empirical coverage for the blended median estimator.`
+    : `Only ${historicalGapRates.length} point-in-time-safe overnight gap pair${historicalGapRates.length === 1 ? "" : "s"} were available; at least ${MINIMUM_GAP_SAMPLE} are required, so the band falls back to observed premarket dispersion, recent daily range, and a minimum price floor.`;
 
   // The premarket reference anchors the expected-open estimate. Once live
   // trading begins, position state must use the current reference price rather
@@ -188,6 +311,8 @@ export function computeOpeningAnalysis(input: OpeningAnalysisInput): OpeningAnal
   if (side === "LONG" && finite(price) && Math.max(price, input.upperThird, input.pivotHigh) >= input.rangeHigh) side = "WAIT";
   if (side === "SHORT" && finite(price) && Math.min(price, input.lowerThird, input.pivotLow) <= input.rangeLow) side = "WAIT";
 
+  const hasTargetSessionEvidence = input.targetSessionEvidence !== false;
+  if (!hasTargetSessionEvidence) side = "WAIT";
   const setupSide = side;
   // Prefer actual NVDA 9:30-9:31 ranges. Fall back to a transparent range
   // heuristic only when the historical opening sample is unavailable.
@@ -219,6 +344,7 @@ export function computeOpeningAnalysis(input: OpeningAnalysisInput): OpeningAnal
     ? input.firstMinuteVolume / typicalOpeningVolume
     : null;
   let status: OpeningAnalysis["plan"]["status"] = "PREOPEN";
+  if (!hasTargetSessionEvidence) status = "INSUFFICIENT_TARGET_SESSION";
   if (setupSide !== "WAIT") status = "AWAITING_931";
   if (setupSide !== "WAIT" && finite(input.firstMinuteClose) && !firstMinuteComplete) {
     status = "FORMING_931";
@@ -272,6 +398,9 @@ export function computeOpeningAnalysis(input: OpeningAnalysisInput): OpeningAnal
       : finite(volumeRatio)
         ? `First-minute volume is ${volumeRatio.toFixed(2)}x its recent opening median.`
         : "The completed first-minute candle has no usable historical volume baseline.",
+    hasTargetSessionEvidence
+      ? "The setup uses target-session observations."
+      : "No qualified target-session bar exists; prior-session structure is context only and the position is forced to WAIT.",
   ];
 
   const alignedSignals = [zone !== "MIDDLE THIRD" && zone !== "UNKNOWN", !inPivot, emaBull || emaBear]
@@ -282,7 +411,12 @@ export function computeOpeningAnalysis(input: OpeningAnalysisInput): OpeningAnal
       median: finite(openingMedian) ? roundPrice(openingMedian) : null,
       low: finite(openingMedian) && finite(openingHalfWidth) ? roundPrice(openingMedian - openingHalfWidth) : null,
       high: finite(openingMedian) && finite(openingHalfWidth) ? roundPrice(openingMedian + openingHalfWidth) : null,
-      basis: "Weighted premarket quote (55%), premarket midpoint (30%), and prior close (15%), using only available observations; band width reflects recent and premarket ranges.",
+      baseHalfWidth: finite(openingHalfWidth) ? roundPrice(openingHalfWidth) : null,
+      historicalGapSample: historicalGapRates.length,
+      coverageState: "UNCALIBRATED_PROXY",
+      method: openingMethod,
+      rationale: openingRationale,
+      basis: "Median blends current/premarket reference (55%), premarket midpoint (30%), and prior close (15%) when available. Width is an explicitly uncalibrated proxy using adjacent-session gap magnitude until horizon-matched residual coverage is collected.",
     },
     scalp: {
       direction,

@@ -3,11 +3,20 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://aperture-nvda-plan.rmiller62785.chatgpt.site"),
-  title: "Nvidia Live Structure — NVDA Market Intelligence",
-  description: "Second-by-second NVDA market structure with full-session price action, EMA 9/21 behavior, pivots, thirds, premarket, and the 9:31 checkpoint.",
+  title: "NVDA Opening Intelligence — Transparent Market Research",
+  description: "Point-in-time NVDA opening research with live structure, candles, EMA behavior, event-risk evidence, Polymarket repricing, and a transparent base-to-final forecast bridge.",
   icons: { icon: "/favicon.svg" },
-  openGraph: { title: "Nvidia Live Structure", description: "NVDA price, EMA 9/21, pivots and thirds — live throughout the session.", images: [{ url: "/og.png", width: 1733, height: 909 }] },
-  twitter: { card: "summary_large_image", title: "Nvidia Live Structure", description: "NVDA price, EMA 9/21, pivots and thirds.", images: ["/og.png"] },
+  openGraph: {
+    title: "NVDA Opening Intelligence",
+    description: "Evidence → direction → uncertainty → opening range, with every input and price effect visible.",
+    images: [{ url: "/og-v2.png", width: 1733, height: 909 }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "NVDA Opening Intelligence",
+    description: "Transparent, point-in-time NVDA opening research.",
+    images: ["/og-v2.png"],
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

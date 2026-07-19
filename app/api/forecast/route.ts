@@ -1,4 +1,7 @@
 import { env } from "cloudflare:workers";
+import { pullPolymarketEvidence, type PolymarketEvidence } from "../../polymarket";
+import { aggregateForecastContributions } from "../../forecast-adjustment";
+import { classifyMarketEvent, earningsImpactSession } from "../../event-classification";
 
 type Weight = {
   key: string;
@@ -26,6 +29,7 @@ type FeedStatus = {
   status: "live" | "limited" | "offline";
   detail: string;
   lastChecked: number;
+  lastObserved?: number | null;
 };
 type FactorSource = {
   kind: "api" | "internal";
@@ -40,6 +44,15 @@ type FactorSource = {
   lastChecked: number | null;
 };
 type Quote = { c?: number; h?: number; l?: number; o?: number; pc?: number; t?: number };
+type YahooChart = {
+  chart?: {
+    result?: Array<{
+      meta?: { chartPreviousClose?: number; previousClose?: number };
+      timestamp?: number[];
+      indicators?: { quote?: Array<{ close?: Array<number | null> }> };
+    }>;
+  };
+};
 type MarketContext = {
   available: boolean;
   signal: number;
@@ -48,7 +61,22 @@ type MarketContext = {
   intradayRangePct: number | null;
   asOf: number | null;
 };
-type PullResult = { rows: EventRow[]; feeds: FeedStatus[]; market: MarketContext; updatedAt: number };
+type OvernightContext = {
+  available: boolean;
+  signal: number;
+  nqChangePct: number | null;
+  esChangePct: number | null;
+  asOf: number | null;
+  reason: string;
+};
+type PullResult = {
+  rows: EventRow[];
+  feeds: FeedStatus[];
+  market: MarketContext;
+  overnight: OvernightContext;
+  polymarket: PolymarketEvidence;
+  updatedAt: number;
+};
 
 const defaults = [
   { key: "geopolitical", label: "Geopolitical escalation", category: "News risk", directionWeight: 0, rangeWeight: 0.35 },
@@ -58,6 +86,8 @@ const defaults = [
   { key: "sec_filing", label: "New NVDA SEC filing", category: "Company", directionWeight: 0, rangeWeight: 0.2 },
   { key: "market_confirmation", label: "QQQ + semiconductor confirmation", category: "Cross-market", directionWeight: 30, rangeWeight: 0.05 },
   { key: "cross_market_volatility", label: "Cross-market volatility", category: "Cross-market", directionWeight: 0, rangeWeight: 0.15 },
+  { key: "overnight_futures", label: "Nasdaq + S&P overnight futures", category: "Cross-market", directionWeight: 45, rangeWeight: 0.15 },
+  { key: "prediction_market_repricing", label: "Polymarket event repricing", category: "Event market", directionWeight: 0, rangeWeight: 0.1 },
   { key: "monday", label: "Monday effect (experimental)", category: "Calendar", directionWeight: 0, rangeWeight: 0 },
   { key: "pay_period", label: "Pay-period proximity (experimental)", category: "Calendar", directionWeight: 0, rangeWeight: 0 },
 ];
@@ -136,6 +166,26 @@ const factorSourceDefinitions: Record<
     },
     feedIds: ["cross_market"],
   },
+  overnight_futures: {
+    kind: "api",
+    apiBacked: true,
+    provider: "Yahoo Finance public futures chart",
+    knowledgeBase: {
+      label: "NQ/ES overnight-market confirmation with provider timestamps and stale gating",
+      path: "app/api/forecast/route.ts",
+    },
+    feedIds: ["overnight_futures"],
+  },
+  prediction_market_repricing: {
+    kind: "api",
+    apiBacked: true,
+    provider: "Polymarket Gamma + CLOB",
+    knowledgeBase: {
+      label: "Versioned market selection, liquidity/spread gates, and probability change since the prior NVDA close",
+      path: "app/polymarket.ts",
+    },
+    feedIds: ["polymarket"],
+  },
   monday: {
     kind: "internal",
     apiBacked: false,
@@ -164,9 +214,10 @@ const schema = [
   `CREATE INDEX IF NOT EXISTS market_events_time_idx ON market_events (event_time DESC)`,
   `CREATE TABLE IF NOT EXISTS forecast_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,target_date TEXT NOT NULL,captured_at INTEGER NOT NULL,interval_label TEXT NOT NULL,base_median REAL NOT NULL,adjusted_median REAL NOT NULL,adjusted_low REAL NOT NULL,adjusted_high REAL NOT NULL,factors_json TEXT NOT NULL,actual_open REAL,median_error REAL)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS forecast_snapshots_target_interval_idx ON forecast_snapshots (target_date,interval_label)`,
+  `CREATE TABLE IF NOT EXISTS forecast_preopen_freezes (target_date TEXT PRIMARY KEY NOT NULL,frozen_at INTEGER NOT NULL,payload_json TEXT NOT NULL)`,
 ];
 
-let intelligenceCache: { expires: number; value: PullResult } | null = null;
+let intelligenceCache: { targetDate: string; expires: number; value: PullResult } | null = null;
 const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } });
 function db() {
@@ -209,6 +260,7 @@ async function ensure() {
         .bind(item.key, item.label, item.category, item.directionWeight, item.rangeWeight, now),
     ),
   );
+  await d.prepare(`UPDATE forecast_weights SET range_weight=0 WHERE range_weight<0`).run();
 }
 
 const clean = (value: unknown) => (typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "");
@@ -251,23 +303,20 @@ function factorSource(key: string, feeds: FeedStatus[], evaluatedAt: number): Fa
     lastChecked: checks.length === definition.feedIds.length ? Math.min(...checks) : null,
   };
 }
-function classify(headline: string, summary: string) {
-  const text = `${headline} ${summary}`.toLowerCase();
-  if (/iran|israel|missile|airstrike|air strike|war|hormuz|blockade|military strike|invasion|retaliat|ceasefire|sanction/.test(text))
-    return { category: "Geopolitical", severity: 3 };
-  if (/earnings|quarterly results|guidance|revenue forecast|eps estimate/.test(text))
-    return { category: "Earnings", severity: 2.5 };
-  if (/fomc|federal reserve|interest rate|inflation|\bcpi\b|\bppi\b|payroll|employment report|jobs report|job openings/.test(text))
-    return { category: "Macro", severity: 2.5 };
-  if (/nvidia|\bnvda\b|semiconductor|chip export|ai chip|data center gpu/.test(text))
-    return { category: "NVDA / Semis", severity: 2 };
-  return { category: "Market", severity: 1 };
-}
 function parseGdeltTime(value: unknown) {
   const raw = clean(value);
   const match = raw.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
   if (!match) return Date.parse(raw);
   return Date.UTC(+match[1], +match[2] - 1, +match[3], +match[4], +match[5], +match[6]);
+}
+function parseSecAcceptance(value: unknown) {
+  const raw = clean(value);
+  const compact = raw.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/);
+  if (compact) {
+    return Date.UTC(+compact[1], +compact[2] - 1, +compact[3], +compact[4], +compact[5], +compact[6]);
+  }
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : NaN;
 }
 function etDate(value: number) {
   return new Intl.DateTimeFormat("en-CA", {
@@ -326,6 +375,46 @@ function nthWeekdayDate(year: number, month: number, weekday: number, n: number)
   date.setUTCDate(1 + ((7 + weekday - date.getUTCDay()) % 7) + (n - 1) * 7);
   return date.toISOString().slice(0, 10);
 }
+function lastWeekdayDate(year: number, month: number, weekday: number) {
+  const date = new Date(Date.UTC(year, month + 1, 0));
+  date.setUTCDate(date.getUTCDate() - ((7 + date.getUTCDay() - weekday) % 7));
+  return date.toISOString().slice(0, 10);
+}
+function easterSunday(year: number) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31) - 1;
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(year, month, day));
+}
+function marketHoliday(key: string) {
+  const year = Number(key.slice(0, 4));
+  const goodFriday = easterSunday(year);
+  goodFriday.setUTCDate(goodFriday.getUTCDate() - 2);
+  return new Set([
+    observedFixedDate(year, 0, 1),
+    observedFixedDate(year + 1, 0, 1),
+    nthWeekdayDate(year, 0, 1, 3),
+    nthWeekdayDate(year, 1, 1, 3),
+    goodFriday.toISOString().slice(0, 10),
+    lastWeekdayDate(year, 4, 1),
+    observedFixedDate(year, 5, 19),
+    observedFixedDate(year, 6, 4),
+    nthWeekdayDate(year, 8, 1, 1),
+    nthWeekdayDate(year, 10, 4, 4),
+    observedFixedDate(year, 11, 25),
+  ]).has(key);
+}
 function priorWeekday(key: string) {
   let value = shiftDateKey(key, -1);
   while ([0, 6].includes(new Date(`${value}T00:00:00Z`).getUTCDay())) value = shiftDateKey(value, -1);
@@ -338,6 +427,24 @@ function earlyCloseDate(key: string) {
   const christmasEve = `${year}-12-24`;
   return key === afterThanksgiving || key === beforeIndependence ||
     (key === christmasEve && observedFixedDate(year, 11, 25) !== christmasEve);
+}
+function previousMarketSession(key: string) {
+  let prior = shiftDateKey(key, -1);
+  while (new Date(`${prior}T00:00:00Z`).getUTCDay() % 6 === 0 || marketHoliday(prior)) {
+    prior = shiftDateKey(prior, -1);
+  }
+  return prior;
+}
+function nextMarketSession(key: string) {
+  let next = shiftDateKey(key, 1);
+  while (new Date(`${next}T00:00:00Z`).getUTCDay() % 6 === 0 || marketHoliday(next)) {
+    next = shiftDateKey(next, 1);
+  }
+  return next;
+}
+function priorSessionCloseMs(targetDate: string) {
+  const prior = previousMarketSession(targetDate);
+  return newYorkWallTime(prior.replace(/-/g, ""), earlyCloseDate(prior) ? "1300" : "1600");
 }
 function regularMarketOpenNow(value = Date.now()) {
   const parts = Object.fromEntries(
@@ -355,7 +462,7 @@ function regularMarketOpenNow(value = Date.now()) {
   const minute = Number(parts.hour) * 60 + Number(parts.minute);
   const key = `${parts.year}-${parts.month}-${parts.day}`;
   const closeMinute = earlyCloseDate(key) ? 780 : 960;
-  return !["Sat", "Sun"].includes(parts.weekday) && minute >= 570 && minute < closeMinute;
+  return !["Sat", "Sun"].includes(parts.weekday) && !marketHoliday(key) && minute >= 570 && minute < closeMinute;
 }
 function eventTopic(event: EventRow) {
   const text = `${event.headline} ${event.summary}`.toLowerCase();
@@ -410,6 +517,31 @@ async function quote(symbol: string, key: string) {
   if (!valid(payload.c) || !valid(payload.pc) || payload.pc <= 0) throw new Error("Quote unavailable");
   return payload;
 }
+async function yahooFuturesQuote(symbol: string) {
+  const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`);
+  url.searchParams.set("interval", "5m");
+  url.searchParams.set("range", "2d");
+  url.searchParams.set("includePrePost", "true");
+  const payload = (await fetchJson(url.toString(), {
+    "User-Agent": "Mozilla/5.0 NVDA-Opening-Research/2.0",
+  })) as YahooChart;
+  const chart = payload.chart?.result?.[0];
+  const timestamps = chart?.timestamp ?? [];
+  const closes = chart?.indicators?.quote?.[0]?.close ?? [];
+  let observedAt: number | null = null;
+  let price: number | null = null;
+  for (let index = Math.min(timestamps.length, closes.length) - 1; index >= 0; index -= 1) {
+    if (!valid(closes[index])) continue;
+    observedAt = timestamps[index] * 1000;
+    price = closes[index] as number;
+    break;
+  }
+  const previousClose = chart?.meta?.chartPreviousClose ?? chart?.meta?.previousClose ?? null;
+  if (!valid(price) || !valid(previousClose) || previousClose <= 0 || !valid(observedAt)) {
+    throw new Error("Futures chart did not contain a timestamped quote");
+  }
+  return { price, previousClose, changePct: ((price / previousClose) - 1) * 100, observedAt };
+}
 function changePct(value: Quote) {
   return valid(value.c) && valid(value.pc) && value.pc > 0 ? ((value.c / value.pc) - 1) * 100 : null;
 }
@@ -417,8 +549,8 @@ function rangePct(value: Quote) {
   return valid(value.h) && valid(value.l) && valid(value.pc) && value.pc > 0 ? ((value.h - value.l) / value.pc) * 100 : null;
 }
 
-async function pullIntelligence(): Promise<PullResult> {
-  if (intelligenceCache && intelligenceCache.expires > Date.now()) return intelligenceCache.value;
+async function pullIntelligence(targetDate: string): Promise<PullResult> {
+  if (intelligenceCache && intelligenceCache.targetDate === targetDate && intelligenceCache.expires > Date.now()) return intelligenceCache.value;
   const checkedAt = Date.now();
   const now = Math.floor(checkedAt / 1000);
   const from = new Date(checkedAt - 3 * 864e5).toISOString().slice(0, 10);
@@ -433,6 +565,14 @@ async function pullIntelligence(): Promise<PullResult> {
     soxxChangePct: null,
     intradayRangePct: null,
     asOf: null,
+  };
+  let overnight: OvernightContext = {
+    available: false,
+    signal: 0,
+    nqChangePct: null,
+    esChangePct: null,
+    asOf: null,
+    reason: "No fresh overnight futures observation",
   };
 
   if (key) {
@@ -451,10 +591,10 @@ async function pullIntelligence(): Promise<PullResult> {
       for (const item of result.value.slice(0, 100) as Array<Record<string, unknown>>) {
         const headline = clean(item.headline);
         const summary = clean(item.summary);
-        const classification = classify(headline, summary);
-        const time = Number(item.datetime) || now;
-        if (!headline || time < now - 3 * 86400) continue;
-        if (classification.severity < 2 && !/nvidia|nvda|semiconductor|nasdaq|oil|iran|israel|war|fed|inflation/i.test(`${headline} ${summary}`)) continue;
+        const classification = classifyMarketEvent(headline, summary);
+        const time = Number(item.datetime);
+        if (!headline || !Number.isFinite(time) || time <= 0 || time < now - 3 * 86400) continue;
+        if (classification.severity < 2 && !/\b(?:nvidia|nvda|semiconductors?|nasdaq|oil|iran|israel|war|fed|inflation)\b/i.test(`${headline} ${summary}`)) continue;
         rows.push({
           id: `fh-${item.id ?? time}-${headline.slice(0, 20)}`,
           source: clean(item.source) || "Finnhub",
@@ -483,14 +623,16 @@ async function pullIntelligence(): Promise<PullResult> {
       for (const item of list) {
         const date = clean(item.date);
         if (!date) continue;
+        const providerHour = clean(item.hour) || "time not supplied";
+        const impactDate = earningsImpactSession(date, providerHour, nextMarketSession);
         rows.push({
-          id: `earn-${date}-${item.symbol}`,
+          id: `earn-${date}-${providerHour}-${item.symbol}`,
           source: "Finnhub earnings calendar",
           category: "Earnings",
-          headline: `${item.symbol ?? "NVDA"} earnings scheduled`,
-          summary: `Scheduled ${item.hour ?? "time not supplied"}; EPS estimate ${item.epsEstimate ?? "—"}.`,
+          headline: `${item.symbol ?? "NVDA"} earnings scheduled · impacts ${impactDate} open`,
+          summary: `Provider timing ${providerHour} on ${date}; EPS estimate ${item.epsEstimate ?? "—"}. After-close releases are mapped to the next U.S. market session.`,
           url: "",
-          eventTime: Date.parse(`${date}T12:00:00Z`),
+          eventTime: newYorkWallTime(impactDate.replace(/-/g, ""), "0830"),
           severity: 3,
         });
       }
@@ -554,7 +696,7 @@ async function pullIntelligence(): Promise<PullResult> {
   gdeltUrl.searchParams.set("format", "json");
   gdeltUrl.searchParams.set("timespan", "72h");
   gdeltUrl.searchParams.set("sort", "HybridRel");
-  const [gdelt, sec, bls] = await Promise.allSettled([
+  const [gdelt, sec, bls, nq, es, predictionMarkets] = await Promise.allSettled([
     fetchJson(gdeltUrl.toString()),
     fetchJson("https://data.sec.gov/submissions/CIK0001045810.json", {
       "User-Agent": "NVDA Opening Intelligence personal research contact@example.com",
@@ -567,14 +709,81 @@ async function pullIntelligence(): Promise<PullResult> {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return response.text();
     }),
+    yahooFuturesQuote("NQ=F"),
+    yahooFuturesQuote("ES=F"),
+    pullPolymarketEvidence({ priorCloseCutoffMs: priorSessionCloseMs(targetDate) }),
   ]);
+
+  if (nq.status === "fulfilled" && es.status === "fulfilled") {
+    const oldestObservation = Math.min(nq.value.observedAt, es.value.observedAt);
+    const priorClose = priorSessionCloseMs(targetDate);
+    const targetOpen = newYorkWallTime(targetDate.replace(/-/g, ""), "0930");
+    const outsideTargetWindow = oldestObservation < priorClose || oldestObservation > targetOpen || checkedAt >= targetOpen;
+    const stale = checkedAt - oldestObservation > 20 * 60_000 || oldestObservation > checkedAt + 60_000;
+    const unavailable = stale || outsideTargetWindow;
+    const combined = (nq.value.changePct + es.value.changePct) / 2;
+    overnight = {
+      available: !unavailable,
+      signal: unavailable ? 0 : clamp(combined / 1.25, -1, 1),
+      nqChangePct: nq.value.changePct,
+      esChangePct: es.value.changePct,
+      asOf: oldestObservation,
+      reason: stale
+        ? "Futures observations exist but are stale or have invalid clock skew"
+        : outsideTargetWindow
+          ? "Futures observation is outside the prior-close-to-target-open window"
+          : "Fresh Nasdaq and S&P futures agree inside the target overnight window",
+    };
+    feeds.push({
+      id: "overnight_futures",
+      label: "NQ + ES overnight futures",
+      status: unavailable ? "limited" : "live",
+      detail: overnight.reason,
+      lastChecked: checkedAt,
+      lastObserved: oldestObservation,
+    });
+  } else {
+    feeds.push({
+      id: "overnight_futures",
+      label: "NQ + ES overnight futures",
+      status: nq.status === "fulfilled" || es.status === "fulfilled" ? "limited" : "offline",
+      detail: "One or both public futures charts are unavailable",
+      lastChecked: checkedAt,
+      lastObserved: null,
+    });
+  }
+  const polymarket: PolymarketEvidence = predictionMarkets.status === "fulfilled"
+    ? predictionMarkets.value
+    : {
+        provider: "Polymarket Gamma + CLOB",
+        selectorVersion: "geopolitical-v1",
+        status: "offline",
+        signalState: "unavailable",
+        reason: "Polymarket discovery, order book, or history request failed.",
+        checkedAt,
+        providerObservedAt: null,
+        priorCloseCutoffAt: priorSessionCloseMs(targetDate),
+        signedRiskOffShock: 0,
+        rangeSignal: 0,
+        nvdaDirection: null,
+        primaryMarketId: null,
+        markets: [],
+      };
+  feeds.push({
+    id: "polymarket",
+    label: "Polymarket event repricing",
+    status: polymarket.status,
+    detail: polymarket.reason,
+    lastChecked: polymarket.checkedAt,
+    lastObserved: polymarket.providerObservedAt,
+  });
 
   if (gdelt.status === "fulfilled") {
     const articles = ((gdelt.value as { articles?: Array<Record<string, unknown>> }).articles ?? []);
     for (const item of articles) {
       const headline = clean(item.title);
       const time = parseGdeltTime(item.seendate);
-      const classification = classify(headline, "");
+      const classification = classifyMarketEvent(headline, "");
       if (!headline || !Number.isFinite(time) || classification.severity < 2) continue;
       rows.push({
         id: `gdelt-${clean(item.url).slice(-80) || `${time}-${headline.slice(0, 25)}`}`,
@@ -589,7 +798,16 @@ async function pullIntelligence(): Promise<PullResult> {
     }
     feeds.push({ id: "gdelt", label: "GDELT global news", status: "live", detail: `${articles.length} recent articles scanned`, lastChecked: checkedAt });
   } else {
-    feeds.push({ id: "gdelt", label: "GDELT global news", status: "limited", detail: "No-key feed rate-limited or unavailable; Finnhub remains active", lastChecked: checkedAt });
+    const finnhubNewsStatus = feeds.find((feed) => feed.id === "finnhub_news")?.status ?? "offline";
+    feeds.push({
+      id: "gdelt",
+      label: "GDELT global news",
+      status: finnhubNewsStatus === "offline" ? "offline" : "limited",
+      detail: finnhubNewsStatus === "offline"
+        ? "No-key feed is rate-limited or unavailable, and Finnhub news is also offline"
+        : "No-key feed is rate-limited or unavailable; Finnhub news remains available",
+      lastChecked: checkedAt,
+    });
   }
 
   if (sec.status === "fulfilled") {
@@ -598,17 +816,18 @@ async function pullIntelligence(): Promise<PullResult> {
     if (recent) {
       for (let index = 0; index < Math.min(20, recent.form?.length ?? 0); index += 1) {
         const filed = recent.filingDate?.[index];
+        const accepted = parseSecAcceptance(recent.acceptanceDateTime?.[index]);
         const form = recent.form?.[index];
         const accession = recent.accessionNumber?.[index];
-        if (!filed || !form || !accession || Date.parse(filed) < Date.now() - 7 * 864e5 || !/^(8-K|10-Q|10-K|4)$/.test(form)) continue;
+        if (!filed || !Number.isFinite(accepted) || !form || !accession || accepted < Date.now() - 7 * 864e5 || !/^(8-K|10-Q|10-K|4)$/.test(form)) continue;
         rows.push({
           id: `sec-${accession}`,
           source: "SEC EDGAR",
           category: "SEC filing",
           headline: `NVIDIA filed Form ${form}`,
-          summary: `Official filing disseminated ${filed}.`,
+          summary: `Official filing accepted ${new Date(accepted).toISOString()}.`,
           url: `https://www.sec.gov/Archives/edgar/data/1045810/${accession.replace(/-/g, "")}/`,
-          eventTime: Date.parse(`${filed}T12:00:00Z`),
+          eventTime: accepted,
           severity: form === "8-K" ? 2.5 : 2,
         });
       }
@@ -648,13 +867,21 @@ async function pullIntelligence(): Promise<PullResult> {
       return (b.severity * 1e13 + b.eventTime) - (a.severity * 1e13 + a.eventTime);
     })
     .slice(0, 100);
-  const value = { rows: clustered, feeds, market, updatedAt: checkedAt };
-  intelligenceCache = { expires: checkedAt + 10 * 60_000, value };
+  const value = { rows: clustered, feeds, market, overnight, polymarket, updatedAt: checkedAt };
+  intelligenceCache = { targetDate, expires: checkedAt + 60_000, value };
   return value;
 }
 
-function signals(events: EventRow[], targetDate: string, market: MarketContext) {
+function signals(
+  events: EventRow[],
+  targetDate: string,
+  market: MarketContext,
+  overnight: OvernightContext,
+  polymarket: PolymarketEvidence,
+) {
   const now = Date.now();
+  const targetOpen = newYorkWallTime(targetDate.replace(/-/g, ""), "0930");
+  const preOpen = now < targetOpen;
   const recent = events.filter((event) => event.eventTime >= now - 72 * 3600_000 && event.eventTime <= now + 10 * 60_000);
   const target = events.filter((event) => etDate(event.eventTime) === targetDate);
   const day = Number(targetDate.slice(-2));
@@ -673,21 +900,25 @@ function signals(events: EventRow[], targetDate: string, market: MarketContext) 
       )
     : 0;
   const newsEvents = recent.filter(
-    (event) => !["Earnings", "Macro", "SEC filing"].includes(event.category),
+    (event) => !["Geopolitical", "Geopolitical de-escalation", "Earnings", "Macro", "SEC filing"].includes(event.category),
   );
   const newsLoad = newsEvents.reduce(
     (sum, event) => sum + freshness(event) * (event.severity / 3) * Math.min(1.5, 0.75 + (event.clusterCount ?? 1) * 0.1),
     0,
   );
-  const volatility = market.intradayRangePct == null ? 0 : clamp((market.intradayRangePct - 0.5) / 2, 0, 1);
+  const volatility = !market.available || market.intradayRangePct == null ? 0 : clamp((market.intradayRangePct - 0.5) / 2, 0, 1);
   return {
     geopolitical,
     news_intensity: clamp(newsLoad / 6, 0, 1),
     nvda_earnings: target.some((event) => event.category === "Earnings") ? 1 : 0,
     macro_release: target.some((event) => event.category === "Macro") ? 1 : 0,
     sec_filing: recent.some((event) => event.category === "SEC filing") ? 1 : 0,
-    market_confirmation: market.available ? market.signal : 0,
-    cross_market_volatility: volatility,
+    // Opening forecasts freeze at 09:30 ET. Same-session observations after
+    // the open are audit data and cannot rewrite the expected open.
+    market_confirmation: preOpen && market.available ? market.signal : 0,
+    cross_market_volatility: preOpen ? volatility : 0,
+    overnight_futures: overnight.available ? overnight.signal : 0,
+    prediction_market_repricing: polymarket.signalState === "active" ? polymarket.rangeSignal : 0,
     monday: weekday === 1 ? 1 : 0,
     pay_period: day <= 3 || Math.abs(day - 15) <= 2 ? 1 : 0,
   };
@@ -698,30 +929,37 @@ async function weights() {
     .all();
   return result.results as unknown as Weight[];
 }
-function buildFlag(signal: ReturnType<typeof signals>, events: EventRow[], targetDate: string, updatedAt: number) {
+function buildFlag(signal: ReturnType<typeof signals>, events: EventRow[], targetDate: string, updatedAt: number, weightedDirectionBps: number) {
   const score = Math.round(
     clamp(
-      signal.geopolitical * 40 +
+      Math.max(signal.geopolitical * 40, signal.prediction_market_repricing * 20) +
         signal.news_intensity * 15 +
         signal.nvda_earnings * 30 +
         signal.macro_release * 25 +
         signal.sec_filing * 15 +
         Math.abs(signal.market_confirmation) * 15 +
-        signal.cross_market_volatility * 15,
+        signal.cross_market_volatility * 15 +
+        Math.abs(signal.overnight_futures) * 10,
       0,
       100,
     ),
   );
   const level = score >= 75 ? "CRITICAL" : score >= 50 ? "HIGH" : score >= 25 ? "ELEVATED" : "CLEAR";
-  const direction = signal.market_confirmation >= 0.12 ? "BULLISH CONFIRMATION" : signal.market_confirmation <= -0.12 ? "BEARISH CONFIRMATION" : "DIRECTION UNCONFIRMED";
+  const direction = weightedDirectionBps >= 0.5
+    ? "BULLISH CONFIRMATION"
+    : weightedDirectionBps <= -0.5
+      ? "BEARISH CONFIRMATION"
+      : "DIRECTION UNCONFIRMED";
   const reasons: string[] = [];
   if (signal.geopolitical >= 0.25) reasons.push("Geopolitical escalation");
   if (signal.news_intensity >= 0.35) reasons.push("Breaking-news cluster");
   if (signal.nvda_earnings) reasons.push("NVDA earnings on target session");
   if (signal.macro_release) reasons.push("Major U.S. macro release");
   if (signal.sec_filing) reasons.push("Recent NVIDIA filing");
-  if (Math.abs(signal.market_confirmation) >= 0.12) reasons.push(direction === "BULLISH CONFIRMATION" ? "QQQ/SOXX confirming higher" : "QQQ/SOXX confirming lower");
+  if (Math.abs(signal.market_confirmation) >= 0.12) reasons.push(signal.market_confirmation > 0 ? "QQQ/SOXX confirming higher" : "QQQ/SOXX confirming lower");
   if (signal.cross_market_volatility >= 0.3) reasons.push("Elevated cross-market range");
+  if (Math.abs(signal.overnight_futures) >= 0.12) reasons.push(signal.overnight_futures > 0 ? "Nasdaq/S&P futures confirming higher" : "Nasdaq/S&P futures confirming lower");
+  if (signal.prediction_market_repricing >= 0.02) reasons.push("Prediction-market event repricing");
   const next = events
     .filter((event) => event.eventTime >= Date.now() - 15 * 60_000 && etDate(event.eventTime) <= targetDate)
     .sort((a, b) => a.eventTime - b.eventTime)[0];
@@ -737,12 +975,43 @@ function buildFlag(signal: ReturnType<typeof signals>, events: EventRow[], targe
   };
 }
 
+function contributionMethod(
+  weight: Weight,
+  signal: number,
+  source: FactorSource,
+  signedSource: boolean,
+) {
+  const enabled = Boolean(weight.enabled);
+  const dedupeGroup = ["geopolitical", "prediction_market_repricing"].includes(weight.key)
+    ? "geopolitical_event"
+    : weight.key;
+  if (!enabled) return { effectMode: "disabled", reason: "Disabled by the research control.", dedupeGroup };
+  if (source.status === "offline") return { effectMode: "no_signal", reason: "Required source is offline; contribution is gated to zero.", dedupeGroup };
+  if (Math.abs(signal) < 0.0001) return { effectMode: "no_signal", reason: "Source was checked but no qualifying point-in-time signal is active.", dedupeGroup };
+  if (signedSource && Math.abs(weight.directionWeight) > 0.0001) {
+    return {
+      effectMode: "direction_and_range",
+      reason: "A signed market-price confirmation can move the central estimate; any configured uncertainty weight also expands the band.",
+      dedupeGroup,
+    };
+  }
+  return {
+    effectMode: "range_only",
+    reason: !signedSource && Math.abs(weight.directionWeight) > 0.0001
+      ? "This source is an unsigned severity/proximity signal. Its manual direction weight is ignored until a signed mapping is validated."
+      : weight.key === "prediction_market_repricing"
+      ? "Polymarket repricing widens event uncertainty but is not assumed to predict NVDA direction before calibration."
+      : "Event severity expands uncertainty; no validated directional coefficient is configured.",
+    dedupeGroup,
+  };
+}
+
 export async function GET(request: Request) {
   try {
     await ensure();
     const url = new URL(request.url);
     const targetDate = url.searchParams.get("targetDate") ?? new Date().toISOString().slice(0, 10);
-    const intelligence = await pullIntelligence();
+    const intelligence = await pullIntelligence(targetDate);
     const d = db();
     const now = Date.now();
     if (intelligence.rows.length) {
@@ -757,40 +1026,198 @@ export async function GET(request: Request) {
       );
     }
     const configuredWeights = await weights();
-    const currentSignals = signals(intelligence.rows, targetDate, intelligence.market);
+    const currentSignals = signals(
+      intelligence.rows,
+      targetDate,
+      intelligence.market,
+      intelligence.overnight,
+      intelligence.polymarket,
+    );
     const signalEvaluatedAt = Date.now();
-    const contributions = configuredWeights.map((weight) => {
+    const rawContributions = configuredWeights.map((weight) => {
       const signal = currentSignals[weight.key as keyof typeof currentSignals] ?? 0;
+      const source = factorSource(weight.key, intelligence.feeds, signalEvaluatedAt);
+      const eligible = Boolean(weight.enabled) && source.status !== "offline";
+      const signedSource = ["market_confirmation", "overnight_futures"].includes(weight.key);
       return {
         key: weight.key,
         label: weight.label,
         category: weight.category,
         enabled: Boolean(weight.enabled),
         signal,
-        directionBps: Boolean(weight.enabled) ? signal * weight.directionWeight : 0,
-        rangePct: Boolean(weight.enabled) ? Math.abs(signal) * weight.rangeWeight : 0,
-        source: factorSource(weight.key, intelligence.feeds, signalEvaluatedAt),
+        directionBps: eligible && signedSource ? signal * weight.directionWeight : 0,
+        rangePct: eligible ? Math.abs(signal) * Math.max(0, weight.rangeWeight) : 0,
+        source,
+        ...contributionMethod(weight, signal, source, signedSource),
       };
     });
+    const rangeWinnerByGroup = new Map<string, string>();
+    for (const item of rawContributions) {
+      if (Math.abs(item.rangePct) < 0.0001) continue;
+      const priorKey = rangeWinnerByGroup.get(item.dedupeGroup);
+      const prior = priorKey ? rawContributions.find((candidate) => candidate.key === priorKey) : undefined;
+      if (!prior || Math.abs(item.rangePct) > Math.abs(prior.rangePct)) {
+        rangeWinnerByGroup.set(item.dedupeGroup, item.key);
+      }
+    }
+    const dedupedContributions = rawContributions.map((item) => {
+      const appliedRangePct = rangeWinnerByGroup.get(item.dedupeGroup) === item.key ? item.rangePct : 0;
+      const deduped = Math.abs(item.rangePct) >= 0.0001 && appliedRangePct === 0;
+      return {
+        ...item,
+        appliedDirectionBps: item.directionBps,
+        appliedRangePct,
+        applied: Math.abs(item.directionBps) >= 0.0001 || Math.abs(appliedRangePct) >= 0.0001,
+        reason: deduped
+          ? `${item.reason} Visible as correlated evidence; its range effect is deduplicated in favor of the stronger factor in ${item.dedupeGroup}.`
+          : item.reason,
+      };
+    });
+    const { directionBps, rangeExpansionPct, rangeMultiplier, rawDirectionBps, rawRangeExpansionPct, safetyCapApplied } = aggregateForecastContributions(dedupedContributions);
+    const directionScale = Math.abs(rawDirectionBps) < 0.0001 ? 0 : directionBps / rawDirectionBps;
+    const rangeScale = Math.abs(rawRangeExpansionPct) < 0.0001 ? 0 : rangeExpansionPct / rawRangeExpansionPct;
+    const contributions = dedupedContributions.map((item) => {
+      const appliedDirectionBps = item.appliedDirectionBps * directionScale;
+      const appliedRangePct = item.appliedRangePct * rangeScale;
+      return {
+        ...item,
+        appliedDirectionBps,
+        appliedRangePct,
+        applied: Math.abs(appliedDirectionBps) >= 0.0001 || Math.abs(appliedRangePct) >= 0.0001,
+      };
+    });
+    const activeDirectionalFactors = Math.abs(directionBps) >= 0.05
+      ? contributions.filter((item) => Math.abs(item.appliedDirectionBps) >= 0.05).length
+      : 0;
+    const activeRangeFactors = contributions.filter((item) => Math.abs(item.appliedRangePct) >= 0.001).length;
+    const liveAdjustment = {
+      directionBps,
+      rangeMultiplier,
+      rangeExpansionPct,
+      rawDirectionBps,
+      rawRangeExpansionPct,
+      safetyCapApplied,
+      activeDirectionalFactors,
+      activeRangeFactors,
+    };
+    const liveMethodology = {
+      version: "open-research-v2",
+      state: "RESEARCH_NOT_CALIBRATED",
+      readiness: activeDirectionalFactors
+        ? "DIRECTION_EVIDENCE_ACTIVE"
+        : activeRangeFactors
+          ? "DEGRADED_RANGE_ONLY"
+          : "NO_QUALIFYING_SIGNAL",
+      summary: safetyCapApplied
+        ? "Research safety bounds capped the raw manual aggregate at ±100 bp direction and 0.50×–3.00× range width."
+        : activeDirectionalFactors
+            ? "At least one fresh market-price confirmation is translating evidence into a signed central-estimate shift."
+          : "Event APIs are influencing uncertainty, but no fresh validated directional market confirmation is active.",
+      rangeDedupe: "Correlated geopolitical news and Polymarket evidence use the larger range effect, not an additive double count.",
+    };
+    const liveWeights = configuredWeights.map((weight) => ({
+      ...weight,
+      source: factorSource(weight.key, intelligence.feeds, signalEvaluatedAt),
+    }));
+    const liveForecastBlock = {
+      computedAt: signalEvaluatedAt,
+      weights: liveWeights,
+      contributions,
+      adjustment: liveAdjustment,
+      methodology: liveMethodology,
+      flag: buildFlag(currentSignals, intelligence.rows, targetDate, intelligence.updatedAt, directionBps),
+      polymarket: intelligence.polymarket,
+      marketContext: intelligence.market,
+      overnightContext: intelligence.overnight,
+    };
+    let servedForecastBlock: typeof liveForecastBlock = liveForecastBlock;
+    const targetOpenAt = newYorkWallTime(targetDate.replace(/-/g, ""), "0930");
+    if (signalEvaluatedAt < targetOpenAt) {
+      // The last successful pre-open request wins until 09:30. After the open,
+      // every opening-forecast feature is served from this immutable cutoff.
+      await d.prepare(
+        `INSERT INTO forecast_preopen_freezes (target_date,frozen_at,payload_json) VALUES (?,?,?)
+         ON CONFLICT(target_date) DO UPDATE SET frozen_at=excluded.frozen_at,payload_json=excluded.payload_json
+         WHERE excluded.frozen_at >= forecast_preopen_freezes.frozen_at`,
+      ).bind(targetDate, signalEvaluatedAt, JSON.stringify(liveForecastBlock)).run();
+    } else {
+      const frozen = await d
+        .prepare(`SELECT frozen_at AS frozenAt,payload_json AS payloadJson FROM forecast_preopen_freezes WHERE target_date=?`)
+        .bind(targetDate)
+        .first<{ frozenAt: number; payloadJson: string }>();
+      if (frozen?.payloadJson) {
+        const parsed = JSON.parse(frozen.payloadJson) as typeof liveForecastBlock;
+        servedForecastBlock = {
+          ...parsed,
+          computedAt: frozen.frozenAt,
+          methodology: {
+            ...parsed.methodology,
+            state: "PREOPEN_FROZEN_RESEARCH",
+            summary: `${parsed.methodology.summary} Served from the last pre-open feature snapshot; post-open evidence cannot rewrite the expected open.`,
+          },
+        };
+      } else {
+        servedForecastBlock = {
+          ...liveForecastBlock,
+          contributions: contributions.map((item) => ({
+            ...item,
+            directionBps: 0,
+            rangePct: 0,
+            appliedDirectionBps: 0,
+            appliedRangePct: 0,
+            applied: false,
+            effectMode: "no_signal",
+            reason: "No pre-open feature snapshot exists; post-open evidence is excluded.",
+          })),
+          adjustment: {
+            directionBps: 0,
+            rangeMultiplier: 1,
+            rangeExpansionPct: 0,
+            rawDirectionBps: 0,
+            rawRangeExpansionPct: 0,
+            safetyCapApplied: false,
+            activeDirectionalFactors: 0,
+            activeRangeFactors: 0,
+          },
+          methodology: {
+            ...liveMethodology,
+            state: "NO_PREOPEN_FREEZE",
+            readiness: "NO_QUALIFYING_SIGNAL",
+            summary: "No pre-open feature snapshot exists. Post-open evidence is excluded rather than backfilled into the expected open.",
+          },
+          flag: {
+            ...liveForecastBlock.flag,
+            direction: "DIRECTION UNCONFIRMED",
+            headline: "No pre-open forecast freeze was captured",
+            reasons: ["Post-open evidence excluded"],
+          },
+          polymarket: {
+            ...intelligence.polymarket,
+            signalState: "neutral",
+            signedRiskOffShock: 0,
+            rangeSignal: 0,
+            reason: "Current post-open Polymarket evidence is visible only in the source repository and is excluded from the expected open.",
+          },
+        };
+      }
+    }
     const snapshots = await d
       .prepare(
         `SELECT id,target_date AS targetDate,captured_at AS capturedAt,interval_label AS intervalLabel,base_median AS baseMedian,adjusted_median AS adjustedMedian,adjusted_low AS adjustedLow,adjusted_high AS adjustedHigh,actual_open AS actualOpen,median_error AS medianError FROM forecast_snapshots ORDER BY captured_at DESC LIMIT 100`,
       )
       .all();
     return json({
-      weights: configuredWeights.map((weight) => ({
-        ...weight,
-        source: factorSource(weight.key, intelligence.feeds, signalEvaluatedAt),
-      })),
+      weights: servedForecastBlock.weights,
       events: intelligence.rows.slice(0, 40),
       feeds: intelligence.feeds,
-      marketContext: intelligence.market,
-      flag: buildFlag(currentSignals, intelligence.rows, targetDate, intelligence.updatedAt),
-      contributions,
-      adjustment: {
-        directionBps: contributions.reduce((sum, item) => sum + item.directionBps, 0),
-        rangeMultiplier: Math.max(0.5, 1 + contributions.reduce((sum, item) => sum + item.rangePct, 0)),
-      },
+      marketContext: servedForecastBlock.marketContext,
+      overnightContext: servedForecastBlock.overnightContext,
+      polymarket: servedForecastBlock.polymarket,
+      flag: servedForecastBlock.flag,
+      contributions: servedForecastBlock.contributions,
+      adjustment: servedForecastBlock.adjustment,
+      methodology: servedForecastBlock.methodology,
+      computedAt: servedForecastBlock.computedAt,
       snapshots: snapshots.results,
     });
   } catch (error) {
@@ -810,7 +1237,7 @@ export async function PUT(request: Request) {
     const invalid = body.weights.find((weight) => {
       const enabledValid = typeof weight.enabled === "boolean" || weight.enabled === 0 || weight.enabled === 1;
       const directionValid = valid(weight.directionWeight) && weight.directionWeight >= -100 && weight.directionWeight <= 100;
-      const rangeValid = valid(weight.rangeWeight) && weight.rangeWeight >= -0.75 && weight.rangeWeight <= 2;
+      const rangeValid = valid(weight.rangeWeight) && weight.rangeWeight >= 0 && weight.rangeWeight <= 2;
       const keyValid = typeof weight.key === "string" && knownKeys.has(weight.key) && !seenKeys.has(weight.key);
       if (typeof weight.key === "string") seenKeys.add(weight.key);
       return !keyValid || !enabledValid || !directionValid || !rangeValid;
@@ -831,7 +1258,7 @@ export async function PUT(request: Request) {
             ),
         ),
     );
-    const [updatedWeights, intelligence] = await Promise.all([weights(), pullIntelligence()]);
+    const [updatedWeights, intelligence] = await Promise.all([weights(), pullIntelligence(etDate(Date.now()))]);
     const evaluatedAt = Date.now();
     return json({
       weights: updatedWeights.map((weight) => ({
@@ -871,7 +1298,12 @@ export async function POST(request: Request) {
         body.adjustedMedian,
         body.adjustedLow,
         body.adjustedHigh,
-        JSON.stringify(body.factors ?? []),
+        JSON.stringify({
+          modelVersion: typeof body.modelVersion === "string" ? body.modelVersion : "open-research-v2",
+          capturedAt: Date.now(),
+          sourceCheckedAt: typeof body.sourceCheckedAt === "number" ? body.sourceCheckedAt : null,
+          factors: Array.isArray(body.factors) ? body.factors : [],
+        }),
         actual,
         error,
       )

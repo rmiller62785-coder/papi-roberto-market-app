@@ -41,12 +41,23 @@ type HistoryCache = {
   minute: Chart;
 };
 
+type FinnhubQuoteCache = {
+  quote: FinnhubQuote;
+  fetchedAt: number;
+  expires: number;
+};
+
 type Session = "CLOSED" | "PREMARKET" | "MARKET OPEN" | "AFTER-HOURS";
 type SourceStatus = "ok" | "stale" | "error" | "not_configured";
 
 const HISTORY_CACHE_MS = 60_000;
 const HISTORY_STALE_MS = 120_000;
 const OPEN_QUOTE_STALE_MS = 90_000;
+// The browser may check this endpoint every two seconds, but the free Finnhub
+// plan cannot safely sustain one upstream quote request per browser poll. A
+// short server cache keeps the UI responsive while making provider freshness
+// explicit instead of turning rate-limit failures into apparent live data.
+const FINNHUB_QUOTE_CACHE_MS = 10_000;
 const headers = {
   "User-Agent": "Mozilla/5.0 NVDA-Live-Structure/4.0",
   Accept: "application/json",
@@ -81,6 +92,7 @@ async function yahoo(interval: string, range: string, prepost = true) {
 }
 
 let historyCache: HistoryCache | null = null;
+let finnhubQuoteCache: FinnhubQuoteCache | null = null;
 
 /**
  * Yahoo history is deliberately cached for one minute. A request to this route
@@ -291,6 +303,10 @@ function chartBars(chart: Chart) {
 
 // The key stays server-side; browser clients receive only normalized NVDA data.
 async function finnhubQuote(key: string) {
+  const now = Date.now();
+  if (finnhubQuoteCache && finnhubQuoteCache.expires > now) {
+    return { ...finnhubQuoteCache, cacheHit: true };
+  }
   const response = await fetch("https://finnhub.io/api/v1/quote?symbol=NVDA", {
     headers: { "X-Finnhub-Token": key, Accept: "application/json" },
     cache: "no-store",
@@ -298,7 +314,13 @@ async function finnhubQuote(key: string) {
   if (!response.ok) throw new Error(`Finnhub quote failed (${response.status})`);
   const quote = (await response.json()) as FinnhubQuote;
   if (!valid(quote.c) || quote.c <= 0) throw new Error("Finnhub returned no NVDA quote");
-  return quote;
+  const fetchedAt = Date.now();
+  finnhubQuoteCache = {
+    quote,
+    fetchedAt,
+    expires: fetchedAt + FINNHUB_QUOTE_CACHE_MS,
+  };
+  return { ...finnhubQuoteCache, cacheHit: false };
 }
 
 const iso = (value: number | null | undefined) =>
@@ -328,26 +350,29 @@ export async function GET() {
       .map((timestamp, index) => ({
         date: displayDate(new Date(timestamp * 1000)),
         dateKey: etDate(new Date(timestamp * 1000)),
+        open: dailyQuote?.open?.[index],
         high: dailyQuote?.high?.[index],
         low: dailyQuote?.low?.[index],
         close: dailyQuote?.close?.[index],
       }))
       .filter(
         (row): row is {
-          date: string;
-          dateKey: string;
-          high: number;
-          low: number;
-          close: number;
+           date: string;
+           dateKey: string;
+           open: number;
+           high: number;
+           low: number;
+           close: number;
         } =>
-          row.dateKey < targetDate &&
-          (row.dateKey < todayKey || todaySessionFinalized) &&
-          valid(row.high) &&
+           row.dateKey < targetDate &&
+           (row.dateKey < todayKey || todaySessionFinalized) &&
+           valid(row.open) &&
+           valid(row.high) &&
           valid(row.low) &&
           valid(row.close),
       )
-      .slice(-10)
-      .map(({ date, high, low, close }) => ({ date, high, low, close }));
+      .slice(-20)
+      .map(({ date, dateKey, open, high, low, close }) => ({ date, dateKey, open, high, low, close }));
 
     const historicalBars = chartBars(minuteChart);
     const historicalParts = historicalBars.map((bar) => ({
@@ -386,8 +411,9 @@ export async function GET() {
 
     if (finnhubKey) {
       try {
-        liveQuote = await finnhubQuote(finnhubKey);
-        quoteFetchedAtMs = Date.now();
+        const result = await finnhubQuote(finnhubKey);
+        liveQuote = result.quote;
+        quoteFetchedAtMs = result.fetchedAt;
         quoteObservedAtMs = liveQuote.t ? liveQuote.t * 1000 : null;
         price = liveQuote.c!;
         // Preserve the legacy non-null asOf field, but expose whether this value
@@ -396,10 +422,13 @@ export async function GET() {
           ? ""
           : new Date(quoteObservedAtMs).toISOString();
         source = "Finnhub NVDA quote snapshot";
-        realtime = quoteObservedAtMs != null;
+        // A timestamped snapshot is not automatically "real-time." Outside
+        // regular hours it is a closed/extended-session observation, and while
+        // open it must also pass the explicit age gate below.
+        realtime = false;
         finnhubStatus = quoteObservedAtMs != null ? "ok" : "stale";
         finnhubDetail = liveQuote.t
-          ? "Quote snapshot returned with provider observation time"
+          ? `${result.cacheHit ? "Cached" : "Fresh"} quote snapshot returned with provider observation time`
           : "Quote snapshot returned without a provider observation time";
       } catch (error) {
         finnhubDetail =
@@ -471,7 +500,12 @@ export async function GET() {
         (!valid(quoteAgeMs) || quoteAgeMs > OPEN_QUOTE_STALE_MS),
     );
     if (finnhubStatus === "ok" && quoteStale) finnhubStatus = "stale";
-    if (finnhubStatus === "stale") realtime = false;
+    realtime = Boolean(
+      finnhubStatus === "ok" &&
+        marketState.regularMarketOpen &&
+        valid(quoteAgeMs) &&
+        quoteAgeMs <= OPEN_QUOTE_STALE_MS,
+    );
 
     const latestDailyTimestamp = dailyChart.timestamp?.at(-1);
     const earliestDailyTimestamp = dailyChart.timestamp?.at(0);
@@ -516,6 +550,14 @@ export async function GET() {
         session: marketState.session,
         source,
         realtime,
+        targetSession: {
+          hasBars: targetBars.length > 0,
+          hasPremarketBars: premarket.length > 0,
+          analysisBarCount: analysisBars.filter((bar) =>
+            targetBars.some((item) => item.bar.time === bar.time),
+          ).length,
+          evidenceQualified: targetBars.some((item) => item.bar.time + 60_000 <= endpointCheckedAtMs),
+        },
         marketState: {
           ...marketState,
           evaluatedAt: new Date(endpointCheckedAtMs).toISOString(),
