@@ -15,9 +15,13 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(page, /Expected open range/);
   assert.match(page, /SessionChart/);
   assert.match(page, /research-alert/);
-  assert.match(page, /Last checked/);
-  assert.match(page, /Finnhub quote time/);
-  assert.match(page, /setLastRefreshAt\(Date\.now\(\)\)/);
+  assert.match(page, /Finnhub quote updated/);
+  assert.match(page, /checkedAt:string/);
+  assert.match(page, /setLastRefreshAt\(/);
+  assert.match(page, /function ApiStamp/);
+  assert.match(page, /Market API pulled/);
+  assert.match(page, /Weighted APIs pulled/);
+  assert.match(page, /f\.lastChecked/);
   assert.match(page, /Event Repository/);
   assert.match(page, /Weight Open Market/);
   assert.match(page, /language-toggle/);
