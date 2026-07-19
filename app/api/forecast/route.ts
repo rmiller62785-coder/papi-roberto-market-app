@@ -1,36 +1,596 @@
 import { env } from "cloudflare:workers";
 
-type Weight={key:string;label:string;category:string;enabled:number;directionWeight:number;rangeWeight:number;updatedAt:number};
-type EventRow={id:string;source:string;category:string;headline:string;summary:string;url:string;eventTime:number;severity:number};
-const defaults=[
- {key:"geopolitical",label:"Geopolitical escalation",category:"News risk",directionWeight:0,rangeWeight:.35},
- {key:"news_intensity",label:"Breaking-news intensity",category:"News risk",directionWeight:0,rangeWeight:.15},
- {key:"nvda_earnings",label:"NVDA earnings proximity",category:"Scheduled",directionWeight:0,rangeWeight:.5},
- {key:"macro_release",label:"Major U.S. macro release",category:"Scheduled",directionWeight:0,rangeWeight:.3},
- {key:"sec_filing",label:"New NVDA SEC filing",category:"Company",directionWeight:0,rangeWeight:.2},
- {key:"monday",label:"Monday effect (experimental)",category:"Calendar",directionWeight:0,rangeWeight:0},
- {key:"pay_period",label:"Pay-period proximity (experimental)",category:"Calendar",directionWeight:0,rangeWeight:0},
+type Weight = {
+  key: string;
+  label: string;
+  category: string;
+  enabled: number;
+  directionWeight: number;
+  rangeWeight: number;
+  updatedAt: number;
+};
+type EventRow = {
+  id: string;
+  source: string;
+  category: string;
+  headline: string;
+  summary: string;
+  url: string;
+  eventTime: number;
+  severity: number;
+  clusterCount?: number;
+};
+type FeedStatus = {
+  id: string;
+  label: string;
+  status: "live" | "limited" | "offline";
+  detail: string;
+  lastChecked: number;
+};
+type Quote = { c?: number; h?: number; l?: number; o?: number; pc?: number; t?: number };
+type MarketContext = {
+  available: boolean;
+  signal: number;
+  qqqChangePct: number | null;
+  soxxChangePct: number | null;
+  intradayRangePct: number | null;
+  asOf: number | null;
+};
+type PullResult = { rows: EventRow[]; feeds: FeedStatus[]; market: MarketContext; updatedAt: number };
+
+const defaults = [
+  { key: "geopolitical", label: "Geopolitical escalation", category: "News risk", directionWeight: 0, rangeWeight: 0.35 },
+  { key: "news_intensity", label: "Breaking-news intensity", category: "News risk", directionWeight: 0, rangeWeight: 0.15 },
+  { key: "nvda_earnings", label: "NVDA earnings proximity", category: "Scheduled", directionWeight: 0, rangeWeight: 0.5 },
+  { key: "macro_release", label: "Major U.S. macro release", category: "Scheduled", directionWeight: 0, rangeWeight: 0.3 },
+  { key: "sec_filing", label: "New NVDA SEC filing", category: "Company", directionWeight: 0, rangeWeight: 0.2 },
+  { key: "market_confirmation", label: "QQQ + semiconductor confirmation", category: "Cross-market", directionWeight: 30, rangeWeight: 0.05 },
+  { key: "cross_market_volatility", label: "Cross-market volatility", category: "Cross-market", directionWeight: 0, rangeWeight: 0.15 },
+  { key: "monday", label: "Monday effect (experimental)", category: "Calendar", directionWeight: 0, rangeWeight: 0 },
+  { key: "pay_period", label: "Pay-period proximity (experimental)", category: "Calendar", directionWeight: 0, rangeWeight: 0 },
 ];
-const schema=[
- `CREATE TABLE IF NOT EXISTS forecast_weights (key TEXT PRIMARY KEY NOT NULL,label TEXT NOT NULL,category TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,direction_weight REAL NOT NULL DEFAULT 0,range_weight REAL NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL)`,
- `CREATE TABLE IF NOT EXISTS market_events (id TEXT PRIMARY KEY NOT NULL,source TEXT NOT NULL,category TEXT NOT NULL,headline TEXT NOT NULL,summary TEXT NOT NULL,url TEXT NOT NULL,event_time INTEGER NOT NULL,severity REAL NOT NULL,created_at INTEGER NOT NULL)`,
- `CREATE INDEX IF NOT EXISTS market_events_time_idx ON market_events (event_time DESC)`,
- `CREATE TABLE IF NOT EXISTS forecast_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,target_date TEXT NOT NULL,captured_at INTEGER NOT NULL,interval_label TEXT NOT NULL,base_median REAL NOT NULL,adjusted_median REAL NOT NULL,adjusted_low REAL NOT NULL,adjusted_high REAL NOT NULL,factors_json TEXT NOT NULL,actual_open REAL,median_error REAL)`,
- `CREATE UNIQUE INDEX IF NOT EXISTS forecast_snapshots_target_interval_idx ON forecast_snapshots (target_date,interval_label)`,
+
+const schema = [
+  `CREATE TABLE IF NOT EXISTS forecast_weights (key TEXT PRIMARY KEY NOT NULL,label TEXT NOT NULL,category TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,direction_weight REAL NOT NULL DEFAULT 0,range_weight REAL NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS market_events (id TEXT PRIMARY KEY NOT NULL,source TEXT NOT NULL,category TEXT NOT NULL,headline TEXT NOT NULL,summary TEXT NOT NULL,url TEXT NOT NULL,event_time INTEGER NOT NULL,severity REAL NOT NULL,created_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS market_events_time_idx ON market_events (event_time DESC)`,
+  `CREATE TABLE IF NOT EXISTS forecast_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,target_date TEXT NOT NULL,captured_at INTEGER NOT NULL,interval_label TEXT NOT NULL,base_median REAL NOT NULL,adjusted_median REAL NOT NULL,adjusted_low REAL NOT NULL,adjusted_high REAL NOT NULL,factors_json TEXT NOT NULL,actual_open REAL,median_error REAL)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS forecast_snapshots_target_interval_idx ON forecast_snapshots (target_date,interval_label)`,
 ];
-let eventCache:{expires:number;rows:EventRow[]}|null=null;
-const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{"Cache-Control":"no-store, no-cache, must-revalidate"}});
-function db(){if(!env.DB)throw new Error("Forecast database is unavailable");return env.DB}
-async function ensure(){const d=db(),now=Date.now();await d.batch(schema.map(x=>d.prepare(x)));await d.batch(defaults.map(x=>d.prepare(`INSERT OR IGNORE INTO forecast_weights (key,label,category,enabled,direction_weight,range_weight,updated_at) VALUES (?,?,?,1,?,?,?)`).bind(x.key,x.label,x.category,x.directionWeight,x.rangeWeight,now)))}
-const clean=(v:unknown)=>typeof v==="string"?v.replace(/\s+/g," ").trim():"";
-function classify(headline:string,summary:string){const text=`${headline} ${summary}`.toLowerCase();if(/iran|missile|airstrike|air strike|war|hormuz|blockade|military strike|invasion|retaliat/.test(text))return{category:"Geopolitical",severity:3};if(/earnings|quarterly results|guidance|revenue forecast/.test(text))return{category:"Earnings",severity:2.5};if(/fomc|federal reserve|interest rate|inflation|cpi|ppi|payroll|employment report|jobs report/.test(text))return{category:"Macro",severity:2.5};if(/nvidia|nvda|semiconductor|chip export|ai chip/.test(text))return{category:"NVDA / Semis",severity:2};return{category:"Market",severity:1}}
-async function pullEvents(){if(eventCache&&eventCache.expires>Date.now())return eventCache.rows;const key=(globalThis as unknown as {process?:{env?:Record<string,string>}}).process?.env?.FINNHUB_API_KEY,now=Math.floor(Date.now()/1000),from=new Date(Date.now()-3*864e5).toISOString().slice(0,10),to=new Date(Date.now()+45*864e5).toISOString().slice(0,10),rows:EventRow[]=[];
- if(key){const h={"X-Finnhub-Token":key,Accept:"application/json"};const[general,company,earnings]=await Promise.allSettled([fetch("https://finnhub.io/api/v1/news?category=general&minId=0",{headers:h,cache:"no-store"}).then(r=>r.ok?r.json():[]),fetch(`https://finnhub.io/api/v1/company-news?symbol=NVDA&from=${from}&to=${new Date().toISOString().slice(0,10)}`,{headers:h,cache:"no-store"}).then(r=>r.ok?r.json():[]),fetch(`https://finnhub.io/api/v1/calendar/earnings?from=${from}&to=${to}&symbol=NVDA`,{headers:h,cache:"no-store"}).then(r=>r.ok?r.json():{})]);for(const result of[general,company])if(result.status==="fulfilled"&&Array.isArray(result.value))for(const item of result.value.slice(0,80) as Array<Record<string,unknown>>){const headline=clean(item.headline),summary=clean(item.summary),c=classify(headline,summary),time=Number(item.datetime)||now;if(!headline||time<now-3*86400)continue;if(c.severity<2&&!/nvidia|nvda|semiconductor|nasdaq|oil|iran|war|fed|inflation/i.test(`${headline} ${summary}`))continue;rows.push({id:`fh-${item.id??time}-${headline.slice(0,20)}`,source:clean(item.source)||"Finnhub",category:c.category,headline,summary,url:clean(item.url),eventTime:time*1000,severity:c.severity})}if(earnings.status==="fulfilled"){const list=(earnings.value as {earningsCalendar?:Array<Record<string,unknown>>}).earningsCalendar??[];for(const e of list)rows.push({id:`earn-${e.date}-${e.symbol}`,source:"Finnhub earnings calendar",category:"Earnings",headline:`${e.symbol??"NVDA"} earnings scheduled`,summary:`Scheduled ${e.hour??"time not supplied"}; EPS estimate ${e.epsEstimate??"—"}.`,url:"",eventTime:Date.parse(`${e.date}T12:00:00Z`),severity:3})}}
- try{const sec=await fetch("https://data.sec.gov/submissions/CIK0001045810.json",{headers:{"User-Agent":"NVDA Opening Intelligence personal research contact@example.com",Accept:"application/json"},cache:"no-store"});if(sec.ok){const j=await sec.json() as {filings?:{recent?:Record<string,string[]>}},r=j.filings?.recent;if(r){for(let i=0;i<Math.min(20,r.form?.length??0);i++){const filed=r.filingDate?.[i],form=r.form?.[i],accession=r.accessionNumber?.[i];if(!filed||!form||!accession||Date.parse(filed)<Date.now()-7*864e5||!/^(8-K|10-Q|10-K|4)$/.test(form))continue;rows.push({id:`sec-${accession}`,source:"SEC EDGAR",category:"SEC filing",headline:`NVIDIA filed Form ${form}`,summary:`Official filing disseminated ${filed}.`,url:`https://www.sec.gov/Archives/edgar/data/1045810/${accession.replace(/-/g,"")}/`,eventTime:Date.parse(`${filed}T12:00:00Z`),severity:form==="8-K"?2.5:2})}}}}catch{}
- try{const bls=await fetch("https://www.bls.gov/schedule/news_release/bls.ics",{headers:{"User-Agent":"NVDA Opening Intelligence personal research contact@example.com"},cache:"no-store"});if(bls.ok){const ics=await bls.text();for(const block of ics.split("BEGIN:VEVENT").slice(1)){const raw=block.match(/DTSTART[^:]*:(\d{8})T?(\d{4})?/),summary=clean(block.match(/SUMMARY:(.+)/)?.[1]);if(!raw||!summary||!/consumer price|producer price|employment situation|job openings|productivity/i.test(summary))continue;const d=raw[1],time=raw[2]??"0830",stamp=Date.parse(`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}T${time.slice(0,2)}:${time.slice(2)}:00-04:00`);if(stamp<Date.now()-864e5||stamp>Date.now()+45*864e5)continue;rows.push({id:`bls-${d}-${summary}`,source:"U.S. Bureau of Labor Statistics",category:"Macro",headline:summary,summary:"Official scheduled U.S. economic release.",url:"https://www.bls.gov/schedule/",eventTime:stamp,severity:3})}}}catch{}
- const dedup=[...new Map(rows.sort((a,b)=>b.eventTime-a.eventTime).map(x=>[x.id,x])).values()].slice(0,100);eventCache={expires:Date.now()+300_000,rows:dedup};return dedup}
-function signals(events:EventRow[],targetDate:string){const recent=events.filter(e=>e.eventTime>Date.now()-72*3600_000),target=events.filter(e=>new Date(e.eventTime).toISOString().slice(0,10)===targetDate),day=Number(targetDate.slice(-2)),weekday=new Date(`${targetDate}T12:00:00Z`).getUTCDay();return{geopolitical:Math.min(1,recent.filter(e=>e.category==="Geopolitical").reduce((m,e)=>Math.max(m,e.severity/3),0)),news_intensity:Math.min(1,recent.length/12),nvda_earnings:target.some(e=>e.category==="Earnings")?1:0,macro_release:target.some(e=>e.category==="Macro")?1:0,sec_filing:recent.some(e=>e.category==="SEC filing")?1:0,monday:weekday===1?1:0,pay_period:day<=3||Math.abs(day-15)<=2?1:0}}
-async function weights(){const r=await db().prepare(`SELECT key,label,category,enabled,direction_weight AS directionWeight,range_weight AS rangeWeight,updated_at AS updatedAt FROM forecast_weights ORDER BY category,label`).all();return r.results as unknown as Weight[]}
-export async function GET(request:Request){try{await ensure();const u=new URL(request.url),targetDate=u.searchParams.get("targetDate")??new Date().toISOString().slice(0,10),events=await pullEvents(),d=db(),now=Date.now();if(events.length)await d.batch(events.slice(0,50).map(e=>d.prepare(`INSERT INTO market_events (id,source,category,headline,summary,url,event_time,severity,created_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET headline=excluded.headline,summary=excluded.summary,event_time=excluded.event_time,severity=excluded.severity`).bind(e.id,e.source,e.category,e.headline,e.summary,e.url,e.eventTime,e.severity,now)));const w=await weights(),s=signals(events,targetDate),contributions=w.map(x=>({key:x.key,label:x.label,category:x.category,enabled:Boolean(x.enabled),signal:s[x.key as keyof typeof s]??0,directionBps:Boolean(x.enabled)?(s[x.key as keyof typeof s]??0)*x.directionWeight:0,rangePct:Boolean(x.enabled)?(s[x.key as keyof typeof s]??0)*x.rangeWeight:0})),snap=await d.prepare(`SELECT id,target_date AS targetDate,captured_at AS capturedAt,interval_label AS intervalLabel,base_median AS baseMedian,adjusted_median AS adjustedMedian,adjusted_low AS adjustedLow,adjusted_high AS adjustedHigh,actual_open AS actualOpen,median_error AS medianError FROM forecast_snapshots ORDER BY captured_at DESC LIMIT 100`).all();return json({weights:w,events:events.slice(0,40),contributions,adjustment:{directionBps:contributions.reduce((a,x)=>a+x.directionBps,0),rangeMultiplier:Math.max(.5,1+contributions.reduce((a,x)=>a+x.rangePct,0))},snapshots:snap.results})}catch(e){return json({error:e instanceof Error?e.message:"Forecast intelligence unavailable"},503)}}
-export async function PUT(request:Request){try{await ensure();const b=await request.json() as {weights?:Array<Partial<Weight>>};if(!Array.isArray(b.weights))return json({error:"weights array required"},400);const d=db(),now=Date.now();await d.batch(b.weights.filter(x=>typeof x.key==="string").map(x=>d.prepare(`UPDATE forecast_weights SET enabled=?,direction_weight=?,range_weight=?,updated_at=? WHERE key=?`).bind(x.enabled?1:0,Math.max(-100,Math.min(100,Number(x.directionWeight)||0)),Math.max(-.75,Math.min(2,Number(x.rangeWeight)||0)),now,x.key)));return json({weights:await weights()})}catch(e){return json({error:e instanceof Error?e.message:"Unable to update weights"},503)}}
-export async function POST(request:Request){try{await ensure();const b=await request.json() as Record<string,unknown>,nums=["baseMedian","adjustedMedian","adjustedLow","adjustedHigh"] as const;if(typeof b.targetDate!=="string"||typeof b.intervalLabel!=="string"||nums.some(k=>typeof b[k]!=="number"||!Number.isFinite(b[k])))return json({error:"Valid snapshot values required"},400);const actual=typeof b.actualOpen==="number"&&Number.isFinite(b.actualOpen)?b.actualOpen:null,error=actual==null?null:Math.abs(actual-(b.adjustedMedian as number)),d=db();await d.prepare(`INSERT INTO forecast_snapshots (target_date,captured_at,interval_label,base_median,adjusted_median,adjusted_low,adjusted_high,factors_json,actual_open,median_error) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(target_date,interval_label) DO UPDATE SET captured_at=excluded.captured_at,base_median=excluded.base_median,adjusted_median=excluded.adjusted_median,adjusted_low=excluded.adjusted_low,adjusted_high=excluded.adjusted_high,factors_json=excluded.factors_json,actual_open=COALESCE(excluded.actual_open,actual_open),median_error=COALESCE(excluded.median_error,median_error)`).bind(b.targetDate,Date.now(),b.intervalLabel,b.baseMedian,b.adjustedMedian,b.adjustedLow,b.adjustedHigh,JSON.stringify(b.factors??[]),actual,error).run();if(actual!=null)await d.prepare(`UPDATE forecast_snapshots SET actual_open=?,median_error=ABS(?-adjusted_median) WHERE target_date=?`).bind(actual,actual,b.targetDate).run();return json({ok:true})}catch(e){return json({error:e instanceof Error?e.message:"Unable to save snapshot"},503)}}
+
+let intelligenceCache: { expires: number; value: PullResult } | null = null;
+const json = (body: unknown, status = 200) =>
+  Response.json(body, { status, headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } });
+function db() {
+  if (!env.DB) throw new Error("Forecast database is unavailable");
+  return env.DB;
+}
+function finnhubKey() {
+  return (globalThis as unknown as { process?: { env?: Record<string, string> } }).process?.env?.FINNHUB_API_KEY;
+}
+async function ensure() {
+  const d = db();
+  const now = Date.now();
+  await d.batch(schema.map((statement) => d.prepare(statement)));
+  await d.batch(
+    defaults.map((item) =>
+      d
+        .prepare(
+          `INSERT OR IGNORE INTO forecast_weights (key,label,category,enabled,direction_weight,range_weight,updated_at) VALUES (?,?,?,1,?,?,?)`,
+        )
+        .bind(item.key, item.label, item.category, item.directionWeight, item.rangeWeight, now),
+    ),
+  );
+}
+
+const clean = (value: unknown) => (typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "");
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+const valid = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+function classify(headline: string, summary: string) {
+  const text = `${headline} ${summary}`.toLowerCase();
+  if (/iran|israel|missile|airstrike|air strike|war|hormuz|blockade|military strike|invasion|retaliat|ceasefire|sanction/.test(text))
+    return { category: "Geopolitical", severity: 3 };
+  if (/earnings|quarterly results|guidance|revenue forecast|eps estimate/.test(text))
+    return { category: "Earnings", severity: 2.5 };
+  if (/fomc|federal reserve|interest rate|inflation|\bcpi\b|\bppi\b|payroll|employment report|jobs report|job openings/.test(text))
+    return { category: "Macro", severity: 2.5 };
+  if (/nvidia|\bnvda\b|semiconductor|chip export|ai chip|data center gpu/.test(text))
+    return { category: "NVDA / Semis", severity: 2 };
+  return { category: "Market", severity: 1 };
+}
+function parseGdeltTime(value: unknown) {
+  const raw = clean(value);
+  const match = raw.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  if (!match) return Date.parse(raw);
+  return Date.UTC(+match[1], +match[2] - 1, +match[3], +match[4], +match[5], +match[6]);
+}
+function etDate(value: number) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(value));
+}
+function eventTopic(event: EventRow) {
+  const text = `${event.headline} ${event.summary}`.toLowerCase();
+  const tags = [
+    "iran", "israel", "hormuz", "missile", "airstrike", "ceasefire", "sanction",
+    "nvidia", "nvda", "earnings", "guidance", "semiconductor", "chip export",
+    "fomc", "federal reserve", "inflation", "cpi", "ppi", "payroll", "employment",
+  ].filter((tag) => text.includes(tag));
+  if (tags.length) return `${event.category}:${tags.slice(0, 4).join("-")}`;
+  const tokens = event.headline
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .split(/\s+/)
+    .filter((word) => word.length > 3 && !/^(that|this|with|from|have|will|after|before|about|market|markets)$/.test(word))
+    .slice(0, 7)
+    .sort();
+  return `${event.category}:${tokens.join("-")}`;
+}
+function clusterEvents(rows: EventRow[]) {
+  const clusters = new Map<string, EventRow>();
+  for (const event of rows.sort((a, b) => b.eventTime - a.eventTime)) {
+    const key = eventTopic(event);
+    const prior = clusters.get(key);
+    if (!prior) clusters.set(key, { ...event, clusterCount: 1 });
+    else {
+      prior.clusterCount = (prior.clusterCount ?? 1) + 1;
+      prior.severity = Math.max(prior.severity, event.severity);
+      if (!prior.url && event.url) prior.url = event.url;
+      if (event.eventTime > prior.eventTime) {
+        prior.headline = event.headline;
+        prior.summary = event.summary;
+        prior.eventTime = event.eventTime;
+        prior.source = event.source;
+      }
+    }
+  }
+  return [...clusters.values()];
+}
+async function fetchJson(url: string, headers: Record<string, string> = {}) {
+  const response = await fetch(url, {
+    headers: { Accept: "application/json", ...headers },
+    cache: "no-store",
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json() as Promise<unknown>;
+}
+async function quote(symbol: string, key: string) {
+  const payload = (await fetchJson(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}`, {
+    "X-Finnhub-Token": key,
+  })) as Quote;
+  if (!valid(payload.c) || !valid(payload.pc) || payload.pc <= 0) throw new Error("Quote unavailable");
+  return payload;
+}
+function changePct(value: Quote) {
+  return valid(value.c) && valid(value.pc) && value.pc > 0 ? ((value.c / value.pc) - 1) * 100 : null;
+}
+function rangePct(value: Quote) {
+  return valid(value.h) && valid(value.l) && valid(value.pc) && value.pc > 0 ? ((value.h - value.l) / value.pc) * 100 : null;
+}
+
+async function pullIntelligence(): Promise<PullResult> {
+  if (intelligenceCache && intelligenceCache.expires > Date.now()) return intelligenceCache.value;
+  const checkedAt = Date.now();
+  const now = Math.floor(checkedAt / 1000);
+  const from = new Date(checkedAt - 3 * 864e5).toISOString().slice(0, 10);
+  const to = new Date(checkedAt + 45 * 864e5).toISOString().slice(0, 10);
+  const rows: EventRow[] = [];
+  const feeds: FeedStatus[] = [];
+  const key = finnhubKey();
+  let market: MarketContext = {
+    available: false,
+    signal: 0,
+    qqqChangePct: null,
+    soxxChangePct: null,
+    intradayRangePct: null,
+    asOf: null,
+  };
+
+  if (key) {
+    const headers = { "X-Finnhub-Token": key };
+    const [general, company, earnings, qqq, soxx] = await Promise.allSettled([
+      fetchJson("https://finnhub.io/api/v1/news?category=general&minId=0", headers),
+      fetchJson(`https://finnhub.io/api/v1/company-news?symbol=NVDA&from=${from}&to=${new Date().toISOString().slice(0, 10)}`, headers),
+      fetchJson(`https://finnhub.io/api/v1/calendar/earnings?from=${from}&to=${to}&symbol=NVDA`, headers),
+      quote("QQQ", key),
+      quote("SOXX", key),
+    ]);
+    let newsEndpoints = 0;
+    for (const result of [general, company]) {
+      if (result.status !== "fulfilled" || !Array.isArray(result.value)) continue;
+      newsEndpoints += 1;
+      for (const item of result.value.slice(0, 100) as Array<Record<string, unknown>>) {
+        const headline = clean(item.headline);
+        const summary = clean(item.summary);
+        const classification = classify(headline, summary);
+        const time = Number(item.datetime) || now;
+        if (!headline || time < now - 3 * 86400) continue;
+        if (classification.severity < 2 && !/nvidia|nvda|semiconductor|nasdaq|oil|iran|israel|war|fed|inflation/i.test(`${headline} ${summary}`)) continue;
+        rows.push({
+          id: `fh-${item.id ?? time}-${headline.slice(0, 20)}`,
+          source: clean(item.source) || "Finnhub",
+          category: classification.category,
+          headline,
+          summary,
+          url: clean(item.url),
+          eventTime: time * 1000,
+          severity: classification.severity,
+        });
+      }
+    }
+    feeds.push({
+      id: "finnhub_news",
+      label: "Finnhub news",
+      status: newsEndpoints === 2 ? "live" : newsEndpoints === 1 ? "limited" : "offline",
+      detail: `${newsEndpoints}/2 news feeds responding`,
+      lastChecked: checkedAt,
+    });
+    if (earnings.status === "fulfilled") {
+      const list = ((earnings.value as { earningsCalendar?: Array<Record<string, unknown>> }).earningsCalendar ?? []);
+      for (const item of list) {
+        const date = clean(item.date);
+        if (!date) continue;
+        rows.push({
+          id: `earn-${date}-${item.symbol}`,
+          source: "Finnhub earnings calendar",
+          category: "Earnings",
+          headline: `${item.symbol ?? "NVDA"} earnings scheduled`,
+          summary: `Scheduled ${item.hour ?? "time not supplied"}; EPS estimate ${item.epsEstimate ?? "—"}.`,
+          url: "",
+          eventTime: Date.parse(`${date}T12:00:00Z`),
+          severity: 3,
+        });
+      }
+    }
+    feeds.push({
+      id: "earnings",
+      label: "Earnings calendar",
+      status: earnings.status === "fulfilled" ? "live" : "offline",
+      detail: earnings.status === "fulfilled" ? "NVDA calendar checked" : "Calendar request failed",
+      lastChecked: checkedAt,
+    });
+    if (qqq.status === "fulfilled" && soxx.status === "fulfilled") {
+      const qqqMove = changePct(qqq.value);
+      const soxxMove = changePct(soxx.value);
+      const ranges = [rangePct(qqq.value), rangePct(soxx.value)].filter(valid);
+      const combined = valid(qqqMove) && valid(soxxMove) ? (qqqMove + soxxMove) / 2 : 0;
+      market = {
+        available: true,
+        signal: clamp(combined / 1.5, -1, 1),
+        qqqChangePct: qqqMove,
+        soxxChangePct: soxxMove,
+        intradayRangePct: ranges.length ? ranges.reduce((sum, value) => sum + value, 0) / ranges.length : null,
+        asOf: Math.max((qqq.value.t ?? 0) * 1000, (soxx.value.t ?? 0) * 1000) || checkedAt,
+      };
+    }
+    feeds.push({
+      id: "cross_market",
+      label: "QQQ + SOXX",
+      status: market.available ? "live" : qqq.status === "fulfilled" || soxx.status === "fulfilled" ? "limited" : "offline",
+      detail: market.available ? "Cross-market confirmation active" : "One or more quotes unavailable",
+      lastChecked: checkedAt,
+    });
+  } else {
+    feeds.push(
+      { id: "finnhub_news", label: "Finnhub news", status: "offline", detail: "API key is not configured", lastChecked: checkedAt },
+      { id: "earnings", label: "Earnings calendar", status: "offline", detail: "API key is not configured", lastChecked: checkedAt },
+      { id: "cross_market", label: "QQQ + SOXX", status: "offline", detail: "API key is not configured", lastChecked: checkedAt },
+    );
+  }
+
+  const gdeltUrl = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
+  gdeltUrl.searchParams.set("query", '(Iran OR Israel OR Hormuz OR missile OR airstrike OR NVIDIA OR NVDA OR semiconductor OR "chip export") sourcelang:english');
+  gdeltUrl.searchParams.set("mode", "ArtList");
+  gdeltUrl.searchParams.set("maxrecords", "50");
+  gdeltUrl.searchParams.set("format", "json");
+  gdeltUrl.searchParams.set("timespan", "72h");
+  gdeltUrl.searchParams.set("sort", "HybridRel");
+  const [gdelt, sec, bls] = await Promise.allSettled([
+    fetchJson(gdeltUrl.toString()),
+    fetchJson("https://data.sec.gov/submissions/CIK0001045810.json", {
+      "User-Agent": "NVDA Opening Intelligence personal research contact@example.com",
+    }),
+    fetch("https://www.bls.gov/schedule/news_release/bls.ics", {
+      headers: { "User-Agent": "NVDA Opening Intelligence personal research contact@example.com" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
+    }).then(async (response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.text();
+    }),
+  ]);
+
+  if (gdelt.status === "fulfilled") {
+    const articles = ((gdelt.value as { articles?: Array<Record<string, unknown>> }).articles ?? []);
+    for (const item of articles) {
+      const headline = clean(item.title);
+      const time = parseGdeltTime(item.seendate);
+      const classification = classify(headline, "");
+      if (!headline || !Number.isFinite(time) || classification.severity < 2) continue;
+      rows.push({
+        id: `gdelt-${clean(item.url).slice(-80) || `${time}-${headline.slice(0, 25)}`}`,
+        source: `GDELT · ${clean(item.domain) || "global news"}`,
+        category: classification.category,
+        headline,
+        summary: "Independent global-news coverage detected by the no-key GDELT feed.",
+        url: clean(item.url),
+        eventTime: time,
+        severity: classification.severity,
+      });
+    }
+    feeds.push({ id: "gdelt", label: "GDELT global news", status: "live", detail: `${articles.length} recent articles scanned`, lastChecked: checkedAt });
+  } else {
+    feeds.push({ id: "gdelt", label: "GDELT global news", status: "limited", detail: "No-key feed rate-limited or unavailable; Finnhub remains active", lastChecked: checkedAt });
+  }
+
+  if (sec.status === "fulfilled") {
+    const payload = sec.value as { filings?: { recent?: Record<string, string[]> } };
+    const recent = payload.filings?.recent;
+    if (recent) {
+      for (let index = 0; index < Math.min(20, recent.form?.length ?? 0); index += 1) {
+        const filed = recent.filingDate?.[index];
+        const form = recent.form?.[index];
+        const accession = recent.accessionNumber?.[index];
+        if (!filed || !form || !accession || Date.parse(filed) < Date.now() - 7 * 864e5 || !/^(8-K|10-Q|10-K|4)$/.test(form)) continue;
+        rows.push({
+          id: `sec-${accession}`,
+          source: "SEC EDGAR",
+          category: "SEC filing",
+          headline: `NVIDIA filed Form ${form}`,
+          summary: `Official filing disseminated ${filed}.`,
+          url: `https://www.sec.gov/Archives/edgar/data/1045810/${accession.replace(/-/g, "")}/`,
+          eventTime: Date.parse(`${filed}T12:00:00Z`),
+          severity: form === "8-K" ? 2.5 : 2,
+        });
+      }
+    }
+    feeds.push({ id: "sec", label: "SEC EDGAR", status: "live", detail: "NVIDIA filings checked", lastChecked: checkedAt });
+  } else feeds.push({ id: "sec", label: "SEC EDGAR", status: "offline", detail: "Official filing feed unavailable", lastChecked: checkedAt });
+
+  if (bls.status === "fulfilled") {
+    for (const block of bls.value.split("BEGIN:VEVENT").slice(1)) {
+      const raw = block.match(/DTSTART[^:]*:(\d{8})T?(\d{4})?/);
+      const summary = clean(block.match(/SUMMARY:(.+)/)?.[1]);
+      if (!raw || !summary || !/consumer price|producer price|employment situation|job openings|productivity/i.test(summary)) continue;
+      const date = raw[1];
+      const time = raw[2] ?? "0830";
+      const stamp = Date.parse(`${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T${time.slice(0, 2)}:${time.slice(2)}:00-04:00`);
+      if (stamp < Date.now() - 864e5 || stamp > Date.now() + 45 * 864e5) continue;
+      rows.push({
+        id: `bls-${date}-${summary}`,
+        source: "U.S. Bureau of Labor Statistics",
+        category: "Macro",
+        headline: summary,
+        summary: "Official scheduled U.S. economic release.",
+        url: "https://www.bls.gov/schedule/",
+        eventTime: stamp,
+        severity: 3,
+      });
+    }
+    feeds.push({ id: "bls", label: "BLS calendar", status: "live", detail: "Official macro calendar checked", lastChecked: checkedAt });
+  } else feeds.push({ id: "bls", label: "BLS calendar", status: "offline", detail: "Official calendar unavailable", lastChecked: checkedAt });
+
+  const clustered = clusterEvents(rows)
+    .sort((a, b) => {
+      const aUpcoming = a.eventTime >= checkedAt ? 1 : 0;
+      const bUpcoming = b.eventTime >= checkedAt ? 1 : 0;
+      if (aUpcoming !== bUpcoming) return bUpcoming - aUpcoming;
+      if (aUpcoming) return a.eventTime - b.eventTime;
+      return (b.severity * 1e13 + b.eventTime) - (a.severity * 1e13 + a.eventTime);
+    })
+    .slice(0, 100);
+  const value = { rows: clustered, feeds, market, updatedAt: checkedAt };
+  intelligenceCache = { expires: checkedAt + 10 * 60_000, value };
+  return value;
+}
+
+function signals(events: EventRow[], targetDate: string, market: MarketContext) {
+  const now = Date.now();
+  const recent = events.filter((event) => event.eventTime >= now - 72 * 3600_000 && event.eventTime <= now + 10 * 60_000);
+  const target = events.filter((event) => etDate(event.eventTime) === targetDate);
+  const day = Number(targetDate.slice(-2));
+  const weekday = new Date(`${targetDate}T12:00:00Z`).getUTCDay();
+  const freshness = (event: EventRow) => {
+    const ageHours = Math.max(0, (now - event.eventTime) / 3600_000);
+    return ageHours <= 6 ? 1 : ageHours <= 24 ? 0.8 : ageHours <= 48 ? 0.55 : 0.3;
+  };
+  const geopoliticalEvents = recent.filter((event) => event.category === "Geopolitical");
+  const geopolitical = geopoliticalEvents.length
+    ? clamp(
+        Math.max(...geopoliticalEvents.map((event) => (event.severity / 3) * freshness(event))) *
+          (0.75 + Math.min(0.25, geopoliticalEvents.length * 0.05)),
+        0,
+        1,
+      )
+    : 0;
+  const newsLoad = recent.reduce(
+    (sum, event) => sum + freshness(event) * (event.severity / 3) * Math.min(1.5, 0.75 + (event.clusterCount ?? 1) * 0.1),
+    0,
+  );
+  const volatility = market.intradayRangePct == null ? 0 : clamp((market.intradayRangePct - 0.5) / 2, 0, 1);
+  return {
+    geopolitical,
+    news_intensity: clamp(newsLoad / 6, 0, 1),
+    nvda_earnings: target.some((event) => event.category === "Earnings") ? 1 : 0,
+    macro_release: target.some((event) => event.category === "Macro") ? 1 : 0,
+    sec_filing: recent.some((event) => event.category === "SEC filing") ? 1 : 0,
+    market_confirmation: market.available ? market.signal : 0,
+    cross_market_volatility: volatility,
+    monday: weekday === 1 ? 1 : 0,
+    pay_period: day <= 3 || Math.abs(day - 15) <= 2 ? 1 : 0,
+  };
+}
+async function weights() {
+  const result = await db()
+    .prepare(`SELECT key,label,category,enabled,direction_weight AS directionWeight,range_weight AS rangeWeight,updated_at AS updatedAt FROM forecast_weights ORDER BY category,label`)
+    .all();
+  return result.results as unknown as Weight[];
+}
+function buildFlag(signal: ReturnType<typeof signals>, events: EventRow[], targetDate: string, updatedAt: number) {
+  const score = Math.round(
+    clamp(
+      signal.geopolitical * 40 +
+        signal.news_intensity * 15 +
+        signal.nvda_earnings * 30 +
+        signal.macro_release * 25 +
+        signal.sec_filing * 15 +
+        Math.abs(signal.market_confirmation) * 15 +
+        signal.cross_market_volatility * 15,
+      0,
+      100,
+    ),
+  );
+  const level = score >= 75 ? "CRITICAL" : score >= 50 ? "HIGH" : score >= 25 ? "ELEVATED" : "CLEAR";
+  const direction = signal.market_confirmation >= 0.12 ? "BULLISH CONFIRMATION" : signal.market_confirmation <= -0.12 ? "BEARISH CONFIRMATION" : "DIRECTION UNCONFIRMED";
+  const reasons: string[] = [];
+  if (signal.geopolitical >= 0.25) reasons.push("Geopolitical escalation");
+  if (signal.news_intensity >= 0.35) reasons.push("Breaking-news cluster");
+  if (signal.nvda_earnings) reasons.push("NVDA earnings on target session");
+  if (signal.macro_release) reasons.push("Major U.S. macro release");
+  if (signal.sec_filing) reasons.push("Recent NVIDIA filing");
+  if (Math.abs(signal.market_confirmation) >= 0.12) reasons.push(direction === "BULLISH CONFIRMATION" ? "QQQ/SOXX confirming higher" : "QQQ/SOXX confirming lower");
+  if (signal.cross_market_volatility >= 0.3) reasons.push("Elevated cross-market range");
+  const next = events
+    .filter((event) => event.eventTime >= Date.now() - 15 * 60_000 && etDate(event.eventTime) <= targetDate)
+    .sort((a, b) => a.eventTime - b.eventTime)[0];
+  return {
+    score,
+    level,
+    direction,
+    headline: reasons[0] ?? "No material event-risk trigger detected",
+    reasons: reasons.slice(0, 4),
+    evidenceCount: events.filter((event) => event.eventTime > Date.now() - 72 * 3600_000 && event.eventTime <= Date.now() + 10 * 60_000).length,
+    nextCatalyst: next ? { headline: next.headline, eventTime: next.eventTime, category: next.category } : null,
+    updatedAt,
+  };
+}
+
+export async function GET(request: Request) {
+  try {
+    await ensure();
+    const url = new URL(request.url);
+    const targetDate = url.searchParams.get("targetDate") ?? new Date().toISOString().slice(0, 10);
+    const intelligence = await pullIntelligence();
+    const d = db();
+    const now = Date.now();
+    if (intelligence.rows.length) {
+      await d.batch(
+        intelligence.rows.slice(0, 50).map((event) =>
+          d
+            .prepare(
+              `INSERT INTO market_events (id,source,category,headline,summary,url,event_time,severity,created_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET headline=excluded.headline,summary=excluded.summary,event_time=excluded.event_time,severity=excluded.severity`,
+            )
+            .bind(event.id, event.source, event.category, event.headline, event.summary, event.url, event.eventTime, event.severity, now),
+        ),
+      );
+    }
+    const configuredWeights = await weights();
+    const currentSignals = signals(intelligence.rows, targetDate, intelligence.market);
+    const contributions = configuredWeights.map((weight) => {
+      const signal = currentSignals[weight.key as keyof typeof currentSignals] ?? 0;
+      return {
+        key: weight.key,
+        label: weight.label,
+        category: weight.category,
+        enabled: Boolean(weight.enabled),
+        signal,
+        directionBps: Boolean(weight.enabled) ? signal * weight.directionWeight : 0,
+        rangePct: Boolean(weight.enabled) ? Math.abs(signal) * weight.rangeWeight : 0,
+      };
+    });
+    const snapshots = await d
+      .prepare(
+        `SELECT id,target_date AS targetDate,captured_at AS capturedAt,interval_label AS intervalLabel,base_median AS baseMedian,adjusted_median AS adjustedMedian,adjusted_low AS adjustedLow,adjusted_high AS adjustedHigh,actual_open AS actualOpen,median_error AS medianError FROM forecast_snapshots ORDER BY captured_at DESC LIMIT 100`,
+      )
+      .all();
+    return json({
+      weights: configuredWeights,
+      events: intelligence.rows.slice(0, 40),
+      feeds: intelligence.feeds,
+      marketContext: intelligence.market,
+      flag: buildFlag(currentSignals, intelligence.rows, targetDate, intelligence.updatedAt),
+      contributions,
+      adjustment: {
+        directionBps: contributions.reduce((sum, item) => sum + item.directionBps, 0),
+        rangeMultiplier: Math.max(0.5, 1 + contributions.reduce((sum, item) => sum + item.rangePct, 0)),
+      },
+      snapshots: snapshots.results,
+    });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Forecast intelligence unavailable" }, 503);
+  }
+}
+
+export async function PUT(request: Request) {
+  try {
+    await ensure();
+    const body = (await request.json()) as { weights?: Array<Partial<Weight>> };
+    if (!Array.isArray(body.weights)) return json({ error: "weights array required" }, 400);
+    const d = db();
+    const now = Date.now();
+    await d.batch(
+      body.weights
+        .filter((weight) => typeof weight.key === "string")
+        .map((weight) =>
+          d
+            .prepare(`UPDATE forecast_weights SET enabled=?,direction_weight=?,range_weight=?,updated_at=? WHERE key=?`)
+            .bind(
+              weight.enabled ? 1 : 0,
+              Math.max(-100, Math.min(100, Number(weight.directionWeight) || 0)),
+              Math.max(-0.75, Math.min(2, Number(weight.rangeWeight) || 0)),
+              now,
+              weight.key,
+            ),
+        ),
+    );
+    return json({ weights: await weights() });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Unable to update weights" }, 503);
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    await ensure();
+    const body = (await request.json()) as Record<string, unknown>;
+    const numericKeys = ["baseMedian", "adjustedMedian", "adjustedLow", "adjustedHigh"] as const;
+    if (
+      typeof body.targetDate !== "string" ||
+      typeof body.intervalLabel !== "string" ||
+      numericKeys.some((key) => typeof body[key] !== "number" || !Number.isFinite(body[key]))
+    ) return json({ error: "Valid snapshot values required" }, 400);
+    const actual = typeof body.actualOpen === "number" && Number.isFinite(body.actualOpen) ? body.actualOpen : null;
+    const error = actual == null ? null : Math.abs(actual - (body.adjustedMedian as number));
+    const d = db();
+    await d
+      .prepare(
+        `INSERT INTO forecast_snapshots (target_date,captured_at,interval_label,base_median,adjusted_median,adjusted_low,adjusted_high,factors_json,actual_open,median_error) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(target_date,interval_label) DO UPDATE SET captured_at=excluded.captured_at,base_median=excluded.base_median,adjusted_median=excluded.adjusted_median,adjusted_low=excluded.adjusted_low,adjusted_high=excluded.adjusted_high,factors_json=excluded.factors_json,actual_open=COALESCE(excluded.actual_open,actual_open),median_error=COALESCE(excluded.median_error,median_error)`,
+      )
+      .bind(
+        body.targetDate,
+        Date.now(),
+        body.intervalLabel,
+        body.baseMedian,
+        body.adjustedMedian,
+        body.adjustedLow,
+        body.adjustedHigh,
+        JSON.stringify(body.factors ?? []),
+        actual,
+        error,
+      )
+      .run();
+    if (actual != null) {
+      await d
+        .prepare(`UPDATE forecast_snapshots SET actual_open=?,median_error=ABS(?-adjusted_median) WHERE target_date=?`)
+        .bind(actual, actual, body.targetDate)
+        .run();
+    }
+    return json({ ok: true });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Unable to save snapshot" }, 503);
+  }
+}
