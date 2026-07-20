@@ -9,6 +9,15 @@ import type {
   MooTicket,
   MooValueState,
 } from "../moo-contract";
+import {
+  buildMooPlanningSnapshot,
+  type MooPaperPreference,
+  type MooPlanningField,
+  type MooPlanningProvenance,
+  type MooPlanningTicket,
+  type MooQuantityMode,
+  type MooSideRiskInput,
+} from "../moo-planning";
 
 type Language = "en" | "es";
 
@@ -32,7 +41,72 @@ export type MooResearchPreview = {
   reason: string;
 };
 
-export type MooPlanningSourceList = MooPlanningSource[] & { researchPreview?: MooResearchPreview };
+export type MooPlanningSourceList = MooPlanningSource[] & {
+  researchPreview?: MooResearchPreview;
+  planningInput?: MooPlanningInput;
+};
+
+export type MooPlanningInput = {
+  estimatedOpenCents: number | null;
+  previousHighCents: number | null;
+  previousLowCents: number | null;
+  premarketHighCents: number | null;
+  premarketLowCents: number | null;
+  computedAt: number | null;
+  marketCheckedAt: number | null;
+  targetSession: string;
+};
+
+type PlanningPreference = "RESEARCH" | "LONG_FAVORED" | "SHORT_FAVORED" | "UNASSIGNED";
+type PaperSideConfig = {
+  quantityMode: MooQuantityMode;
+  stopOffset: string;
+  riskBudget: string;
+  slippageAllowance: string;
+  maxShares: string;
+  manualQuantity: string;
+  accountLabel: string;
+  reserve: string;
+  timeStop: string;
+};
+type PaperPlanningConfig = {
+  preference: PlanningPreference;
+  long: PaperSideConfig;
+  short: PaperSideConfig;
+};
+type BrokerStatusPayload = {
+  provider: string;
+  configured: boolean;
+  assetStatus: string | null;
+  tradable: boolean | null;
+  shortable: boolean | null;
+  borrowStatus: string | null;
+  borrowStatusSource: string | null;
+  checkedAt: number;
+  freshness: { state: "current" | "stale" | "unavailable" | string; ageMs: number | null; maxAgeMs: number };
+  status: "live" | "limited" | "offline";
+  detail: string;
+  indicativeOnly: boolean;
+  locateGuaranteed: boolean;
+};
+
+const emptySideConfig = (): PaperSideConfig => ({
+  quantityMode: "AUTO_RISK",
+  stopOffset: "",
+  riskBudget: "",
+  slippageAllowance: "",
+  maxShares: "",
+  manualQuantity: "",
+  accountLabel: "",
+  reserve: "",
+  timeStop: "",
+});
+
+const emptyPaperConfig = (): PaperPlanningConfig => ({
+  preference: "RESEARCH",
+  long: emptySideConfig(),
+  short: emptySideConfig(),
+});
 
 const copy = (lang: Language, en: string, es: string) => (lang === "es" ? es : en);
 
@@ -67,6 +141,96 @@ function targetDate(value: string, lang: Language) {
     month: "long",
     day: "numeric",
   }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+}
+
+function dollarsToCents(value: string) {
+  if (!value.trim()) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed * 100) : Number.NaN;
+}
+
+function wholeNumber(value: string) {
+  if (!value.trim()) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : Number.NaN;
+}
+
+function sideRiskInput(config: PaperSideConfig): MooSideRiskInput {
+  return {
+    stopOffsetCents: dollarsToCents(config.stopOffset),
+    slippageAllowanceCents: dollarsToCents(config.slippageAllowance),
+    riskBudgetCents: dollarsToCents(config.riskBudget),
+    quantityMode: config.quantityMode,
+    manualQuantity: wholeNumber(config.manualQuantity),
+    maxShares: wholeNumber(config.maxShares),
+    reserveCents: dollarsToCents(config.reserve),
+    accountLabel: config.accountLabel.trim() || null,
+    timeStop: config.timeStop.trim() || null,
+  };
+}
+
+function safePaperConfig(value: unknown): PaperPlanningConfig | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<PaperPlanningConfig>;
+  if (!["RESEARCH", "LONG_FAVORED", "SHORT_FAVORED", "UNASSIGNED"].includes(candidate.preference ?? "")) return null;
+  const side = (input: unknown): PaperSideConfig | null => {
+    if (!input || typeof input !== "object") return null;
+    const raw = input as Partial<PaperSideConfig>;
+    if (raw.quantityMode !== "AUTO_RISK" && raw.quantityMode !== "MANUAL") return null;
+    const textKeys: Array<Exclude<keyof PaperSideConfig, "quantityMode">> = [
+      "stopOffset", "riskBudget", "slippageAllowance", "maxShares", "manualQuantity",
+      "accountLabel", "reserve", "timeStop",
+    ];
+    if (textKeys.some((key) => typeof raw[key] !== "string")) return null;
+    return raw as PaperSideConfig;
+  };
+  const long = side(candidate.long);
+  const short = side(candidate.short);
+  return long && short ? { preference: candidate.preference as PlanningPreference, long, short } : null;
+}
+
+function storedPaperConfig(storageKey: string) {
+  if (typeof window === "undefined") return emptyPaperConfig();
+  try {
+    const stored = window.sessionStorage.getItem(storageKey);
+    const parsed = stored ? safePaperConfig(JSON.parse(stored)) : null;
+    return parsed ?? emptyPaperConfig();
+  } catch {
+    return emptyPaperConfig();
+  }
+}
+
+function planningStateLabel(state: MooPlanningField<unknown>["state"], lang: Language) {
+  const labels: Record<MooPlanningField<unknown>["state"], [string, string]> = {
+    READY: ["READY", "LISTO"],
+    PENDING_MARKET_DATA: ["WAITING FOR MARKET DATA", "ESPERANDO DATOS DE MERCADO"],
+    USER_INPUT_REQUIRED: ["USER INPUT REQUIRED", "SE REQUIERE ENTRADA DEL USUARIO"],
+    PREFERENCE_REQUIRED: ["PREFERENCE REQUIRED", "SE REQUIERE PREFERENCIA"],
+    INVALID_INPUT: ["CHECK INPUT", "REVISE LA ENTRADA"],
+  };
+  return copy(lang, ...labels[state]);
+}
+
+function provenanceLabel(value: MooPlanningProvenance, lang: Language) {
+  const labels: Record<MooPlanningProvenance, [string, string]> = {
+    SELECTED_SESSION_RESEARCH: ["RESEARCH", "INVESTIGACIÓN"],
+    PREVIOUS_SESSION_MARKET_DATA: ["PRIOR SESSION", "SESIÓN PREVIA"],
+    TARGET_PREMARKET_DATA: ["PREMARKET", "PREAPERTURA"],
+    USER_RISK_INPUT: ["USER", "USUARIO"],
+    PAPER_PREFERENCE: ["PAPER CHOICE", "ELECCIÓN DE PRUEBA"],
+    LITERAL_0_33_THIRD_RULE: ["0.33 RULE", "REGLA 0.33"],
+    ROUND_HALF_UP_PLUS_TICK: ["ROUNDED + TICK", "REDONDEO + TICK"],
+    TARGET_CUSHION_RULE: ["TARGET RULE", "REGLA DE OBJETIVO"],
+  };
+  return copy(lang, ...labels[value]);
+}
+
+function fieldExplanation(field: MooPlanningField<unknown>, lang: Language) {
+  if (field.state === "READY") return copy(lang, "Available for this paper calculation.", "Disponible para este cálculo de prueba.");
+  if (field.state === "PENDING_MARKET_DATA") return copy(lang, "Waiting for valid point-in-time data for the selected session.", "Esperando datos puntuales válidos para la sesión seleccionada.");
+  if (field.state === "USER_INPUT_REQUIRED") return copy(lang, "Complete this value in the paper configuration above.", "Complete este valor en la configuración de prueba de arriba.");
+  if (field.state === "PREFERENCE_REQUIRED") return copy(lang, "Choose a paper preference before assigning major and minor thirds.", "Elija una preferencia de prueba antes de asignar los tercios mayor y menor.");
+  return copy(lang, "The entered value is outside the permitted range.", "El valor ingresado está fuera del rango permitido.");
 }
 
 function valueState(state: MooValueState, lang: Language) {
@@ -143,6 +307,7 @@ function deadlineCopy(label: MooDeadline["label"], lang: Language) {
 
 function TicketCard({ ticket, snapshot, lang }: { ticket: MooTicket; snapshot: MooDecisionSnapshot; lang: Language }) {
   const isShort = ticket.side === "SHORT";
+  const displayedRole = snapshot.decision === "NO_TRADE" ? "UNASSIGNED" : ticket.thirdRole;
   const fill = cents(ticket.actualFillCents) ?? cents(ticket.estimatedFillCents);
   const target = cents(ticket.rebasedTargetCents) ?? cents(ticket.estimatedTargetCents);
   const assignedDistance = cents(ticket.assignedDistanceCents);
@@ -154,10 +319,10 @@ function TicketCard({ ticket, snapshot, lang }: { ticket: MooTicket; snapshot: M
       : ticket.shortability === "UNCONFIRMED"
         ? copy(lang, "Unconfirmed · ticket blocked", "Sin confirmar · orden bloqueada")
         : copy(lang, "Not applicable", "No aplica");
-  const unconfigured = copy(lang, "Not configured", "No configurado");
+  const unconfigured = copy(lang, "Not configured · use paper planner", "No configurado · use el planificador de prueba");
 
   return (
-    <article className={`moo-ticket ${ticket.side.toLowerCase()} ${ticket.favored ? "favored" : ""}`} aria-label={`${ticket.side} MOO`}>
+    <article className={`moo-ticket ${ticket.side.toLowerCase()} ${ticket.favored ? "favored" : ""}`} aria-label={copy(lang, `${ticket.side} MOO strict ticket`, `Orden MOO estricta ${isShort ? "corta" : "larga"}`)}>
       <header>
         <div>
           <span className="moo-overline">{ticket.side} MOO</span>
@@ -165,7 +330,7 @@ function TicketCard({ ticket, snapshot, lang }: { ticket: MooTicket; snapshot: M
         </div>
         <div className="moo-ticket-badges">
           {ticket.favored ? <strong>{copy(lang, "FAVORED", "FAVORECIDA")}</strong> : null}
-          <span>{ticket.thirdRole === "MAJOR" ? copy(lang, "MAJOR THIRD", "TERCIO MAYOR") : copy(lang, "MINOR THIRD", "TERCIO MENOR")}</span>
+          <span>{displayedRole === "MAJOR" ? copy(lang, "MAJOR THIRD", "TERCIO MAYOR") : displayedRole === "MINOR" ? copy(lang, "MINOR THIRD", "TERCIO MENOR") : copy(lang, "UNASSIGNED", "SIN ASIGNAR")}</span>
         </div>
       </header>
       <div className="moo-ticket-prices">
@@ -182,7 +347,7 @@ function TicketCard({ ticket, snapshot, lang }: { ticket: MooTicket; snapshot: M
         <div>
           <span>{copy(lang, "Assigned move", "Movimiento asignado")}</span>
           <strong>{assignedDistance ?? pending}</strong>
-          <small>{ticket.thirdRole === "MAJOR" ? copy(lang, "Major effective third", "Tercio efectivo mayor") : copy(lang, "Minor effective third", "Tercio efectivo menor")}</small>
+          <small>{displayedRole === "MAJOR" ? copy(lang, "Major effective third", "Tercio efectivo mayor") : displayedRole === "MINOR" ? copy(lang, "Minor effective third", "Tercio efectivo menor") : copy(lang, "No strict side preference is assigned", "No hay una preferencia estricta asignada")}</small>
         </div>
       </div>
       <dl className="moo-ticket-risk">
@@ -200,6 +365,280 @@ function TicketCard({ ticket, snapshot, lang }: { ticket: MooTicket; snapshot: M
         {ticket.actionable ? copy(lang, "Paper ticket ready for review", "Orden de prueba lista para revisión") : copy(lang, "Preview only · not actionable", "Solo vista previa · no operable")}
       </p>
     </article>
+  );
+}
+
+function PlanningFieldValue<T>({
+  field,
+  lang,
+  format,
+}: {
+  field: MooPlanningField<T>;
+  lang: Language;
+  format: (value: T) => string;
+}) {
+  return (
+    <div className={`moo-planning-field ${field.state.toLowerCase()}`}>
+      <strong>{field.value == null ? "—" : format(field.value)}</strong>
+      <span className="moo-field-state">{planningStateLabel(field.state, lang)}</span>
+      <small>{fieldExplanation(field, lang)}</small>
+      <div className="moo-field-provenance" aria-label={copy(lang, "Value sources", "Fuentes del valor")}>
+        {field.provenance.slice(0, 3).map((item) => <span key={item}>{provenanceLabel(item, lang)}</span>)}
+      </div>
+    </div>
+  );
+}
+
+function PaperSideConfiguration({
+  side,
+  config,
+  lang,
+  onChange,
+}: {
+  side: "LONG" | "SHORT";
+  config: PaperSideConfig;
+  lang: Language;
+  onChange: <K extends keyof PaperSideConfig>(key: K, value: PaperSideConfig[K]) => void;
+}) {
+  const id = `moo-paper-${side.toLowerCase()}`;
+  const sideName = side === "LONG" ? copy(lang, "Long", "Largo") : copy(lang, "Short", "Corto");
+  return (
+    <fieldset className={`moo-paper-side-config ${side.toLowerCase()}`}>
+      <legend>{sideName} · {copy(lang, "paper risk inputs", "entradas de riesgo de prueba")}</legend>
+      <p id={`${id}-help`}>{copy(lang, "Numeric values are stored only in this browser session. Never enter an API key or account number.", "Los valores numéricos se guardan solo en esta sesión del navegador. Nunca ingrese una clave API ni un número de cuenta.")}</p>
+      <div className="moo-paper-input-grid">
+        <label htmlFor={`${id}-mode`}><span>{copy(lang, "Quantity mode", "Modo de cantidad")}</span><select id={`${id}-mode`} value={config.quantityMode} onChange={(event) => onChange("quantityMode", event.target.value as MooQuantityMode)} aria-describedby={`${id}-help`}><option value="AUTO_RISK">{copy(lang, "Auto · risk budget", "Auto · presupuesto de riesgo")}</option><option value="MANUAL">{copy(lang, "Manual shares", "Acciones manuales")}</option></select></label>
+        <label htmlFor={`${id}-stop`}><span>{copy(lang, "Stop offset · USD/share", "Distancia al stop · USD/acción")}</span><input id={`${id}-stop`} type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00" value={config.stopOffset} onChange={(event) => onChange("stopOffset", event.target.value)} /></label>
+        <label htmlFor={`${id}-risk`}><span>{copy(lang, "Risk budget · USD", "Presupuesto de riesgo · USD")}</span><input id={`${id}-risk`} type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00" value={config.riskBudget} onChange={(event) => onChange("riskBudget", event.target.value)} /></label>
+        <label htmlFor={`${id}-slippage`}><span>{copy(lang, "Slippage allowance · USD/share", "Margen de deslizamiento · USD/acción")}</span><input id={`${id}-slippage`} type="number" inputMode="decimal" min="0" step="0.01" placeholder="0.00" value={config.slippageAllowance} onChange={(event) => onChange("slippageAllowance", event.target.value)} /></label>
+        <label htmlFor={`${id}-max`}><span>{copy(lang, "Maximum shares", "Máximo de acciones")}</span><input id={`${id}-max`} type="number" inputMode="numeric" min="1" step="1" placeholder="0" value={config.maxShares} onChange={(event) => onChange("maxShares", event.target.value)} /></label>
+        {config.quantityMode === "MANUAL" ? <label htmlFor={`${id}-quantity`}><span>{copy(lang, "Manual quantity", "Cantidad manual")}</span><input id={`${id}-quantity`} type="number" inputMode="numeric" min="1" step="1" placeholder="0" value={config.manualQuantity} onChange={(event) => onChange("manualQuantity", event.target.value)} /></label> : null}
+        <label htmlFor={`${id}-account`}><span>{copy(lang, "Paper account label", "Etiqueta de cuenta de prueba")}</span><input id={`${id}-account`} type="text" autoComplete="off" maxLength={40} placeholder={copy(lang, `${sideName} paper`, `Prueba ${sideName.toLowerCase()}`)} value={config.accountLabel} onChange={(event) => onChange("accountLabel", event.target.value)} /></label>
+        <label htmlFor={`${id}-reserve`}><span>{copy(lang, "Cash reserve · USD", "Reserva de efectivo · USD")}</span><input id={`${id}-reserve`} type="number" inputMode="decimal" min="0" step="0.01" placeholder="0.00" value={config.reserve} onChange={(event) => onChange("reserve", event.target.value)} /></label>
+        <label htmlFor={`${id}-time`}><span>{copy(lang, "Time stop", "Stop por tiempo")}</span><input id={`${id}-time`} type="text" maxLength={30} placeholder={copy(lang, "Example: 10:00 ET", "Ejemplo: 10:00 ET")} value={config.timeStop} onChange={(event) => onChange("timeStop", event.target.value)} /></label>
+      </div>
+    </fieldset>
+  );
+}
+
+function paperTicketComplete(ticket: MooPlanningTicket) {
+  return [
+    ticket.estimatedFillCents,
+    ticket.assignedDistanceCents,
+    ticket.targetOffsetCents,
+    ticket.provisionalTargetCents,
+    ticket.stopOffsetCents,
+    ticket.slippageAllowanceCents,
+    ticket.riskBudgetCents,
+    ticket.quantity,
+    ticket.maximumLossCents,
+    ticket.reserveCents,
+    ticket.accountLabel,
+    ticket.timeStop,
+  ].every((field) => field.state === "READY");
+}
+
+function PaperPlanningTicketCard({
+  ticket,
+  lang,
+  shortability,
+}: {
+  ticket: MooPlanningTicket;
+  lang: Language;
+  shortability: { ready: boolean; label: string; detail: string };
+}) {
+  const isShort = ticket.side === "SHORT";
+  const role = ticket.thirdRole === "MAJOR"
+    ? copy(lang, "MAJOR THIRD", "TERCIO MAYOR")
+    : ticket.thirdRole === "MINOR"
+      ? copy(lang, "MINOR THIRD", "TERCIO MENOR")
+      : copy(lang, "UNASSIGNED", "SIN ASIGNAR");
+  const configured = paperTicketComplete(ticket);
+  return (
+    <article className={`moo-paper-ticket ${ticket.side.toLowerCase()}`} aria-label={copy(lang, `${ticket.side} paper planning ticket`, `Orden de planificación de prueba ${isShort ? "corta" : "larga"}`)}>
+      <header>
+        <div><span className="moo-overline">{ticket.side} · {copy(lang, "PAPER SCENARIO", "ESCENARIO DE PRUEBA")}</span><h4>{copy(lang, isShort ? "Short planning ticket" : "Long planning ticket", isShort ? "Orden corta de planificación" : "Orden larga de planificación")}</h4></div>
+        <span className={`moo-role-badge ${ticket.thirdRole.toLowerCase()}`}>{role}</span>
+      </header>
+      <div className="moo-paper-ticket-primary">
+        <div><span>{copy(lang, "Research fill estimate", "Estimación de ejecución")}</span><PlanningFieldValue field={ticket.estimatedFillCents} lang={lang} format={(value) => cents(value) ?? "—"}/></div>
+        <div><span>{copy(lang, "Provisional take profit", "Toma de ganancia provisional")}</span><PlanningFieldValue field={ticket.provisionalTargetCents} lang={lang} format={(value) => cents(value) ?? "—"}/></div>
+        <div><span>{copy(lang, "Assigned move", "Movimiento asignado")}</span><PlanningFieldValue field={ticket.assignedDistanceCents} lang={lang} format={(value) => cents(value) ?? "—"}/></div>
+      </div>
+      <dl className="moo-paper-ticket-fields">
+        <div><dt>{copy(lang, "Order type", "Tipo de orden")}</dt><dd>MOO · OPG</dd><small>{copy(lang, "LITERAL", "LITERAL")}</small></div>
+        <div><dt>{copy(lang, "Target offset", "Distancia al objetivo")}</dt><dd>{cents(ticket.targetOffsetCents.value) ?? "—"}</dd><small>{copy(lang, "CALCULATED", "CALCULADO")} · {planningStateLabel(ticket.targetOffsetCents.state, lang)}</small></div>
+        <div><dt>{copy(lang, "Stop offset", "Distancia al stop")}</dt><dd>{cents(ticket.stopOffsetCents.value) ?? "—"}</dd><small>{copy(lang, "USER", "USUARIO")} · {planningStateLabel(ticket.stopOffsetCents.state, lang)}</small></div>
+        <div><dt>{copy(lang, "Slippage allowance", "Margen de deslizamiento")}</dt><dd>{cents(ticket.slippageAllowanceCents.value) ?? "—"}</dd><small>{copy(lang, "USER", "USUARIO")} · {planningStateLabel(ticket.slippageAllowanceCents.state, lang)}</small></div>
+        <div><dt>{copy(lang, "Risk budget", "Presupuesto de riesgo")}</dt><dd>{cents(ticket.riskBudgetCents.value) ?? "—"}</dd><small>{copy(lang, "USER", "USUARIO")} · {planningStateLabel(ticket.riskBudgetCents.state, lang)}</small></div>
+        <div><dt>{copy(lang, "Quantity", "Cantidad")}</dt><dd>{ticket.quantity.value ?? "—"}</dd><small>{copy(lang, "RISK RULE", "REGLA DE RIESGO")} · {planningStateLabel(ticket.quantity.state, lang)}</small></div>
+        <div><dt>{copy(lang, "Account label", "Etiqueta de cuenta")}</dt><dd>{ticket.accountLabel.value ?? "—"}</dd><small>{copy(lang, "USER", "USUARIO")} · {planningStateLabel(ticket.accountLabel.state, lang)}</small></div>
+        <div><dt>{copy(lang, "Cash reserve", "Reserva de efectivo")}</dt><dd>{cents(ticket.reserveCents.value) ?? "—"}</dd><small>{copy(lang, "USER", "USUARIO")} · {planningStateLabel(ticket.reserveCents.state, lang)}</small></div>
+        <div><dt>{copy(lang, "Modeled maximum loss", "Pérdida máxima modelada")}</dt><dd>{cents(ticket.maximumLossCents.value) ?? "—"}</dd><small>{copy(lang, "CALCULATED", "CALCULADO")} · {planningStateLabel(ticket.maximumLossCents.state, lang)}</small></div>
+        <div><dt>{copy(lang, "Time stop", "Stop por tiempo")}</dt><dd>{ticket.timeStop.value ?? "—"}</dd><small>{copy(lang, "USER", "USUARIO")} · {planningStateLabel(ticket.timeStop.state, lang)}</small></div>
+        {isShort ? <div className={`moo-paper-shortability ${shortability.ready ? "ready" : "blocked"}`}><dt>{copy(lang, "Broker shortability", "Disponibilidad del bróker para corto")}</dt><dd>{shortability.label}</dd><small>{shortability.detail}</small></div> : null}
+      </dl>
+      <p className="moo-paper-ticket-state"><b>{configured ? copy(lang, "PAPER INPUTS COMPLETE", "ENTRADAS DE PRUEBA COMPLETAS") : copy(lang, "PAPER INPUTS INCOMPLETE", "ENTRADAS DE PRUEBA INCOMPLETAS")}</b><span>{copy(lang, "Preview only · never submits an order", "Solo vista previa · nunca envía una orden")}</span></p>
+    </article>
+  );
+}
+
+function PaperPlanningPanel({
+  snapshot,
+  researchPreview,
+  planning,
+  lang,
+}: {
+  snapshot: MooDecisionSnapshot;
+  researchPreview: MooResearchPreview;
+  planning?: MooPlanningInput;
+  lang: Language;
+}) {
+  const targetSession = planning?.targetSession ?? snapshot.targetSession;
+  const storageKey = `aperture-moo-paper-planning:${targetSession}`;
+  const [config, setConfig] = useState<PaperPlanningConfig>(() => storedPaperConfig(storageKey));
+  const [brokerStatus, setBrokerStatus] = useState<BrokerStatusPayload | null>(null);
+  const [brokerState, setBrokerState] = useState<"LOADING" | "LIVE" | "PRIVATE" | "UNAVAILABLE">("LOADING");
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(storageKey, JSON.stringify(config));
+    } catch {
+      // Session storage is optional; the visible paper calculator keeps working in memory.
+    }
+  }, [config, storageKey]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let pending = false;
+    const refresh = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const response = await fetch("/api/moo/broker-status", { cache: "no-store", signal: controller.signal });
+        if (response.status === 401 || response.status === 403) {
+          setBrokerStatus(null);
+          setBrokerState("PRIVATE");
+          return;
+        }
+        if (!response.ok) throw new Error("broker status unavailable");
+        const payload = await response.json() as BrokerStatusPayload;
+        setBrokerStatus(payload);
+        setBrokerState(payload.status === "live" || payload.status === "limited" ? "LIVE" : "UNAVAILABLE");
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setBrokerStatus(null);
+        setBrokerState("UNAVAILABLE");
+      } finally {
+        pending = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => { controller.abort(); window.clearInterval(timer); };
+  }, [targetSession]);
+
+  const resolvedPreference: MooPaperPreference = config.preference === "RESEARCH"
+    ? researchPreview.lean === "LONG_LEAN"
+      ? "LONG_FAVORED"
+      : researchPreview.lean === "SHORT_LEAN"
+        ? "SHORT_FAVORED"
+        : "UNASSIGNED"
+    : config.preference;
+  const researchAnchorCents = planning?.estimatedOpenCents ?? (researchPreview.median == null ? null : Math.round(researchPreview.median * 100));
+  const paperSnapshot = useMemo(() => buildMooPlanningSnapshot({
+    targetSession,
+    researchAnchorCents,
+    previousHighCents: planning?.previousHighCents ?? null,
+    previousLowCents: planning?.previousLowCents ?? null,
+    premarketHighCents: planning?.premarketHighCents ?? null,
+    premarketLowCents: planning?.premarketLowCents ?? null,
+    preference: resolvedPreference,
+    takeProfitCushionCents: snapshot.takeProfitCushionCents,
+    longRisk: sideRiskInput(config.long),
+    shortRisk: sideRiskInput(config.short),
+  }), [config, planning, researchAnchorCents, resolvedPreference, snapshot.takeProfitCushionCents, targetSession]);
+
+  const updateSide = <K extends keyof PaperSideConfig>(side: "long" | "short", key: K, value: PaperSideConfig[K]) => {
+    setConfig((current) => ({ ...current, [side]: { ...current[side], [key]: value } }));
+  };
+  const strictExecutionReady = snapshot.blockReason === "NONE" && snapshot.decision !== "NO_TRADE" && (snapshot.longTicket.actionable || snapshot.shortTicket.actionable);
+  const risksReady = paperTicketComplete(paperSnapshot.longTicket) && paperTicketComplete(paperSnapshot.shortTicket);
+  const accountLabelsReady = paperSnapshot.longTicket.accountLabel.state === "READY" && paperSnapshot.shortTicket.accountLabel.state === "READY";
+  const brokerFreshnessEligible = brokerStatus != null && ["fresh", "cached"].includes(brokerStatus.freshness.state) && brokerStatus.freshness.ageMs != null && brokerStatus.freshness.ageMs <= brokerStatus.freshness.maxAgeMs;
+  const borrowReferenceCurrent = brokerStatus?.configured === true && brokerStatus.status === "live" && brokerFreshnessEligible && brokerStatus.shortable === true;
+  const borrowReady = borrowReferenceCurrent && brokerStatus?.locateGuaranteed === true;
+  const shortability = {
+    ready: borrowReady,
+    label: borrowReady
+      ? copy(lang, "Fresh locate confirmed", "Localización reciente confirmada")
+      : borrowReferenceCurrent
+        ? copy(lang, "Indicative shortable · locate unconfirmed", "Corto indicativo · localización sin confirmar")
+        : copy(lang, "Unconfirmed · blocked", "Sin confirmar · bloqueado"),
+    detail: brokerStatus?.status === "live" || brokerStatus?.status === "limited"
+      ? `${copy(lang, "Borrow status", "Estado de préstamo")}: ${brokerStatus.borrowStatus ?? "—"} · ${copy(lang, "checked", "consultado")} ${etDateTime(brokerStatus.checkedAt, lang)}`
+      : brokerState === "PRIVATE"
+        ? copy(lang, "Private authenticated broker check required.", "Se requiere una verificación privada autenticada del bróker.")
+        : copy(lang, "No fresh broker borrow observation is available.", "No hay una observación reciente de préstamo del bróker."),
+  };
+  const gates = [
+    { label: copy(lang, "Research anchor", "Ancla de investigación"), ready: paperSnapshot.researchAnchorCents.state === "READY", detail: fieldExplanation(paperSnapshot.researchAnchorCents, lang) },
+    { label: copy(lang, "Both thirds", "Ambos tercios"), ready: paperSnapshot.majorThirdCents.state === "READY" && paperSnapshot.minorThirdCents.state === "READY", detail: copy(lang, "Requires previous-session and target-premarket highs/lows.", "Requiere máximos y mínimos de la sesión previa y la preapertura objetivo.") },
+    { label: copy(lang, "Paper preference", "Preferencia de prueba"), ready: resolvedPreference !== "UNASSIGNED", detail: resolvedPreference === "UNASSIGNED" ? copy(lang, "No side assigned.", "Ningún lado asignado.") : copy(lang, "Major/minor paper roles assigned.", "Roles de prueba mayor/menor asignados.") },
+    { label: copy(lang, "Risk inputs", "Entradas de riesgo"), ready: risksReady, detail: risksReady ? copy(lang, "Both paper configurations are complete.", "Ambas configuraciones de prueba están completas.") : copy(lang, "Complete the required fields below.", "Complete los campos requeridos abajo.") },
+    { label: copy(lang, "Paper account labels", "Etiquetas de cuenta de prueba"), ready: accountLabelsReady, detail: accountLabelsReady ? copy(lang, "Both browser-local labels are set.", "Ambas etiquetas locales están definidas.") : copy(lang, "Labels only; never enter credentials.", "Solo etiquetas; nunca ingrese credenciales.") },
+    { label: copy(lang, "Broker asset reference", "Referencia de activo del bróker"), ready: borrowReferenceCurrent, detail: borrowReferenceCurrent ? copy(lang, "Fresh indicative NVDA asset status received.", "Se recibió un estado indicativo reciente del activo NVDA.") : copy(lang, "Fresh broker asset status is unavailable.", "El estado reciente del activo del bróker no está disponible.") },
+    { label: copy(lang, "Shortability", "Disponibilidad para corto"), ready: borrowReady, detail: shortability.detail },
+    { label: copy(lang, "Strict execution", "Ejecución estricta"), ready: strictExecutionReady, detail: copy(lang, "Ready only when the frozen strict decision and every applicable execution gate pass; visible diagnostics are not treated as entitlements.", "Listo solo cuando la decisión estricta congelada y todos los controles de ejecución aplicables se aprueban; los diagnósticos visibles no se tratan como autorizaciones.") },
+  ];
+  const combinedLoss = paperSnapshot.longTicket.maximumLossCents.value != null && paperSnapshot.shortTicket.maximumLossCents.value != null
+    ? paperSnapshot.longTicket.maximumLossCents.value + paperSnapshot.shortTicket.maximumLossCents.value
+    : null;
+  const preferenceHelp = config.preference === "RESEARCH"
+    ? researchPreview.lean === "LONG_LEAN" || researchPreview.lean === "SHORT_LEAN"
+      ? copy(lang, "The current non-actionable research lean assigns the paper thirds.", "El sesgo actual de investigación no operable asigna los tercios de prueba.")
+      : copy(lang, "Research has no directional edge, so both paper thirds remain unassigned.", "La investigación no tiene ventaja direccional, por lo que ambos tercios permanecen sin asignar.")
+    : copy(lang, "Manual paper scenario · not a model decision.", "Escenario manual de prueba · no es una decisión del modelo.");
+
+  return (
+    <section className="moo-paper-planner" aria-labelledby="moo-paper-planner-title">
+      <header className="moo-paper-planner-head">
+        <div><span className="moo-overline">{copy(lang, "PAPER PLANNING TICKETS · BROWSER-LOCAL", "ÓRDENES DE PLANIFICACIÓN DE PRUEBA · LOCALES")}</span><h3 id="moo-paper-planner-title">{copy(lang, "Configure and explain both MOO scenarios", "Configure y explique ambos escenarios MOO")}</h3><p>{copy(lang, "This calculator fills research and risk fields without changing the frozen Strict MOO decision. It cannot submit an order.", "Esta calculadora completa campos de investigación y riesgo sin cambiar la decisión MOO Estricta congelada. No puede enviar una orden.")}</p></div>
+        <div className="moo-paper-only-badge"><strong>{copy(lang, "PAPER ONLY", "SOLO PRUEBA")}</strong><span>{copy(lang, "Never actionable", "Nunca operable")}</span></div>
+      </header>
+
+      <div className="moo-paper-gates" aria-label={copy(lang, "Planning and execution gate checklist", "Lista de controles de planificación y ejecución")}>
+        {gates.map((gate) => <div className={gate.ready ? "ready" : "blocked"} key={gate.label}><i aria-hidden="true"/><span><b>{gate.label}</b><small>{gate.detail}</small></span><strong>{gate.ready ? copy(lang, "READY", "LISTO") : copy(lang, "BLOCKED", "BLOQUEADO")}</strong></div>)}
+      </div>
+
+      <div className="moo-paper-preference">
+        <label htmlFor="moo-paper-preference"><span>{copy(lang, "Paper preference", "Preferencia de prueba")}</span><select id="moo-paper-preference" value={config.preference} onChange={(event) => setConfig((current) => ({ ...current, preference: event.target.value as PlanningPreference }))} aria-describedby="moo-paper-preference-help"><option value="RESEARCH">{copy(lang, "Follow research lean", "Seguir sesgo de investigación")}</option><option value="LONG_FAVORED">{copy(lang, "Long-favored manual scenario", "Escenario manual favorable a largo")}</option><option value="SHORT_FAVORED">{copy(lang, "Short-favored manual scenario", "Escenario manual favorable a corto")}</option><option value="UNASSIGNED">{copy(lang, "Unassigned · compare only", "Sin asignar · solo comparar")}</option></select></label>
+        <p id="moo-paper-preference-help">{preferenceHelp}</p>
+        <div className="moo-paper-risk-total"><span>{copy(lang, "Combined modeled maximum loss", "Pérdida máxima modelada combinada")}</span><strong>{cents(combinedLoss) ?? "—"}</strong><small>{copy(lang, "Two paper accounts are not atomic; gaps, halts, fees and failed stops can exceed this amount.", "Dos cuentas de prueba no son atómicas; brechas, suspensiones, comisiones y stops fallidos pueden superar este monto.")}</small></div>
+      </div>
+
+      <div className="moo-paper-config-grid">
+        <PaperSideConfiguration side="LONG" config={config.long} lang={lang} onChange={(key, value) => updateSide("long", key, value)}/>
+        <PaperSideConfiguration side="SHORT" config={config.short} lang={lang} onChange={(key, value) => updateSide("short", key, value)}/>
+      </div>
+
+      <div className="moo-paper-ticket-grid" role="status" aria-live="polite" aria-atomic="false">
+        <PaperPlanningTicketCard ticket={paperSnapshot.longTicket} lang={lang} shortability={shortability}/>
+        <PaperPlanningTicketCard ticket={paperSnapshot.shortTicket} lang={lang} shortability={shortability}/>
+      </div>
+
+      <details className="moo-paper-why">
+        <summary>{copy(lang, "Why these numbers?", "¿Por qué estos números?")}</summary>
+        <div className="moo-paper-formula-grid">
+          <div><span>{copy(lang, "Previous-session range / third", "Rango / tercio de sesión previa")}</span><strong>{cents(paperSnapshot.previousRangeCents.value) ?? "—"} / {cents(paperSnapshot.previousEffectiveThirdCents.value) ?? "—"}</strong><small>{planningStateLabel(paperSnapshot.previousEffectiveThirdCents.state, lang)}</small></div>
+          <div><span>{copy(lang, "Target-premarket range / third", "Rango / tercio de preapertura objetivo")}</span><strong>{cents(paperSnapshot.premarketRangeCents.value) ?? "—"} / {cents(paperSnapshot.premarketEffectiveThirdCents.value) ?? "—"}</strong><small>{planningStateLabel(paperSnapshot.premarketEffectiveThirdCents.state, lang)}</small></div>
+          <div><span>{copy(lang, "Major / minor candidates", "Candidatos mayor / menor")}</span><strong>{cents(paperSnapshot.majorThirdCents.value) ?? "—"} / {cents(paperSnapshot.minorThirdCents.value) ?? "—"}</strong><small>0.33 · ROUND_HALF_UP · +$0.01</small></div>
+          <div><span>{copy(lang, "Target cushion", "Margen del objetivo")}</span><strong>{cents(paperSnapshot.takeProfitCushionCents.value) ?? "—"}</strong><small>{copy(lang, "Offset = assigned third − cushion, one-cent minimum.", "Distancia = tercio asignado − margen, mínimo de un centavo.")}</small></div>
+          <div><span>{copy(lang, "Auto-size formula", "Fórmula de tamaño automático")}</span><strong>{copy(lang, "FLOOR(risk ÷ (stop + slippage))", "ENTERO(riesgo ÷ (stop + deslizamiento))")}</strong><small>{copy(lang, "Capped by maximum shares; buying power is never assumed.", "Limitado por el máximo de acciones; nunca se presume el poder adquisitivo.")}</small></div>
+          <div><span>{copy(lang, "Planning data checked", "Datos de planificación consultados")}</span><strong>{etDateTime(planning?.marketCheckedAt ?? null, lang)}</strong><small>{copy(lang, "Research computed", "Investigación calculada")}: {etDateTime(planning?.computedAt ?? researchPreview.computedAt, lang)} · {copy(lang, "Broker checked", "Bróker consultado")}: {etDateTime(brokerStatus?.checkedAt ?? null, lang)}</small></div>
+        </div>
+      </details>
+    </section>
   );
 }
 
@@ -267,7 +706,7 @@ export function MooSourceStrip({ sources, lang, expanded = false }: { sources: M
   );
 }
 
-export function MooDecisionSurface({ snapshot, planningSources, lang }: { snapshot: MooDecisionSnapshot; planningSources: MooPlanningSourceList; lang: Language }) {
+export function MooDecisionSurface({ snapshot, planningSources, planning, lang }: { snapshot: MooDecisionSnapshot; planningSources: MooPlanningSourceList; planning?: MooPlanningInput; lang: Language }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -285,6 +724,7 @@ export function MooDecisionSurface({ snapshot, planningSources, lang }: { snapsh
     computedAt: null,
     reason: copy(lang, "Selected-session research is loading.", "La investigación de la sesión seleccionada está cargando."),
   };
+  const planningInput = planning ?? planningSources.planningInput;
 
   return (
     <section className={`moo-decision-surface panel ${decisionTone}`} aria-labelledby="moo-decision-title">
@@ -345,6 +785,8 @@ export function MooDecisionSurface({ snapshot, planningSources, lang }: { snapsh
         <span><b>{copy(lang, "TP cushion", "Margen de objetivo")}</b>{cents(snapshot.takeProfitCushionCents)}</span>
       </div>
 
+      <PaperPlanningPanel key={planningInput?.targetSession ?? snapshot.targetSession} snapshot={snapshot} researchPreview={researchPreview} planning={planningInput} lang={lang}/>
+
       <section className="moo-planning-band" aria-labelledby="moo-planning-title">
         <div className="moo-health-head">
           <div><span className="moo-overline">{copy(lang, "PLANNING / RESEARCH SOURCES", "FUENTES DE PLANIFICACIÓN / INVESTIGACIÓN")}</span><strong id="moo-planning-title">{copy(lang, "Available context for the selected session", "Contexto disponible para la sesión seleccionada")}</strong></div>
@@ -361,7 +803,11 @@ export function MooDecisionSurface({ snapshot, planningSources, lang }: { snapsh
         </div>
       ) : null}
 
-      <div className="moo-ticket-grid">
+      <div className="moo-health-head moo-strict-ticket-head">
+        <div><span className="moo-overline">{copy(lang, "STRICT FROZEN TICKETS", "ÓRDENES ESTRICTAS CONGELADAS")}</span><strong>{copy(lang, "Execution fields remain fail-closed", "Los campos de ejecución permanecen bloqueados por seguridad")}</strong></div>
+        <p>{copy(lang, "Paper planning values above never replace a trained point-in-time model, execution entitlement, or broker fill.", "Los valores de planificación de prueba de arriba nunca sustituyen un modelo puntual entrenado, una autorización de ejecución ni una ejecución del bróker.")}</p>
+      </div>
+      <div className="moo-ticket-grid moo-strict-ticket-grid">
         <TicketCard ticket={snapshot.longTicket} snapshot={snapshot} lang={lang}/>
         <TicketCard ticket={snapshot.shortTicket} snapshot={snapshot} lang={lang}/>
       </div>

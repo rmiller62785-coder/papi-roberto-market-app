@@ -9,7 +9,7 @@ import type {
 import { mooDeadlines, mooLifecycleAt, nasdaqSessionSchedule } from "./market-session.ts";
 
 export type MooPredictionInput = {
-  targetSession?: string;
+  targetSession: string;
   featureSnapshotId?: string | null;
   predictedOfficialOpenCents: number | null;
   decision: MooDecision;
@@ -37,6 +37,7 @@ export type MooStrategyConfiguration = {
   minimumDataQualityScore?: number;
   maximumClockSkewMs?: number;
   maximumSourceAgeMs?: Partial<Record<MooSourceHealth["id"], number>>;
+  portfolioMaximumLossCents?: number;
 };
 
 /**
@@ -294,12 +295,13 @@ function ticket(
   const assignedDistance = assignedThirdDistanceCents(side, decision, majorThirdCents, minorThirdCents);
   const move = assignedDistance == null ? null : targetMoveCents(assignedDistance, cushionCents);
   const favored = decision === `${side}_FAVORED`;
+  const riskConfigured = ticketRiskConfigurationValid(configuration);
   return {
     side,
     orderType: "MOO",
     favored,
-    actionable,
-    thirdRole: favored ? "MAJOR" : "MINOR",
+    actionable: actionable && riskConfigured,
+    thirdRole: decision === "NO_TRADE" ? "UNASSIGNED" : favored ? "MAJOR" : "MINOR",
     assignedDistanceCents: assignedDistance,
     targetMoveCents: move,
     estimatedFillCents: predictedOpenCents,
@@ -318,6 +320,30 @@ function ticket(
     timeStop: configuration?.timeStop ?? null,
     shortability: side === "LONG" ? "NOT_APPLICABLE" : shortability,
   };
+}
+
+function ticketRiskConfigurationValid(configuration: MooTicketConfiguration | undefined) {
+  const basic = safeNonnegativeInteger(configuration?.stopOffsetCents) && configuration!.stopOffsetCents! > 0 &&
+    safeNonnegativeInteger(configuration?.quantity) && configuration!.quantity! > 0 &&
+    nonemptyString(configuration?.accountLabel) &&
+    safeNonnegativeInteger(configuration?.reserveCents) &&
+    safeNonnegativeInteger(configuration?.maximumLossCents) && configuration!.maximumLossCents! > 0 &&
+    nonemptyString(configuration?.timeStop);
+  if (!basic) return false;
+  const baseMaximumLoss = configuration!.stopOffsetCents! * configuration!.quantity!;
+  return Number.isSafeInteger(baseMaximumLoss) && configuration!.maximumLossCents! >= baseMaximumLoss;
+}
+
+function portfolioRiskConfigurationValid(
+  longConfiguration: MooTicketConfiguration | undefined,
+  shortConfiguration: MooTicketConfiguration | undefined,
+  config: MooStrategyConfiguration,
+) {
+  if (!ticketRiskConfigurationValid(longConfiguration) || !ticketRiskConfigurationValid(shortConfiguration)) return false;
+  if (longConfiguration!.accountLabel!.trim().toLowerCase() === shortConfiguration!.accountLabel!.trim().toLowerCase()) return false;
+  if (!safeNonnegativeInteger(config.portfolioMaximumLossCents) || config.portfolioMaximumLossCents! <= 0) return false;
+  const combinedMaximumLoss = longConfiguration!.maximumLossCents! + shortConfiguration!.maximumLossCents!;
+  return Number.isSafeInteger(combinedMaximumLoss) && combinedMaximumLoss <= config.portfolioMaximumLossCents!;
 }
 
 export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecisionSnapshot {
@@ -445,7 +471,11 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
       ? "PENDING"
       : "UNAVAILABLE";
   const lifecycleActionable = lifecycle === "READY" || lifecycle === "FROZEN" || (lifecycle === "LATE_LOCKED" && input.lateOrderAcknowledged === true);
-  const actionable = decision !== "NO_TRADE" && lifecycleActionable;
+  const riskPolicyConfigured = portfolioRiskConfigurationValid(decisionInputs.longTicket, decisionInputs.shortTicket, config);
+  const actionable = decision !== "NO_TRADE" && lifecycleActionable && riskPolicyConfigured;
+  if (decision !== "NO_TRADE" && lifecycleActionable && !riskPolicyConfigured) {
+    warnings.push("Both strict ticket risk configurations, distinct account labels, internally consistent loss limits, and a combined portfolio loss cap are required.");
+  }
   if (lifecycle === "LATE_LOCKED" && !input.lateOrderAcknowledged) warnings.push("A new MOO is late and locked; explicit acknowledgement is required.");
   if (lifecycle === "ENTRY_CLOSED") warnings.push("Final MOO entry deadline has passed; monitoring only.");
   if (lifecycle === "CROSS_COMPLETE") warnings.push("Opening Cross window has passed; estimates are preserved for audit.");

@@ -1,6 +1,6 @@
 export type MooDecision = "LONG_FAVORED" | "SHORT_FAVORED" | "NO_TRADE";
 export type MooSide = "LONG" | "SHORT";
-export type MooThirdRole = "MAJOR" | "MINOR";
+export type MooThirdRole = "MAJOR" | "MINOR" | "UNASSIGNED";
 export type MooValueState = "AVAILABLE" | "PENDING" | "UNAVAILABLE" | "INSUFFICIENT_BARS";
 export type MooLifecycle =
   | "MARKET_CLOSED"

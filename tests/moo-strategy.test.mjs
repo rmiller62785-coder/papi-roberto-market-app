@@ -147,6 +147,64 @@ test("an untrained transparent baseline remains visible but forces NO_TRADE and 
   assert.equal(snapshot.confidencePct, null);
   assert.equal(snapshot.longTicket.actionable, false);
   assert.equal(snapshot.shortTicket.actionable, false);
+  assert.equal(snapshot.longTicket.thirdRole, "UNASSIGNED");
+  assert.equal(snapshot.shortTicket.thirdRole, "UNASSIGNED");
+});
+
+test("strict tickets remain non-actionable until every risk control is configured", () => {
+  const incomplete = buildMooDecisionSnapshot(validInput());
+  assert.equal(incomplete.decision, "SHORT_FAVORED");
+  assert.equal(incomplete.longTicket.actionable, false);
+  assert.equal(incomplete.shortTicket.actionable, false);
+
+  const longConfiguration = {
+    stopOffsetCents: 25,
+    quantity: 2,
+    accountLabel: "Private paper long",
+    reserveCents: 1_000,
+    maximumLossCents: 50,
+    timeStop: "10:30 ET",
+  };
+  const shortConfiguration = { ...longConfiguration, accountLabel: "Private paper short" };
+  const complete = buildMooDecisionSnapshot(validInput({
+    longTicket: longConfiguration,
+    shortTicket: shortConfiguration,
+    config: { portfolioMaximumLossCents: 100 },
+  }));
+  assert.equal(complete.longTicket.actionable, true);
+  assert.equal(complete.shortTicket.actionable, true);
+
+  for (const invalid of [
+    { ...longConfiguration, quantity: 0 },
+    { ...longConfiguration, stopOffsetCents: 0 },
+    { ...longConfiguration, maximumLossCents: 49 },
+    { ...longConfiguration, accountLabel: "" },
+    { ...longConfiguration, timeStop: "" },
+  ]) {
+    const snapshot = buildMooDecisionSnapshot(validInput({
+      longTicket: invalid,
+      shortTicket: shortConfiguration,
+      config: { portfolioMaximumLossCents: 100 },
+    }));
+    assert.equal(snapshot.longTicket.actionable, false);
+    assert.equal(snapshot.shortTicket.actionable, false);
+  }
+
+  const sameAccount = buildMooDecisionSnapshot(validInput({
+    longTicket: longConfiguration,
+    shortTicket: { ...shortConfiguration, accountLabel: longConfiguration.accountLabel },
+    config: { portfolioMaximumLossCents: 100 },
+  }));
+  assert.equal(sameAccount.longTicket.actionable, false);
+  assert.equal(sameAccount.shortTicket.actionable, false);
+
+  const overPortfolioCap = buildMooDecisionSnapshot(validInput({
+    longTicket: longConfiguration,
+    shortTicket: shortConfiguration,
+    config: { portfolioMaximumLossCents: 99 },
+  }));
+  assert.equal(overPortfolioCap.longTicket.actionable, false);
+  assert.equal(overPortfolioCap.shortTicket.actionable, false);
 });
 
 test("closed, unentitled, stale, low-quality, low-confidence, and missing-borrow gates fail safe", () => {
