@@ -16,6 +16,8 @@ test("Strict MOO uses the served forecast block and an exact prior session", asy
   assert.match(page, /const mooPlanningInput = \{/);
   assert.match(page, /planning=\{mooPlanningInput\}/);
   assert.doesNotMatch(page, /planningSources\.planningInput = \{/);
+  assert.match(page, /let timedOut = false/);
+  assert.match(page, /timedOut = true; controller\.abort\(\)/);
 });
 
 test("paper planner consumes the flat public-safe broker status contract", async () => {
@@ -27,4 +29,7 @@ test("paper planner consumes the flat public-safe broker status contract", async
   assert.doesNotMatch(component, /brokerStatus\?*\.nvda/);
   assert.match(component, /locateGuaranteed === true/);
   assert.match(component, /Preview only[^\n]+never submits an order/);
+  assert.match(component, /PAPER_PROFILE_STORAGE_KEY = "aperture-moo-paper-risk-profile:v1"/);
+  assert.match(component, /window\.localStorage\.getItem\(PAPER_PROFILE_STORAGE_KEY\)/);
+  assert.match(component, /window\.localStorage\.setItem\(PAPER_PROFILE_STORAGE_KEY/);
 });

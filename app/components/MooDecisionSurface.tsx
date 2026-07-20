@@ -90,23 +90,25 @@ type BrokerStatusPayload = {
   locateGuaranteed: boolean;
 };
 
-const emptySideConfig = (): PaperSideConfig => ({
+const emptySideConfig = (accountLabel: string): PaperSideConfig => ({
   quantityMode: "AUTO_RISK",
   stopOffset: "",
   riskBudget: "",
   slippageAllowance: "",
   maxShares: "",
   manualQuantity: "",
-  accountLabel: "",
+  accountLabel,
   reserve: "",
   timeStop: "",
 });
 
 const emptyPaperConfig = (): PaperPlanningConfig => ({
   preference: "RESEARCH",
-  long: emptySideConfig(),
-  short: emptySideConfig(),
+  long: emptySideConfig("Long paper"),
+  short: emptySideConfig("Short paper"),
 });
+
+const PAPER_PROFILE_STORAGE_KEY = "aperture-moo-paper-risk-profile:v1";
 
 const copy = (lang: Language, en: string, es: string) => (lang === "es" ? es : en);
 
@@ -192,7 +194,7 @@ function safePaperConfig(value: unknown): PaperPlanningConfig | null {
 function storedPaperConfig(storageKey: string) {
   if (typeof window === "undefined") return emptyPaperConfig();
   try {
-    const stored = window.sessionStorage.getItem(storageKey);
+    const stored = window.localStorage.getItem(PAPER_PROFILE_STORAGE_KEY) ?? window.sessionStorage.getItem(storageKey);
     const parsed = stored ? safePaperConfig(JSON.parse(stored)) : null;
     return parsed ?? emptyPaperConfig();
   } catch {
@@ -405,7 +407,7 @@ function PaperSideConfiguration({
   return (
     <fieldset className={`moo-paper-side-config ${side.toLowerCase()}`}>
       <legend>{sideName} · {copy(lang, "paper risk inputs", "entradas de riesgo de prueba")}</legend>
-      <p id={`${id}-help`}>{copy(lang, "Numeric values are stored only in this browser session. Never enter an API key or account number.", "Los valores numéricos se guardan solo en esta sesión del navegador. Nunca ingrese una clave API ni un número de cuenta.")}</p>
+      <p id={`${id}-help`}>{copy(lang, "This browser reuses your validated paper-risk profile for future dates. Never enter an API key or account number.", "Este navegador reutiliza su perfil validado de riesgo de prueba para fechas futuras. Nunca ingrese una clave API ni un número de cuenta.")}</p>
       <div className="moo-paper-input-grid">
         <label htmlFor={`${id}-mode`}><span>{copy(lang, "Quantity mode", "Modo de cantidad")}</span><select id={`${id}-mode`} value={config.quantityMode} onChange={(event) => onChange("quantityMode", event.target.value as MooQuantityMode)} aria-describedby={`${id}-help`}><option value="AUTO_RISK">{copy(lang, "Auto · risk budget", "Auto · presupuesto de riesgo")}</option><option value="MANUAL">{copy(lang, "Manual shares", "Acciones manuales")}</option></select></label>
         <label htmlFor={`${id}-stop`}><span>{copy(lang, "Stop offset · USD/share", "Distancia al stop · USD/acción")}</span><input id={`${id}-stop`} type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00" value={config.stopOffset} onChange={(event) => onChange("stopOffset", event.target.value)} /></label>
@@ -502,9 +504,10 @@ function PaperPlanningPanel({
 
   useEffect(() => {
     try {
-      window.sessionStorage.setItem(storageKey, JSON.stringify(config));
+      window.localStorage.setItem(PAPER_PROFILE_STORAGE_KEY, JSON.stringify(config));
+      window.sessionStorage.removeItem(storageKey);
     } catch {
-      // Session storage is optional; the visible paper calculator keeps working in memory.
+      // Browser storage is optional; the visible paper calculator keeps working in memory.
     }
   }, [config, storageKey]);
 
