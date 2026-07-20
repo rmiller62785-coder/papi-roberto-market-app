@@ -25,11 +25,13 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(page, /f\.lastChecked/);
   assert.match(page, /Evidence/);
   assert.match(page, /Model Lab/);
-  assert.match(page, /MOO Planner/);
+  assert.match(page, /Strict MOO Gate/);
   assert.match(page, /RecentSessionsTable/);
   assert.match(page, /Past opens, highs, lows and closes/);
   assert.match(page, /History API pulled/);
-  assert.match(page, /9:31 Confirmation/);
+  assert.match(page, /Full Dashboard/);
+  assert.match(page, /setWorkflow\("confirmation"\)/);
+  assert.match(page, /useState<"moo"\|"confirmation">\("confirmation"\)/);
   assert.match(page, /Sessions/);
   assert.match(page, /Evidence/);
   assert.match(page, /Model Lab/);
