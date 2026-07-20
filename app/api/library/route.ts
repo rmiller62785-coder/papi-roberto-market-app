@@ -220,8 +220,9 @@ export async function GET() {
       .all();
     return noStore({ plans: result.results, quarantined });
   } catch (error) {
+    console.error("library GET failed", error instanceof Error ? error.message : error);
     return noStore(
-      { error: error instanceof Error ? error.message : "Library unavailable" },
+      { error: "LIBRARY_UNAVAILABLE" },
       { status: 503 },
     );
   }
@@ -280,8 +281,9 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof SyntaxError)
       return noStore({ error: "Request body must be valid JSON" }, { status: 400 });
+    console.error("library POST failed", error instanceof Error ? error.message : error);
     return noStore(
-      { error: error instanceof Error ? error.message : "Unable to save plan" },
+      { error: "LIBRARY_WRITE_UNAVAILABLE" },
       { status: 503 },
     );
   }
@@ -338,6 +340,7 @@ export async function PATCH(request: Request) {
     return noStore({ plan: saved });
   } catch (error) {
     if (error instanceof SyntaxError) return noStore({ error: "Request body must be valid JSON" }, { status: 400 });
-    return noStore({ error: error instanceof Error ? error.message : "Unable to attach outcomes" }, { status: 503 });
+    console.error("library PATCH failed", error instanceof Error ? error.message : error);
+    return noStore({ error: "LIBRARY_OUTCOME_WRITE_UNAVAILABLE" }, { status: 503 });
   }
 }

@@ -63,7 +63,8 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(page, /role="tablist"/);
   assert.match(page, /aria-selected=/);
   assert.match(page, /workflow\s*===\s*"moo"\s*\?\s*<>\s*<section className="moo-session-picker[\s\S]*?<MooDecisionSurface/);
-  assert.match(page, /buildMooDecisionSnapshot/);
+  assert.match(page, /mooSystemStatus\.decisionSnapshot/);
+  assert.doesNotMatch(page, /buildMooDecisionSnapshot/);
   assert.match(mooSurface, /Predicted Official Open/);
   assert.match(mooSurface, /NO TRADE/);
   assert.match(mooSurface, /Modify \/ cancel · 09:25 ET/);

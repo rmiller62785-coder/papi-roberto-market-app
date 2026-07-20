@@ -81,6 +81,7 @@ export type MooDecisionSnapshot = {
   confidencePct: number | null;
   dataQualityScore: number | null;
   modelVersion: string | null;
+  featureSnapshotId: string | null;
   featureSchemaVersion: string | null;
   actionCutoffAt: number;
   deadlines: MooDeadline[];
@@ -97,5 +98,8 @@ export type MooDecisionSnapshot = {
   longTicket: MooTicket;
   shortTicket: MooTicket;
   sources: MooSourceHealth[];
+  /** Source identifiers that gate strict execution. Optional research and
+   * post-freeze monitoring sources are intentionally excluded. */
+  requiredSourceIds: MooSourceHealth["id"][];
   warnings: string[];
 };

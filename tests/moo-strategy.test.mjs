@@ -264,6 +264,22 @@ test("a source check cannot materially predate its observation", () => {
   assert.match(snapshot.warnings.join(" "), /predates its observation/i);
 });
 
+test("required source timestamps even slightly after evaluation are rejected", () => {
+  for (const offsetMs of [1, 999]) {
+    const snapshot = buildMooDecisionSnapshot(validInput({
+      sources: [{ ...liveUs(readyAt), observedAt: readyAt + offsetMs, checkedAt: readyAt + offsetMs }],
+    }));
+    assert.equal(snapshot.decision, "NO_TRADE");
+    assert.equal(snapshot.blockReason, "STALE_US_QUOTE");
+    assert.match(snapshot.warnings.join(" "), /post-evaluation|clock-skewed/i);
+  }
+});
+
+test("feature snapshot identity is preserved in the audit contract", () => {
+  const snapshot = buildMooDecisionSnapshot(validInput());
+  assert.equal(snapshot.featureSnapshotId, "feature-snapshot-2026-07-20-t5");
+});
+
 test("required source timestamps and age must be finite and auditable", () => {
   const cases = [
     { checkedAt: null },

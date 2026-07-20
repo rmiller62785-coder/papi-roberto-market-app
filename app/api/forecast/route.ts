@@ -4,6 +4,7 @@ import { pullPolymarketEvidence, type PolymarketEvidence } from "../../polymarke
 import { aggregateForecastContributions } from "../../forecast-adjustment";
 import { asNonActionableResearchForecast } from "../../forecast-contract";
 import { ensureForecastSnapshotOutcomeColumns } from "../../d1-schema";
+import { canPersistForecastFreeze, isAuthorizedScheduledForecastCapture } from "../../forecast-freeze-boundary";
 import { classifyMarketEvent, earningsImpactSession } from "../../event-classification";
 import {
   isNasdaqSessionDate,
@@ -241,7 +242,16 @@ const schema = [
   `CREATE TABLE IF NOT EXISTS automation_capture_health (id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),last_attempt_at INTEGER NOT NULL,last_success_at INTEGER,last_preopen_at INTEGER,last_outcome_at INTEGER,scheduled_at INTEGER NOT NULL,phase TEXT NOT NULL,status TEXT NOT NULL,target_date TEXT,detail TEXT)`,
 ];
 
-let intelligenceCache: { targetDate: string; expires: number; value: PullResult } | null = null;
+type IntelligenceCacheEntry = {
+  expires: number;
+  value?: PullResult;
+  inFlight?: Promise<PullResult>;
+};
+
+const INTELLIGENCE_CACHE_TTL_MS = 60_000;
+const INTELLIGENCE_CACHE_MAX_TARGETS = 16;
+const intelligenceCache = new Map<string, IntelligenceCacheEntry>();
+let initializationPromise: Promise<void> | null = null;
 const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } });
 function db() {
@@ -271,7 +281,7 @@ function researchWriteError(request: Request) {
     return json({ error: "Invalid request origin" }, 403);
   }
 }
-async function ensure() {
+async function initializeDatabase() {
   const d = db();
   const now = Date.now();
   await d.batch(schema.map((statement) => d.prepare(statement)));
@@ -288,6 +298,16 @@ async function ensure() {
   await d.prepare(`UPDATE forecast_weights SET range_weight=0 WHERE range_weight<0`).run();
 }
 
+async function ensure() {
+  if (!initializationPromise) {
+    initializationPromise = initializeDatabase().catch((error) => {
+      initializationPromise = null;
+      throw error;
+    });
+  }
+  return initializationPromise;
+}
+
 const clean = (value: unknown) => (typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "");
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const valid = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
@@ -298,6 +318,14 @@ const validTargetSession = (value: string) => {
     return false;
   }
 };
+function supportedPublicTargetSession(value: string, nowMs = Date.now()) {
+  const today = newYorkDateKey(nowMs);
+  let lower = previousNasdaqSession(today);
+  let upper = nextNasdaqSession(today);
+  for (let index = 0; index < 5; index += 1) lower = previousNasdaqSession(lower, { inclusive: false });
+  for (let index = 0; index < 10; index += 1) upper = nextNasdaqSession(upper, { inclusive: false });
+  return value >= lower && value <= upper;
+}
 function factorSource(key: string, feeds: FeedStatus[], evaluatedAt: number): FactorSource {
   const definition = factorSourceDefinitions[key];
   if (!definition) {
@@ -493,7 +521,32 @@ function rangePct(value: Quote) {
 }
 
 async function pullIntelligence(targetDate: string): Promise<PullResult> {
-  if (intelligenceCache && intelligenceCache.targetDate === targetDate && intelligenceCache.expires > Date.now()) return intelligenceCache.value;
+  const cached = intelligenceCache.get(targetDate);
+  if (cached?.value && cached.expires > Date.now()) return cached.value;
+  if (cached?.inFlight) return cached.inFlight;
+
+  const inFlight = pullIntelligenceFresh(targetDate);
+  intelligenceCache.set(targetDate, { expires: 0, inFlight });
+  try {
+    const value = await inFlight;
+    intelligenceCache.delete(targetDate);
+    intelligenceCache.set(targetDate, {
+      value,
+      expires: Date.now() + INTELLIGENCE_CACHE_TTL_MS,
+    });
+    while (intelligenceCache.size > INTELLIGENCE_CACHE_MAX_TARGETS) {
+      const oldestTarget = intelligenceCache.keys().next().value as string | undefined;
+      if (!oldestTarget) break;
+      intelligenceCache.delete(oldestTarget);
+    }
+    return value;
+  } catch (error) {
+    if (intelligenceCache.get(targetDate)?.inFlight === inFlight) intelligenceCache.delete(targetDate);
+    throw error;
+  }
+}
+
+async function pullIntelligenceFresh(targetDate: string): Promise<PullResult> {
   const checkedAt = Date.now();
   const now = Math.floor(checkedAt / 1000);
   const from = new Date(checkedAt - 3 * 864e5).toISOString().slice(0, 10);
@@ -857,7 +910,6 @@ async function pullIntelligence(targetDate: string): Promise<PullResult> {
     })
     .slice(0, 100);
   const value = { rows: clustered, feeds, market, overnight, polymarket, germanMarket, updatedAt: checkedAt };
-  intelligenceCache = { targetDate, expires: checkedAt + 60_000, value };
   return value;
 }
 
@@ -1003,8 +1055,10 @@ function contributionMethod(
 
 export async function GET(request: Request) {
   try {
-    await ensure();
     const url = new URL(request.url);
+    // Only the in-process scheduled Worker uses this internal hostname. Public
+    // browser reads must never determine which point-in-time freeze is saved.
+    const internalAutomation = isAuthorizedScheduledForecastCapture(url);
     const targetDate = url.searchParams.get("targetDate") ?? newYorkDateKey(Date.now());
     if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
       return json({ error: "targetDate must use YYYY-MM-DD" }, 400);
@@ -1012,20 +1066,14 @@ export async function GET(request: Request) {
     if (!validTargetSession(targetDate)) {
       return json({ error: "targetDate must be a valid Nasdaq trading session" }, 400);
     }
+    if (!internalAutomation && !supportedPublicTargetSession(targetDate)) {
+      return json({ error: "targetDate must be within the supported nearby-session window" }, 400);
+    }
+    // Schema creation, seed repair, and cleanup are scheduler/write concerns.
+    // A public GET validates first and remains read-only against D1.
+    if (internalAutomation) await ensure();
     const intelligence = await pullIntelligence(targetDate);
     const d = db();
-    const now = Date.now();
-    if (intelligence.rows.length) {
-      await d.batch(
-        intelligence.rows.slice(0, 50).map((event) =>
-          d
-            .prepare(
-              `INSERT INTO market_events (id,source,category,headline,summary,url,event_time,severity,created_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET headline=excluded.headline,summary=excluded.summary,event_time=excluded.event_time,severity=excluded.severity`,
-            )
-            .bind(event.id, event.source, event.category, event.headline, event.summary, event.url, event.eventTime, event.severity, now),
-        ),
-      );
-    }
     const configuredWeights = await weights();
     const currentSignals = signals(
       intelligence.rows,
@@ -1143,9 +1191,9 @@ export async function GET(request: Request) {
     let servedForecastBlock: typeof liveForecastBlock = liveForecastBlock;
     const freezeWindow = forecastFreezePhase(targetDate, signalEvaluatedAt);
     let frozenAt: number | null = null;
-    if (freezeWindow.phase === "ACTIONABLE_WINDOW") {
-      // The last successful non-actionable research request at or before
-      // 09:24:30 ET wins. Later evidence is monitoring-only.
+    if (canPersistForecastFreeze({ url, phase: freezeWindow.phase })) {
+      // The last successful scheduled research capture at or before 09:24:30
+      // ET wins. Browser presence can no longer create or rewrite this row.
       await d.prepare(
         `INSERT INTO forecast_preopen_freezes (target_date,frozen_at,actionable_cutoff_at,payload_json) VALUES (?,?,?,?)
          ON CONFLICT(target_date) DO UPDATE SET
@@ -1161,7 +1209,7 @@ export async function GET(request: Request) {
         JSON.stringify(liveForecastBlock),
       ).run();
       frozenAt = signalEvaluatedAt;
-    } else {
+    } else if (freezeWindow.phase !== "ACTIONABLE_WINDOW") {
       const frozen = await d
         .prepare(`SELECT frozen_at AS frozenAt,payload_json AS payloadJson
           FROM forecast_preopen_freezes
@@ -1281,7 +1329,8 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : "Forecast intelligence unavailable" }, 503);
+    console.error("forecast GET failed", error instanceof Error ? error.message : error);
+    return json({ error: "FORECAST_INTELLIGENCE_UNAVAILABLE" }, 503);
   }
 }
 
@@ -1329,7 +1378,8 @@ export async function PUT(request: Request) {
       })),
     });
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : "Unable to update weights" }, 503);
+    console.error("forecast PUT failed", error instanceof Error ? error.message : error);
+    return json({ error: "FORECAST_WEIGHTS_UPDATE_UNAVAILABLE" }, 503);
   }
 }
 
@@ -1394,6 +1444,7 @@ export async function POST(request: Request) {
     }
     return json({ ok: true });
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : "Unable to save snapshot" }, 503);
+    console.error("forecast POST failed", error instanceof Error ? error.message : error);
+    return json({ error: "FORECAST_SNAPSHOT_WRITE_UNAVAILABLE" }, 503);
   }
 }

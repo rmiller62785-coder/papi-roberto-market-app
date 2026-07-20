@@ -36,4 +36,18 @@ test("persisted and served external-evidence blocks are explicitly non-actionabl
   assert.match(route, /\.\.\.liveForecastBlock\.methodology/);
   assert.match(route, /actionable: false as const/);
   assert.match(route, /decisionUse: "NON_ACTIONABLE_RESEARCH" as const/);
+  assert.match(route, /isAuthorizedScheduledForecastCapture\(url\)/);
+  assert.match(route, /canPersistForecastFreeze\(\{ url, phase: freezeWindow\.phase \}\)/);
+});
+
+test("public forecast reads are bounded, read-only, and share keyed in-flight pulls", async () => {
+  const route = await readFile(new URL("../app/api/forecast/route.ts", import.meta.url), "utf8");
+  const getBody = route.slice(route.indexOf("export async function GET"), route.indexOf("export async function PUT"));
+  assert.match(getBody, /supportedPublicTargetSession\(targetDate\)/);
+  assert.match(getBody, /if \(internalAutomation\) await ensure\(\)/);
+  assert.doesNotMatch(getBody, /INSERT INTO market_events/);
+  assert.ok(getBody.indexOf("validTargetSession(targetDate)") < getBody.indexOf("pullIntelligence(targetDate)"));
+  assert.match(route, /const intelligenceCache = new Map<string, IntelligenceCacheEntry>\(\)/);
+  assert.match(route, /if \(cached\?\.inFlight\) return cached\.inFlight/);
+  assert.match(route, /INTELLIGENCE_CACHE_MAX_TARGETS = 16/);
 });

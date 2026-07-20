@@ -1,98 +1,54 @@
-# vinext-starter
+# Aperture NVDA
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+A bilingual NVDA market-intelligence dashboard deployed on OpenAI Sites. It combines dated market observations, opening-range research, event evidence, historical sessions, technical context, and a separate fail-closed Strict MOO readiness workflow.
 
-## Prerequisites
+Production: <https://aperture-nvda-plan.rmiller62785.chatgpt.site>
 
-- Node.js `>=22.13.0`
+## Product boundaries
 
-## Quick Start
+- The Full Dashboard is non-actionable research and paper decision support.
+- Strict MOO execution status is evaluated by the server at `/api/moo/status`; the browser does not manufacture a strict prediction or entitlement state.
+- Alpaca IEX is real-time single-exchange reference data. It is not consolidated SIP or Nasdaq NOII.
+- Alpaca asset metadata is indicative. `shortable` or `easy_to_borrow` is not an account-specific locate guarantee.
+- Strict execution remains `NO_TRADE` and `NOT_COMMISSIONED` until a promoted point-in-time model, immutable decision freeze, licensed consolidated feed, complete risk policy, and required broker controls exist.
+- No route submits an order, and no LLM is allowed to place unrestricted live trades.
+
+## Runtime architecture
+
+- `app/api/market`: normalized NVDA quote, source health, completed-session history, and minute context.
+- `app/api/forecast`: explicitly non-actionable research evidence and stored research checkpoints.
+- `app/api/moo/status`: server-owned Strict MOO commissioning/readiness snapshot plus a public-safe paper broker reference.
+- `worker/index.ts` + `app/scheduled-capture.ts`: browser-independent scheduled research capture.
+- D1: research weights, checkpoints, scheduler-owned freezes, automation health, and session archive. Public forecast reads do not persist event rows.
+- Browser transport: visibility/session-aware REST polling with request timeouts and last-good research preservation. Strict status has a short server validity lease and is withheld on offline, expired, or lifecycle-mismatched evaluations. No WebSocket, SSE, or durable upstream stream supervisor is configured in this Sites project.
+
+Execution-grade streaming should be added through a server-owned durable ingestion service, never direct browser/provider sockets. Candidate permanent connections are consolidated U.S. quotes/trades, broker order/fill updates, account locate/borrow, and optional NOII monitoring. SEC, BLS, news, earnings, Polymarket, and other slow evidence should remain scheduled or TTL-polled.
+
+## Configuration
+
+Copy `.env.example` for local development. Secrets stay server-side.
+
+- `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY`: Alpaca IEX reference quote, SIP completed daily history, and paper asset metadata.
+- `FINNHUB_API_KEY`: fallback quote, company/news, earnings, and cross-market research.
+- `WEIGHTS_ADMIN_EMAILS`: comma-separated allowlist for authenticated production-weight writes.
+- `DB`: D1 binding declared in `.openai/hosting.json`.
+
+## Development
+
+Requires Node.js `>=22.13.0`.
 
 ```bash
-npm install
+npm ci
 npm run dev
 npm run build
+npm test
+npm run lint
 ```
 
-This starter does not use `wrangler.jsonc`.
+Tests cover market calendars and DST, stale/future-skewed data, unfinished candles, strict freeze boundaries, source entitlements, broker metadata safety, adaptive polling, server-owned Strict status, risk math, research contracts, and scheduled capture.
 
-## Included Shape
+## Deployment
 
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+Hosting configuration lives in `.openai/hosting.json`. Deploy only a tested, committed source revision. Keep Sites secrets in the hosting environment and never commit credentials.
 
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
-```
-
-## Optional Dispatch-Owned ChatGPT Sign-In
-
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
-
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
-
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
-
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
-
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
-
-## Useful Commands
-
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-## Learn More
-
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+Repository-specific development and market-data invariants are in `AGENTS.md`.

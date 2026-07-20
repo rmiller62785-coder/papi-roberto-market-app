@@ -256,8 +256,8 @@ function sourceGate(
       warnings.push(`${source.label} requires finite observation and API-check timestamps.`);
       return id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
     }
-    if (source.observedAt > evaluatedAt + maxSkew || source.checkedAt > evaluatedAt + maxSkew) {
-      warnings.push(`${source.label} has a future or clock-skewed timestamp.`);
+    if (source.observedAt > evaluatedAt || source.checkedAt > evaluatedAt) {
+      warnings.push(`${source.label} has a post-evaluation or clock-skewed timestamp.`);
       return id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
     }
     if (source.checkedAt < source.observedAt - maxSkew) {
@@ -460,7 +460,9 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
   ) blockReason = "LOW_CONFIDENCE";
   if (blockReason === "NONE" && (thirds.majorThirdCents == null || thirds.minorThirdCents == null)) blockReason = "DATA_PENDING";
   const shortability = decisionInputs.shortability ?? "UNCONFIRMED";
-  if (blockReason === "NONE" && shortability !== "AVAILABLE") blockReason = "SHORTABILITY_UNCONFIRMED";
+  if (blockReason === "NONE" && prediction?.decision === "SHORT_FAVORED" && shortability !== "AVAILABLE") {
+    blockReason = "SHORTABILITY_UNCONFIRMED";
+  }
 
   const decision = blockReason === "NONE" && prediction ? prediction.decision : "NO_TRADE";
   const sourceBlocked = ["FEED_NOT_ENTITLED", "STALE_US_QUOTE", "DATA_PENDING", "MARKET_CLOSED"].includes(blockReason);
@@ -499,7 +501,7 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
 
   return {
     schemaVersion: "moo-phase1-v1",
-    snapshotId: activeFrozenContext?.snapshotId ?? input.snapshotId ?? `moo-${input.targetSession}-${prediction?.generatedAt ?? input.nowMs}`,
+    snapshotId: activeFrozenContext?.snapshotId ?? input.snapshotId ?? `moo-evaluation-${input.targetSession}-${input.nowMs}`,
     targetSession: input.targetSession,
     generatedAt: input.nowMs,
     frozenAt: afterFreeze && prediction ? frozenAt : null,
@@ -516,6 +518,7 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
     confidencePct: decision === "NO_TRADE" ? null : confidence,
     dataQualityScore: quality,
     modelVersion: prediction?.modelVersion ?? null,
+    featureSnapshotId: prediction?.featureSnapshotId ?? null,
     featureSchemaVersion: prediction?.featureSchemaVersion ?? null,
     actionCutoffAt: schedule.decisionFreezeAt,
     deadlines: mooDeadlines(input.targetSession, input.nowMs),
@@ -527,6 +530,7 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
     longTicket,
     shortTicket,
     sources,
+    requiredSourceIds,
     warnings,
   };
 }

@@ -131,6 +131,7 @@ const FINNHUB_QUOTE_CACHE_MS = 10_000;
 // one Alpaca snapshot per worker instance during that interval.
 const ALPACA_SNAPSHOT_CACHE_MS = 1_500;
 const ALPACA_DAILY_CACHE_MS = 5 * 60_000;
+const PROVIDER_REQUEST_TIMEOUT_MS = 8_000;
 const headers = {
   "User-Agent": "Mozilla/5.0 NVDA-Live-Structure/4.0",
   Accept: "application/json",
@@ -156,7 +157,7 @@ async function yahoo(interval: string, range: string, prepost = true) {
   url.searchParams.set("interval", interval);
   url.searchParams.set("range", range);
   url.searchParams.set("includePrePost", String(prepost));
-  const response = await fetch(url, { headers, cache: "no-store" });
+  const response = await fetch(url, { headers, cache: "no-store", signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS) });
   if (!response.ok) throw new Error("Yahoo chart feed failed");
   const json = (await response.json()) as { chart?: { result?: Chart[] } };
   const chart = json.chart?.result?.[0];
@@ -326,6 +327,7 @@ async function finnhubQuote(key: string) {
   const response = await fetch("https://finnhub.io/api/v1/quote?symbol=NVDA", {
     headers: { "X-Finnhub-Token": key, Accept: "application/json" },
     cache: "no-store",
+    signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`Finnhub quote failed (${response.status})`);
   const quote = (await response.json()) as FinnhubQuote;
@@ -364,6 +366,7 @@ async function alpacaSnapshot(credentials: { keyId: string; secretKey: string })
         Accept: "application/json",
       },
       cache: "no-store",
+      signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS),
     },
   );
   if (!response.ok) throw new Error(`Alpaca IEX snapshot failed (${response.status})`);
@@ -402,6 +405,7 @@ async function alpacaDailyHistory(credentials: { keyId: string; secretKey: strin
       Accept: "application/json",
     },
     cache: "no-store",
+    signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`Alpaca SIP daily history failed (${response.status})`);
   const payload = (await response.json()) as AlpacaBarsResponse;
@@ -1162,10 +1166,11 @@ export async function GET() {
   } catch (error) {
     // A 503 means the required Yahoo history source failed. It is independent
     // of the market's open/closed state, which is returned on successful calls.
+    console.error("market GET failed", error instanceof Error ? error.message : error);
     return Response.json(
       {
         error: "Market data unavailable",
-        detail: error instanceof Error ? error.message : "unknown",
+        detail: "MARKET_DATA_UPSTREAM_UNAVAILABLE",
         checkedAt: new Date().toISOString(),
       },
       { status: 503, headers: { "Cache-Control": "no-store" } },
