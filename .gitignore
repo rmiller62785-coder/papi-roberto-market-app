@@ -1,9 +1,9 @@
-node_modules/
-.env
-.env.*
-!.env.example
-.next/
+﻿node_modules/
 dist/
-build/
-coverage/
+.next/
+.vinext/
+.wrangler/
+.env
+.env.local
 *.log
+.openai/site-source.tar.gz
