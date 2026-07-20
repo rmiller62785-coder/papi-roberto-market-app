@@ -34,6 +34,39 @@ type FinnhubQuote = {
   t?: number;
 };
 
+type AlpacaTrade = {
+  p?: number;
+  s?: number;
+  t?: string;
+  x?: string;
+};
+
+type AlpacaQuote = {
+  ap?: number;
+  as?: number;
+  bp?: number;
+  bs?: number;
+  t?: string;
+};
+
+type AlpacaBar = {
+  c?: number;
+  h?: number;
+  l?: number;
+  o?: number;
+  t?: string;
+  v?: number;
+};
+
+type AlpacaSnapshot = {
+  symbol?: string;
+  latestTrade?: AlpacaTrade;
+  latestQuote?: AlpacaQuote;
+  minuteBar?: AlpacaBar;
+  dailyBar?: AlpacaBar;
+  prevDailyBar?: AlpacaBar;
+};
+
 type HistoryCache = {
   expires: number;
   fetchedAt: number;
@@ -47,8 +80,14 @@ type FinnhubQuoteCache = {
   expires: number;
 };
 
+type AlpacaSnapshotCache = {
+  snapshot: AlpacaSnapshot;
+  fetchedAt: number;
+  expires: number;
+};
+
 type Session = "CLOSED" | "PREMARKET" | "MARKET OPEN" | "AFTER-HOURS";
-type SourceStatus = "ok" | "stale" | "error" | "not_configured";
+type SourceStatus = "ok" | "stale" | "error" | "standby" | "not_configured";
 
 const HISTORY_CACHE_MS = 60_000;
 const HISTORY_STALE_MS = 120_000;
@@ -58,6 +97,9 @@ const OPEN_QUOTE_STALE_MS = 90_000;
 // short server cache keeps the UI responsive while making provider freshness
 // explicit instead of turning rate-limit failures into apparent live data.
 const FINNHUB_QUOTE_CACHE_MS = 10_000;
+// The browser polls every two seconds. This cache limits upstream traffic to
+// one Alpaca snapshot per worker instance during that interval.
+const ALPACA_SNAPSHOT_CACHE_MS = 1_500;
 const headers = {
   "User-Agent": "Mozilla/5.0 NVDA-Live-Structure/4.0",
   Accept: "application/json",
@@ -93,6 +135,7 @@ async function yahoo(interval: string, range: string, prepost = true) {
 
 let historyCache: HistoryCache | null = null;
 let finnhubQuoteCache: FinnhubQuoteCache | null = null;
+let alpacaSnapshotCache: AlpacaSnapshotCache | null = null;
 
 /**
  * Yahoo history is deliberately cached for one minute. A request to this route
@@ -323,6 +366,47 @@ async function finnhubQuote(key: string) {
   return { ...finnhubQuoteCache, cacheHit: false };
 }
 
+function alpacaCredentials() {
+  const env = (globalThis as unknown as {
+    process?: { env?: Record<string, string> };
+  }).process?.env;
+  const keyId = env?.APCA_API_KEY_ID?.trim();
+  const secretKey = env?.APCA_API_SECRET_KEY?.trim();
+  return keyId && secretKey ? { keyId, secretKey } : null;
+}
+
+// Alpaca credentials never leave the server. The Basic-plan IEX snapshot is a
+// real-time single-exchange reference, not consolidated SIP NBBO or Nasdaq NOII.
+async function alpacaSnapshot(credentials: { keyId: string; secretKey: string }) {
+  const now = Date.now();
+  if (alpacaSnapshotCache && alpacaSnapshotCache.expires > now) {
+    return { ...alpacaSnapshotCache, cacheHit: true };
+  }
+  const response = await fetch(
+    "https://data.alpaca.markets/v2/stocks/NVDA/snapshot?feed=iex",
+    {
+      headers: {
+        "APCA-API-KEY-ID": credentials.keyId,
+        "APCA-API-SECRET-KEY": credentials.secretKey,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    },
+  );
+  if (!response.ok) throw new Error(`Alpaca IEX snapshot failed (${response.status})`);
+  const snapshot = (await response.json()) as AlpacaSnapshot;
+  if (!valid(snapshot.latestTrade?.p) || snapshot.latestTrade!.p! <= 0) {
+    throw new Error("Alpaca returned no valid NVDA trade");
+  }
+  const fetchedAt = Date.now();
+  alpacaSnapshotCache = {
+    snapshot,
+    fetchedAt,
+    expires: fetchedAt + ALPACA_SNAPSHOT_CACHE_MS,
+  };
+  return { ...alpacaSnapshotCache, cacheHit: false };
+}
+
 const iso = (value: number | null | undefined) =>
   valid(value) ? new Date(value).toISOString() : null;
 
@@ -332,6 +416,7 @@ export async function GET() {
     const finnhubKey = (globalThis as unknown as {
       process?: { env?: Record<string, string> };
     }).process?.env?.FINNHUB_API_KEY;
+    const alpaca = alpacaCredentials();
     const targetDate = targetSessionDate(endpointCheckedAtMs);
     const todayKey = etDate(new Date(endpointCheckedAtMs));
     const marketState = sessionState(endpointCheckedAtMs);
@@ -403,13 +488,43 @@ export async function GET() {
     let quoteFetchedAtMs: number | null = history.fetchedAt;
     let source = "Yahoo Finance NVDA chart fallback · may be delayed";
     let realtime = false;
+    let selectedQuoteProvider: "alpaca_iex" | "finnhub" | "yahoo" = "yahoo";
+    let alpacaLive: AlpacaSnapshot | null = null;
     let liveQuote: FinnhubQuote | null = null;
-    let finnhubStatus: SourceStatus = finnhubKey ? "error" : "not_configured";
+    let alpacaFetchedAtMs: number | null = null;
+    let alpacaStatus: SourceStatus = alpaca ? "error" : "not_configured";
+    let alpacaDetail = alpaca
+      ? "Alpaca IEX snapshot request did not complete"
+      : "APCA_API_KEY_ID / APCA_API_SECRET_KEY are not configured";
+    let finnhubStatus: SourceStatus = finnhubKey ? "standby" : "not_configured";
     let finnhubDetail = finnhubKey
-      ? "Finnhub quote request did not complete"
+      ? "Configured as the fallback reference quote"
       : "FINNHUB_API_KEY is not configured";
 
-    if (finnhubKey) {
+    if (alpaca) {
+      try {
+        const result = await alpacaSnapshot(alpaca);
+        alpacaLive = result.snapshot;
+        alpacaFetchedAtMs = result.fetchedAt;
+        quoteFetchedAtMs = result.fetchedAt;
+        const tradeTime = Date.parse(alpacaLive.latestTrade?.t ?? "");
+        quoteObservedAtMs = Number.isFinite(tradeTime) ? tradeTime : null;
+        price = alpacaLive.latestTrade!.p!;
+        legacyAsOf = quoteObservedAtMs == null
+          ? ""
+          : new Date(quoteObservedAtMs).toISOString();
+        source = "Alpaca IEX NVDA snapshot · single-exchange coverage";
+        selectedQuoteProvider = "alpaca_iex";
+        alpacaStatus = quoteObservedAtMs != null ? "ok" : "stale";
+        alpacaDetail = `${result.cacheHit ? "Cached" : "Fresh"} IEX snapshot returned with latest trade and quote timestamps`;
+      } catch (error) {
+        alpacaDetail = error instanceof Error
+          ? error.message
+          : "Alpaca IEX snapshot request failed";
+      }
+    }
+
+    if (!alpacaLive && finnhubKey) {
       try {
         const result = await finnhubQuote(finnhubKey);
         liveQuote = result.quote;
@@ -422,6 +537,7 @@ export async function GET() {
           ? ""
           : new Date(quoteObservedAtMs).toISOString();
         source = "Finnhub NVDA quote snapshot";
+        selectedQuoteProvider = "finnhub";
         // A timestamped snapshot is not automatically "real-time." Outside
         // regular hours it is a closed/extended-session observation, and while
         // open it must also pass the explicit age gate below.
@@ -489,7 +605,7 @@ export async function GET() {
         : "FORMING_931";
 
     const quoteDay =
-      targetDate === todayKey && marketState.session === "MARKET OPEN" && liveQuote;
+      targetDate === todayKey && marketState.session === "MARKET OPEN";
     const endpointCompletedAtMs = Date.now();
     const historyCacheAgeMs = Math.max(0, endpointCompletedAtMs - history.fetchedAt);
     const quoteAgeMs = valid(quoteObservedAtMs)
@@ -499,9 +615,18 @@ export async function GET() {
       marketState.regularMarketOpen &&
         (!valid(quoteAgeMs) || quoteAgeMs > OPEN_QUOTE_STALE_MS),
     );
-    if (finnhubStatus === "ok" && quoteStale) finnhubStatus = "stale";
+    let selectedQuoteStatus: SourceStatus = selectedQuoteProvider === "alpaca_iex"
+      ? alpacaStatus
+      : selectedQuoteProvider === "finnhub"
+        ? finnhubStatus
+        : "stale";
+    if (selectedQuoteStatus === "ok" && quoteStale) {
+      selectedQuoteStatus = "stale";
+      if (selectedQuoteProvider === "alpaca_iex") alpacaStatus = "stale";
+      if (selectedQuoteProvider === "finnhub") finnhubStatus = "stale";
+    }
     realtime = Boolean(
-      finnhubStatus === "ok" &&
+      selectedQuoteStatus === "ok" &&
         marketState.regularMarketOpen &&
         valid(quoteAgeMs) &&
         quoteAgeMs <= OPEN_QUOTE_STALE_MS,
@@ -538,6 +663,7 @@ export async function GET() {
         targetDate,
         price,
         previousClose:
+          alpacaLive?.prevDailyBar?.c ??
           daily.at(-1)?.close ??
           liveQuote?.pc ??
           minuteChart.meta?.chartPreviousClose ??
@@ -568,7 +694,7 @@ export async function GET() {
             completedAt: new Date(endpointCompletedAtMs).toISOString(),
           },
           quote: {
-            provider: liveQuote ? "finnhub" : "yahoo",
+            provider: selectedQuoteProvider,
             observedAt: iso(quoteObservedAtMs),
             fetchedAt: iso(quoteFetchedAtMs),
             ageMs: quoteAgeMs,
@@ -597,8 +723,18 @@ export async function GET() {
         },
         sources: [
           {
+            id: "alpaca_iex",
+            role: "preferred_reference_quote",
+            status: alpacaStatus,
+            observedAt: alpacaLive?.latestTrade?.t ?? null,
+            fetchedAt: alpacaLive ? iso(alpacaFetchedAtMs) : null,
+            coverage:
+              "Real-time IEX single-exchange NVDA snapshot on Alpaca Basic; not consolidated SIP NBBO, Tradegate, or Nasdaq NOII.",
+            detail: alpacaDetail,
+          },
+          {
             id: "finnhub",
-            role: "reference_quote",
+            role: "fallback_reference_quote",
             status: finnhubStatus,
             observedAt: liveQuote?.t ? new Date(liveQuote.t * 1000).toISOString() : null,
             fetchedAt: liveQuote ? iso(quoteFetchedAtMs) : null,
@@ -625,22 +761,31 @@ export async function GET() {
         firstMinuteHistory,
         day: {
           open:
-            quoteDay && valid(liveQuote?.o)
+            quoteDay && valid(alpacaLive?.dailyBar?.o)
+              ? alpacaLive!.dailyBar!.o!
+              : quoteDay && valid(liveQuote?.o)
               ? liveQuote!.o!
               : (regular.at(0)?.open ?? null),
           high:
-            quoteDay && valid(liveQuote?.h)
+            quoteDay && valid(alpacaLive?.dailyBar?.h)
+              ? alpacaLive!.dailyBar!.h!
+              : quoteDay && valid(liveQuote?.h)
               ? liveQuote!.h!
               : regular.length
                 ? Math.max(...regular.map((bar) => bar.high))
                 : null,
           low:
-            quoteDay && valid(liveQuote?.l)
+            quoteDay && valid(alpacaLive?.dailyBar?.l)
+              ? alpacaLive!.dailyBar!.l!
+              : quoteDay && valid(liveQuote?.l)
               ? liveQuote!.l!
               : regular.length
                 ? Math.min(...regular.map((bar) => bar.low))
                 : null,
-          volume: regular.reduce((sum, bar) => sum + bar.volume, 0),
+          volume:
+            quoteDay && valid(alpacaLive?.dailyBar?.v)
+              ? alpacaLive!.dailyBar!.v!
+              : regular.reduce((sum, bar) => sum + bar.volume, 0),
         },
         premarket: {
           high: premarket.length
@@ -652,8 +797,8 @@ export async function GET() {
           current:
             targetDate === todayKey &&
             marketState.session === "PREMARKET" &&
-            liveQuote
-              ? liveQuote.c
+            (alpacaLive || liveQuote)
+              ? price
               : (premarket.at(-1)?.close ?? null),
           volume: premarket.reduce((sum, bar) => sum + bar.volume, 0),
         },

@@ -16,7 +16,7 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(page, /Transparent forecast bridge/);
   assert.match(page, /SessionChart/);
   assert.match(page, /research-alert/);
-  assert.match(page, /Finnhub quote updated/);
+  assert.match(page, /Alpaca IEX trade observed/);
   assert.match(page, /checkedAt:string/);
   assert.match(page, /setLastRefreshAt\(/);
   assert.match(page, /function ApiStamp/);
@@ -121,6 +121,10 @@ test("pairs free event, calendar, filing, and cross-market sources", async () =>
   assert.match(market, /regularCloseMinute/);
   assert.match(market, /historyWindowStartObservedAt/);
   assert.match(market, /quoteObservedAtMs != null \? "ok" : "stale"/);
+  assert.match(market, /data\.alpaca\.markets\/v2\/stocks\/NVDA\/snapshot\?feed=iex/);
+  assert.match(market, /APCA-API-KEY-ID/);
+  assert.match(market, /APCA-API-SECRET-KEY/);
+  assert.match(market, /preferred_reference_quote/);
   assert.match(library, /Freeze the original forecast\/plan/);
   assert.match(library, /export async function PATCH/);
   assert.match(library, /libraryWriteError/);
