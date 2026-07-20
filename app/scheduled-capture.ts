@@ -1,5 +1,10 @@
 import { applyForecastAdjustment } from "./forecast-adjustment.ts";
 import { computeOpeningAnalysis } from "./opening-analysis.ts";
+import {
+  isNasdaqSessionDate,
+  nasdaqSessionSchedule,
+  newYorkDateKey,
+} from "./market-session.ts";
 
 type Bar = {
   time: number;
@@ -112,6 +117,8 @@ export type ScheduledCaptureResult = {
   reason?: string;
 };
 
+export const ACTIONABLE_MOO_FREEZE_TIME_ET = "09:24:30";
+
 const finite = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 
@@ -133,15 +140,18 @@ function easternParts(atMs: number) {
 }
 
 export function easternDate(atMs: number) {
-  const parts = easternParts(atMs);
-  return `${parts.year}-${parts.month}-${parts.day}`;
+  return newYorkDateKey(atMs);
+}
+
+export function actionableMooFreezeAt(sessionDate: string) {
+  return nasdaqSessionSchedule(sessionDate).decisionFreezeAt;
 }
 
 /**
  * Cron triggers are UTC, while the market schedule is Eastern. Both UTC DST
  * variants fire and this guard admits only the five named pre-open checkpoint
- * windows or the 09:31-09:35 outcome window. Weekends are rejected before any
- * upstream call.
+ * windows or the 09:31-09:35 outcome window. Weekends and known Nasdaq
+ * holidays are rejected before any upstream call.
  */
 export function scheduledCapturePhase(atMs: number): ScheduledCapturePhase {
   const checkpoint = scheduledCaptureCheckpoint(atMs);
@@ -151,13 +161,17 @@ export function scheduledCapturePhase(atMs: number): ScheduledCapturePhase {
 
 export function scheduledCaptureCheckpoint(atMs: number): ScheduledInterval | "OUTCOME" | null {
   const parts = easternParts(atMs);
-  if (["Sat", "Sun"].includes(parts.weekday)) return null;
+  const dateKey = `${parts.year}-${parts.month}-${parts.day}`;
+  if (!isNasdaqSessionDate(dateKey)) return null;
   const minute = Number(parts.hour) * 60 + Number(parts.minute);
   if (minute >= 4 * 60 + 5 && minute <= 4 * 60 + 9) return "OVERNIGHT";
   if (minute >= 5 * 60 + 30 && minute <= 5 * 60 + 34) return "T-4H";
   if (minute >= 8 * 60 + 30 && minute <= 8 * 60 + 34) return "T-1H";
   if (minute >= 9 * 60 && minute <= 9 * 60 + 4) return "T-30M";
-  if (minute >= 9 * 60 + 25 && minute <= 9 * 60 + 29) return "T-5M";
+  // The actionable MOO plan must be frozen no later than 09:24:30 ET. Cron
+  // fires on the minute, so 09:24 is the only final actionable checkpoint.
+  // 09:25-09:29 data is monitoring-only and must never enter this pipeline.
+  if (minute === 9 * 60 + 24) return "T-5M";
   if (minute >= 9 * 60 + 31 && minute <= 9 * 60 + 35) return "OUTCOME";
   return null;
 }
@@ -182,7 +196,8 @@ export function buildScheduledPreopenCapture(
   forecast: ForecastPayload,
   capturedAt: number,
   intervalLabel: ScheduledInterval = "T-5M",
-): { plan: ScheduledPlan; snapshot: ScheduledSnapshot } | null {
+): { plan: ScheduledPlan | null; snapshot: ScheduledSnapshot } | null {
+  if (capturedAt > actionableMooFreezeAt(market.targetDate)) return null;
   const completedBars = market.analysisBars?.length
     ? market.analysisBars
     : market.bars.filter((bar) => bar.time + 60_000 <= capturedAt);
@@ -289,6 +304,10 @@ export function buildScheduledPreopenCapture(
     factorsJson: JSON.stringify({
       modelVersion,
       capturedAt,
+      actionableCutoffAt: actionableMooFreezeAt(market.targetDate),
+      actionable: false,
+      strategy: "OPEN_RESEARCH_BASELINE",
+      decisionUse: "NON_ACTIONABLE_UNTIL_A_SEPARATE_MOO_MODEL_IS_VALIDATED",
       sourceCheckedAt: forecast.flag?.updatedAt ?? null,
       captureMode: "cloudflare_cron",
       factors,
@@ -296,18 +315,11 @@ export function buildScheduledPreopenCapture(
   };
   return {
     snapshot,
-    plan: {
-      date: market.targetDate,
-      signal: analysis.plan.side,
-      openRangeLow: adjusted.low,
-      openRangeHigh: adjusted.high,
-      entry: analysis.plan.entry,
-      stop: analysis.plan.stop,
-      target: analysis.plan.target,
-      expectedMove: analysis.scalp.expectedMoveHigh ?? 0,
-      confidence: analysis.plan.confidence === "MODERATE" ? 70 : 35,
-      rationale: analysis.plan.evidence.join(" "),
-    },
+    // computeOpeningAnalysis is the legacy 09:31 confirmation workflow. Its
+    // heuristic movement and LOW/MODERATE labels are not calibrated MOO
+    // confidence, so this scheduled pre-open path stores research snapshots
+    // only and cannot manufacture an actionable Library plan.
+    plan: null,
   };
 }
 
@@ -352,11 +364,15 @@ export async function runScheduledCapture(input: {
       if (market.session !== "MARKET OPEN") {
         return finish({ phase, status: "skipped", targetDate, reason: "regular market is not open" });
       }
-      const actualOpen = finite(market.day.open) ? market.day.open : null;
+      // market.day.open is a regular-bar/day-open field, not the Nasdaq
+      // Official Opening Cross. Preserve the distinction and leave the
+      // official opening outcome pending until an entitled cross source is
+      // integrated.
+      const actualOpen = null;
       const firstMinuteClose = market.firstMinute.complete && finite(market.firstMinute.close)
         ? market.firstMinute.close
         : null;
-      if (actualOpen == null && firstMinuteClose == null) {
+      if (firstMinuteClose == null) {
         return finish({ phase, status: "skipped", targetDate, reason: "opening outcome is not published yet" });
       }
       const changedRows = await input.store.attachOutcome({ targetDate, actualOpen, firstMinuteClose, capturedAt: nowMs });
@@ -390,7 +406,7 @@ export async function runScheduledCapture(input: {
         reason: `forecast froze, but the ${checkpoint} snapshot failed point-in-time market-data gates`,
       });
     }
-    await input.store.savePreopen(checkpoint === "T-5M" ? capture.plan : null, capture.snapshot);
+    await input.store.savePreopen(capture.plan, capture.snapshot);
     return finish({ phase, status: "captured", targetDate });
   } catch (error) {
     await input.store.recordRun?.({
@@ -407,6 +423,7 @@ export async function runScheduledCapture(input: {
 
 const createLibraryTableSql = `CREATE TABLE IF NOT EXISTS library_plans (
   date TEXT PRIMARY KEY NOT NULL,
+  strategy_kind TEXT NOT NULL DEFAULT 'LEGACY_931_CONFIRMATION',
   signal TEXT NOT NULL CHECK (signal IN ('LONG', 'SHORT', 'WAIT')),
   open_range_low REAL NOT NULL,
   open_range_high REAL NOT NULL,
@@ -417,6 +434,7 @@ const createLibraryTableSql = `CREATE TABLE IF NOT EXISTS library_plans (
   confidence REAL NOT NULL,
   rationale TEXT NOT NULL,
   actual_open REAL,
+  actual_open_source TEXT,
   first_minute_close REAL,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -481,10 +499,10 @@ export function createD1ScheduledCaptureStore(database: D1Database): ScheduledCa
       if (plan) statements.push(
         database
           .prepare(`INSERT INTO library_plans (
-            date,signal,open_range_low,open_range_high,entry,stop,target,
-            expected_move,confidence,rationale,actual_open,first_minute_close,
+            date,strategy_kind,signal,open_range_low,open_range_high,entry,stop,target,
+            expected_move,confidence,rationale,actual_open,actual_open_source,first_minute_close,
             created_at,updated_at
-          ) VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?)
+          ) VALUES (?,'LEGACY_931_CONFIRMATION',?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?)
           ON CONFLICT(date) DO NOTHING`)
           .bind(
             plan.date,
@@ -505,7 +523,7 @@ export function createD1ScheduledCaptureStore(database: D1Database): ScheduledCa
     },
     async attachOutcome({ targetDate, actualOpen, firstMinuteClose, capturedAt }) {
       await ensure();
-      const results = await database.batch([
+      const statements = [
         database
           .prepare(`UPDATE library_plans SET
             actual_open=COALESCE(actual_open,?),
@@ -513,13 +531,16 @@ export function createD1ScheduledCaptureStore(database: D1Database): ScheduledCa
             updated_at=?
           WHERE date=?`)
           .bind(actualOpen, firstMinuteClose, capturedAt, targetDate),
-        database
+      ];
+      if (actualOpen != null) {
+        statements.push(database
           .prepare(`UPDATE forecast_snapshots SET
             actual_open=COALESCE(actual_open,?),
             median_error=COALESCE(median_error,ABS(?-adjusted_median))
           WHERE target_date=?`)
-          .bind(actualOpen, actualOpen, targetDate),
-      ]);
+          .bind(actualOpen, actualOpen, targetDate));
+      }
+      const results = await database.batch(statements);
       return results.reduce((sum, result) => sum + Number(result.meta?.changes ?? 0), 0);
     },
     async recordRun({ scheduledAt, completedAt, phase, status, targetDate, detail }) {

@@ -2,6 +2,14 @@ import { env } from "cloudflare:workers";
 import { pullPolymarketEvidence, type PolymarketEvidence } from "../../polymarket";
 import { aggregateForecastContributions } from "../../forecast-adjustment";
 import { classifyMarketEvent, earningsImpactSession } from "../../event-classification";
+import {
+  isNasdaqSessionDate,
+  nasdaqSessionSchedule,
+  newYorkDateKey,
+  newYorkWallTimeUtc,
+  nextNasdaqSession,
+  previousNasdaqSession,
+} from "../../market-session";
 
 type Weight = {
   key: string;
@@ -214,7 +222,7 @@ const schema = [
   `CREATE INDEX IF NOT EXISTS market_events_time_idx ON market_events (event_time DESC)`,
   `CREATE TABLE IF NOT EXISTS forecast_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,target_date TEXT NOT NULL,captured_at INTEGER NOT NULL,interval_label TEXT NOT NULL,base_median REAL NOT NULL,adjusted_median REAL NOT NULL,adjusted_low REAL NOT NULL,adjusted_high REAL NOT NULL,factors_json TEXT NOT NULL,actual_open REAL,median_error REAL)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS forecast_snapshots_target_interval_idx ON forecast_snapshots (target_date,interval_label)`,
-  `CREATE TABLE IF NOT EXISTS forecast_preopen_freezes (target_date TEXT PRIMARY KEY NOT NULL,frozen_at INTEGER NOT NULL,payload_json TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS forecast_preopen_freezes (target_date TEXT PRIMARY KEY NOT NULL,frozen_at INTEGER NOT NULL,actionable_cutoff_at INTEGER,payload_json TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS automation_capture_health (id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),last_attempt_at INTEGER NOT NULL,last_success_at INTEGER,last_preopen_at INTEGER,last_outcome_at INTEGER,scheduled_at INTEGER NOT NULL,phase TEXT NOT NULL,status TEXT NOT NULL,target_date TEXT,detail TEXT)`,
 ];
 
@@ -267,6 +275,13 @@ async function ensure() {
 const clean = (value: unknown) => (typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "");
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const valid = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const validTargetSession = (value: string) => {
+  try {
+    return isNasdaqSessionDate(value);
+  } catch {
+    return false;
+  }
+};
 function factorSource(key: string, feeds: FeedStatus[], evaluatedAt: number): FactorSource {
   const definition = factorSourceDefinitions[key];
   if (!definition) {
@@ -328,142 +343,53 @@ function etDate(value: number) {
   }).format(new Date(value));
 }
 function newYorkWallTime(date: string, time: string) {
-  const target = Date.UTC(
-    Number(date.slice(0, 4)),
-    Number(date.slice(4, 6)) - 1,
-    Number(date.slice(6, 8)),
+  return newYorkWallTimeUtc(
+    `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`,
     Number(time.slice(0, 2)),
     Number(time.slice(2, 4)),
   );
-  let candidate = target;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const parts = Object.fromEntries(
-      new Intl.DateTimeFormat("en-US", {
-        timeZone: "America/New_York",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }).formatToParts(new Date(candidate)).map((part) => [part.type, part.value]),
-    );
-    const rendered = Date.UTC(
-      Number(parts.year),
-      Number(parts.month) - 1,
-      Number(parts.day),
-      Number(parts.hour) % 24,
-      Number(parts.minute),
-    );
-    candidate += target - rendered;
-  }
-  return candidate;
-}
-function shiftDateKey(key: string, days: number) {
-  const date = new Date(`${key}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-function observedFixedDate(year: number, month: number, day: number) {
-  const date = new Date(Date.UTC(year, month, day));
-  const weekday = date.getUTCDay();
-  if (weekday === 6) date.setUTCDate(date.getUTCDate() - 1);
-  if (weekday === 0) date.setUTCDate(date.getUTCDate() + 1);
-  return date.toISOString().slice(0, 10);
-}
-function nthWeekdayDate(year: number, month: number, weekday: number, n: number) {
-  const date = new Date(Date.UTC(year, month, 1));
-  date.setUTCDate(1 + ((7 + weekday - date.getUTCDay()) % 7) + (n - 1) * 7);
-  return date.toISOString().slice(0, 10);
-}
-function lastWeekdayDate(year: number, month: number, weekday: number) {
-  const date = new Date(Date.UTC(year, month + 1, 0));
-  date.setUTCDate(date.getUTCDate() - ((7 + date.getUTCDay() - weekday) % 7));
-  return date.toISOString().slice(0, 10);
-}
-function easterSunday(year: number) {
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31) - 1;
-  const day = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(Date.UTC(year, month, day));
-}
-function marketHoliday(key: string) {
-  const year = Number(key.slice(0, 4));
-  const goodFriday = easterSunday(year);
-  goodFriday.setUTCDate(goodFriday.getUTCDate() - 2);
-  return new Set([
-    observedFixedDate(year, 0, 1),
-    observedFixedDate(year + 1, 0, 1),
-    nthWeekdayDate(year, 0, 1, 3),
-    nthWeekdayDate(year, 1, 1, 3),
-    goodFriday.toISOString().slice(0, 10),
-    lastWeekdayDate(year, 4, 1),
-    observedFixedDate(year, 5, 19),
-    observedFixedDate(year, 6, 4),
-    nthWeekdayDate(year, 8, 1, 1),
-    nthWeekdayDate(year, 10, 4, 4),
-    observedFixedDate(year, 11, 25),
-  ]).has(key);
-}
-function priorWeekday(key: string) {
-  let value = shiftDateKey(key, -1);
-  while ([0, 6].includes(new Date(`${value}T00:00:00Z`).getUTCDay())) value = shiftDateKey(value, -1);
-  return value;
-}
-function earlyCloseDate(key: string) {
-  const year = Number(key.slice(0, 4));
-  const afterThanksgiving = shiftDateKey(nthWeekdayDate(year, 10, 4, 4), 1);
-  const beforeIndependence = priorWeekday(observedFixedDate(year, 6, 4));
-  const christmasEve = `${year}-12-24`;
-  return key === afterThanksgiving || key === beforeIndependence ||
-    (key === christmasEve && observedFixedDate(year, 11, 25) !== christmasEve);
 }
 function previousMarketSession(key: string) {
-  let prior = shiftDateKey(key, -1);
-  while (new Date(`${prior}T00:00:00Z`).getUTCDay() % 6 === 0 || marketHoliday(prior)) {
-    prior = shiftDateKey(prior, -1);
-  }
-  return prior;
+  return previousNasdaqSession(key, { inclusive: false });
 }
 function nextMarketSession(key: string) {
-  let next = shiftDateKey(key, 1);
-  while (new Date(`${next}T00:00:00Z`).getUTCDay() % 6 === 0 || marketHoliday(next)) {
-    next = shiftDateKey(next, 1);
-  }
-  return next;
+  return nextNasdaqSession(key, { inclusive: false });
+}
+
+export type ForecastFreezePhase =
+  | "BEFORE_TARGET_PREMARKET"
+  | "ACTIONABLE_WINDOW"
+  | "MONITORING_LOCKED"
+  | "CROSS_COMPLETE";
+
+/**
+ * The forecast route may update the actionable MOO snapshot only during the
+ * target session's 04:00-09:24:30 ET window. Evidence after that boundary is
+ * monitoring-only and cannot rewrite the frozen decision.
+ */
+export function forecastFreezePhase(targetDate: string, nowMs = Date.now()) {
+  const schedule = nasdaqSessionSchedule(targetDate);
+  const premarketStartAt = schedule.premarketOpenAt;
+  const actionableCutoffAt = schedule.decisionFreezeAt;
+  const regularOpenAt = schedule.regularOpenAt;
+  const phase: ForecastFreezePhase = nowMs < premarketStartAt
+    ? "BEFORE_TARGET_PREMARKET"
+    : nowMs <= actionableCutoffAt
+      ? "ACTIONABLE_WINDOW"
+      : nowMs < regularOpenAt
+        ? "MONITORING_LOCKED"
+        : "CROSS_COMPLETE";
+  return { phase, premarketStartAt, actionableCutoffAt, regularOpenAt };
 }
 function priorSessionCloseMs(targetDate: string) {
   const prior = previousMarketSession(targetDate);
-  return newYorkWallTime(prior.replace(/-/g, ""), earlyCloseDate(prior) ? "1300" : "1600");
+  return nasdaqSessionSchedule(prior).regularCloseAt;
 }
 function regularMarketOpenNow(value = Date.now()) {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: "America/New_York",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      weekday: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).formatToParts(new Date(value)).map((part) => [part.type, part.value]),
-  );
-  const minute = Number(parts.hour) * 60 + Number(parts.minute);
-  const key = `${parts.year}-${parts.month}-${parts.day}`;
-  const closeMinute = earlyCloseDate(key) ? 780 : 960;
-  return !["Sat", "Sun"].includes(parts.weekday) && !marketHoliday(key) && minute >= 570 && minute < closeMinute;
+  const key = newYorkDateKey(value);
+  if (!isNasdaqSessionDate(key)) return false;
+  const schedule = nasdaqSessionSchedule(key);
+  return value >= schedule.regularOpenAt && value < schedule.regularCloseAt;
 }
 function eventTopic(event: EventRow) {
   const text = `${event.headline} ${event.summary}`.toLowerCase();
@@ -914,7 +840,7 @@ function signals(
     nvda_earnings: target.some((event) => event.category === "Earnings") ? 1 : 0,
     macro_release: target.some((event) => event.category === "Macro") ? 1 : 0,
     sec_filing: recent.some((event) => event.category === "SEC filing") ? 1 : 0,
-    // Opening forecasts freeze at 09:30 ET. Same-session observations after
+    // Actionable MOO forecasts freeze at 09:24:30 ET. Same-session observations after
     // the open are audit data and cannot rewrite the expected open.
     market_confirmation: preOpen && market.available ? market.signal : 0,
     cross_market_volatility: preOpen ? volatility : 0,
@@ -1011,7 +937,13 @@ export async function GET(request: Request) {
   try {
     await ensure();
     const url = new URL(request.url);
-    const targetDate = url.searchParams.get("targetDate") ?? new Date().toISOString().slice(0, 10);
+    const targetDate = url.searchParams.get("targetDate") ?? newYorkDateKey(Date.now());
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+      return json({ error: "targetDate must use YYYY-MM-DD" }, 400);
+    }
+    if (!validTargetSession(targetDate)) {
+      return json({ error: "targetDate must be a valid Nasdaq trading session" }, 400);
+    }
     const intelligence = await pullIntelligence(targetDate);
     const d = db();
     const now = Date.now();
@@ -1132,29 +1064,45 @@ export async function GET(request: Request) {
       overnightContext: intelligence.overnight,
     };
     let servedForecastBlock: typeof liveForecastBlock = liveForecastBlock;
-    const targetOpenAt = newYorkWallTime(targetDate.replace(/-/g, ""), "0930");
-    if (signalEvaluatedAt < targetOpenAt) {
-      // The last successful pre-open request wins until 09:30. After the open,
-      // every opening-forecast feature is served from this immutable cutoff.
+    const freezeWindow = forecastFreezePhase(targetDate, signalEvaluatedAt);
+    let frozenAt: number | null = null;
+    if (freezeWindow.phase === "ACTIONABLE_WINDOW") {
+      // The last successful target-session request at or before 09:24:30 ET
+      // wins. Later NOII/news/price evidence is monitoring-only.
       await d.prepare(
-        `INSERT INTO forecast_preopen_freezes (target_date,frozen_at,payload_json) VALUES (?,?,?)
-         ON CONFLICT(target_date) DO UPDATE SET frozen_at=excluded.frozen_at,payload_json=excluded.payload_json
-         WHERE excluded.frozen_at >= forecast_preopen_freezes.frozen_at`,
-      ).bind(targetDate, signalEvaluatedAt, JSON.stringify(liveForecastBlock)).run();
+        `INSERT INTO forecast_preopen_freezes (target_date,frozen_at,actionable_cutoff_at,payload_json) VALUES (?,?,?,?)
+         ON CONFLICT(target_date) DO UPDATE SET
+           frozen_at=excluded.frozen_at,
+           actionable_cutoff_at=excluded.actionable_cutoff_at,
+           payload_json=excluded.payload_json
+         WHERE excluded.frozen_at >= forecast_preopen_freezes.frozen_at
+           AND excluded.frozen_at <= excluded.actionable_cutoff_at`,
+      ).bind(
+        targetDate,
+        signalEvaluatedAt,
+        freezeWindow.actionableCutoffAt,
+        JSON.stringify(liveForecastBlock),
+      ).run();
+      frozenAt = signalEvaluatedAt;
     } else {
       const frozen = await d
-        .prepare(`SELECT frozen_at AS frozenAt,payload_json AS payloadJson FROM forecast_preopen_freezes WHERE target_date=?`)
-        .bind(targetDate)
+        .prepare(`SELECT frozen_at AS frozenAt,payload_json AS payloadJson
+          FROM forecast_preopen_freezes
+          WHERE target_date=? AND frozen_at>=? AND frozen_at<=?`)
+        .bind(targetDate, freezeWindow.premarketStartAt, freezeWindow.actionableCutoffAt)
         .first<{ frozenAt: number; payloadJson: string }>();
       if (frozen?.payloadJson) {
+        frozenAt = frozen.frozenAt;
         const parsed = JSON.parse(frozen.payloadJson) as typeof liveForecastBlock;
         servedForecastBlock = {
           ...parsed,
           computedAt: frozen.frozenAt,
           methodology: {
             ...parsed.methodology,
-            state: "PREOPEN_FROZEN_RESEARCH",
-            summary: `${parsed.methodology.summary} Served from the last pre-open feature snapshot; post-open evidence cannot rewrite the expected open.`,
+            state: freezeWindow.phase === "MONITORING_LOCKED"
+              ? "MOO_LOCKED_MONITORING"
+              : "PREOPEN_FROZEN_RESEARCH",
+            summary: `${parsed.methodology.summary} Served from the last actionable snapshot at or before 09:24:30 ET; later monitoring evidence cannot rewrite the MOO decision.`,
           },
         };
       } else {
@@ -1184,20 +1132,22 @@ export async function GET(request: Request) {
             ...liveMethodology,
             state: "NO_PREOPEN_FREEZE",
             readiness: "NO_QUALIFYING_SIGNAL",
-            summary: "No pre-open feature snapshot exists. Post-open evidence is excluded rather than backfilled into the expected open.",
+            summary: freezeWindow.phase === "BEFORE_TARGET_PREMARKET"
+              ? "The target premarket session has not begun. No actionable freeze exists and current evidence cannot be promoted to a target-session forecast."
+              : "No valid target-session snapshot was captured by 09:24:30 ET. Later evidence is monitoring-only and cannot backfill an actionable MOO decision.",
           },
           flag: {
             ...liveForecastBlock.flag,
             direction: "DIRECTION UNCONFIRMED",
-            headline: "No pre-open forecast freeze was captured",
-            reasons: ["Post-open evidence excluded"],
+            headline: "No actionable MOO freeze was captured",
+            reasons: ["Evidence outside the 04:00-09:24:30 ET window is excluded"],
           },
           polymarket: {
             ...intelligence.polymarket,
             signalState: "neutral",
             signedRiskOffShock: 0,
             rangeSignal: 0,
-            reason: "Current post-open Polymarket evidence is visible only in the source repository and is excluded from the expected open.",
+            reason: "Current Polymarket evidence remains visible as research but is excluded from the actionable MOO snapshot.",
           },
         };
       }
@@ -1222,6 +1172,14 @@ export async function GET(request: Request) {
       adjustment: servedForecastBlock.adjustment,
       methodology: servedForecastBlock.methodology,
       computedAt: servedForecastBlock.computedAt,
+      freeze: {
+        phase: freezeWindow.phase,
+        premarketStartAt: freezeWindow.premarketStartAt,
+        actionableCutoffAt: freezeWindow.actionableCutoffAt,
+        regularOpenAt: freezeWindow.regularOpenAt,
+        frozenAt,
+        monitoringOnly: freezeWindow.phase === "MONITORING_LOCKED" || freezeWindow.phase === "CROSS_COMPLETE",
+      },
       snapshots: snapshots.results,
       automation: automation ?? {
         lastAttemptAt: null,
@@ -1300,7 +1258,21 @@ export async function POST(request: Request) {
       typeof body.intervalLabel !== "string" ||
       numericKeys.some((key) => typeof body[key] !== "number" || !Number.isFinite(body[key]))
     ) return json({ error: "Valid snapshot values required" }, 400);
+    if (!validTargetSession(body.targetDate)) {
+      return json({ error: "targetDate must be a valid Nasdaq trading session" }, 400);
+    }
     const actual = typeof body.actualOpen === "number" && Number.isFinite(body.actualOpen) ? body.actualOpen : null;
+    if (actual != null) {
+      if (body.targetDate > newYorkDateKey(Date.now())) {
+        return json({ error: "Future-dated outcomes are not allowed" }, 409);
+      }
+      if (body.actualOpenSource !== "NASDAQ_OFFICIAL_CROSS") {
+        return json({ error: "actualOpen requires actualOpenSource=NASDAQ_OFFICIAL_CROSS" }, 409);
+      }
+      if (Date.now() < nasdaqSessionSchedule(body.targetDate).regularOpenAt) {
+        return json({ error: "The official open is not available before the Opening Cross" }, 409);
+      }
+    }
     const error = actual == null ? null : Math.abs(actual - (body.adjustedMedian as number));
     const d = db();
     await d
@@ -1317,6 +1289,7 @@ export async function POST(request: Request) {
         body.adjustedHigh,
         JSON.stringify({
           modelVersion: typeof body.modelVersion === "string" ? body.modelVersion : "open-research-v2",
+          actualOpenSource: actual == null ? null : "NASDAQ_OFFICIAL_CROSS",
           capturedAt: Date.now(),
           sourceCheckedAt: typeof body.sourceCheckedAt === "number" ? body.sourceCheckedAt : null,
           factors: Array.isArray(body.factors) ? body.factors : [],

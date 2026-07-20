@@ -1,9 +1,11 @@
 import { env } from "cloudflare:workers";
+import { isNasdaqSessionDate, nasdaqSessionSchedule } from "../../market-session";
 
 type Signal = "LONG" | "SHORT" | "WAIT";
 
 type PlanInput = {
   date: string;
+  strategyKind: "LEGACY_931_CONFIRMATION" | "MOO_PLANNER";
   signal: Signal;
   openRangeLow: number;
   openRangeHigh: number;
@@ -14,11 +16,13 @@ type PlanInput = {
   confidence: number;
   rationale: string;
   actualOpen?: number | null;
+  actualOpenSource?: "NASDAQ_OFFICIAL_CROSS" | null;
   firstMinuteClose?: number | null;
 };
 
 const createTableSql = `CREATE TABLE IF NOT EXISTS library_plans (
   date TEXT PRIMARY KEY NOT NULL,
+  strategy_kind TEXT NOT NULL DEFAULT 'LEGACY_931_CONFIRMATION',
   signal TEXT NOT NULL CHECK (signal IN ('LONG', 'SHORT', 'WAIT')),
   open_range_low REAL NOT NULL,
   open_range_high REAL NOT NULL,
@@ -29,9 +33,20 @@ const createTableSql = `CREATE TABLE IF NOT EXISTS library_plans (
   confidence REAL NOT NULL,
   rationale TEXT NOT NULL,
   actual_open REAL,
+  actual_open_source TEXT,
   first_minute_close REAL,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
+)`;
+
+const createQuarantineTableSql = `CREATE TABLE IF NOT EXISTS session_quarantine (
+  record_id TEXT PRIMARY KEY NOT NULL,
+  source_table TEXT NOT NULL,
+  source_key TEXT NOT NULL,
+  session_date TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  quarantined_at INTEGER NOT NULL,
+  details_json TEXT NOT NULL
 )`;
 
 const createDateIndexSql =
@@ -46,7 +61,48 @@ async function ensureSchema(db: D1Database) {
   await db.batch([
     db.prepare(createTableSql),
     db.prepare(createDateIndexSql),
+    db.prepare(createQuarantineTableSql),
+    db.prepare("CREATE INDEX IF NOT EXISTS session_quarantine_date_idx ON session_quarantine (session_date)"),
   ]);
+}
+
+const easternDate = (nowMs = Date.now()) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(nowMs));
+
+async function quarantineInvalidLibrarySessions(db: D1Database) {
+  const rows = await db
+    .prepare(`SELECT date,signal,actual_open AS actualOpen,first_minute_close AS firstMinuteClose
+      FROM library_plans`)
+    .all<{ date: string; signal: string; actualOpen: number | null; firstMinuteClose: number | null }>();
+  const invalid = rows.results.filter((row) => !validSessionDate(row.date));
+  if (!invalid.length) return 0;
+  const quarantinedAt = Date.now();
+  await db.batch(
+    invalid.map((row) => db.prepare(
+      `INSERT INTO session_quarantine (
+        record_id,source_table,source_key,session_date,reason,quarantined_at,details_json
+      ) VALUES (?,?,?,?,?,?,?)
+      ON CONFLICT(record_id) DO NOTHING`,
+    ).bind(
+      `library_plans:${row.date}`,
+      "library_plans",
+      row.date,
+      row.date,
+      "NOT_A_NASDAQ_SESSION",
+      quarantinedAt,
+      JSON.stringify({
+        signal: row.signal,
+        hadActualOpen: row.actualOpen != null,
+        hadFirstMinuteClose: row.firstMinuteClose != null,
+      }),
+    )),
+  );
+  return invalid.length;
 }
 
 function noStore(body: unknown, init: ResponseInit = {}) {
@@ -57,6 +113,14 @@ function noStore(body: unknown, init: ResponseInit = {}) {
 
 function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function validSessionDate(value: string) {
+  try {
+    return isNasdaqSessionDate(value);
+  } catch {
+    return false;
+  }
 }
 
 function libraryWriteError(request: Request) {
@@ -83,6 +147,7 @@ function parsePlan(value: unknown): PlanInput | string {
   const plan = value as Record<string, unknown>;
   if (typeof plan.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(plan.date))
     return "date must use YYYY-MM-DD";
+  if (!validSessionDate(plan.date)) return "date must be a valid Nasdaq trading session";
   if (!(["LONG", "SHORT", "WAIT"] as const).includes(plan.signal as Signal))
     return "signal must be LONG, SHORT, or WAIT";
   for (const field of [
@@ -111,6 +176,7 @@ function parsePlan(value: unknown): PlanInput | string {
   }
   return {
     date: plan.date,
+    strategyKind: plan.strategyKind === "MOO_PLANNER" ? "MOO_PLANNER" : "LEGACY_931_CONFIRMATION",
     signal: plan.signal as Signal,
     openRangeLow: plan.openRangeLow as number,
     openRangeHigh: plan.openRangeHigh as number,
@@ -121,18 +187,20 @@ function parsePlan(value: unknown): PlanInput | string {
     confidence: plan.confidence as number,
     rationale: plan.rationale.trim(),
     actualOpen: (plan.actualOpen as number | null | undefined) ?? null,
+    actualOpenSource: null,
     firstMinuteClose: (plan.firstMinuteClose as number | null | undefined) ?? null,
   };
 }
 
 const selectColumns = `
-  date, signal,
+  date, strategy_kind AS strategyKind, signal,
   open_range_low AS openRangeLow,
   open_range_high AS openRangeHigh,
   entry, stop, target,
   expected_move AS expectedMove,
   confidence, rationale,
   actual_open AS actualOpen,
+  actual_open_source AS actualOpenSource,
   first_minute_close AS firstMinuteClose,
   created_at AS createdAt,
   updated_at AS updatedAt`;
@@ -141,10 +209,16 @@ export async function GET() {
   try {
     const db = database();
     await ensureSchema(db);
+    const quarantined = await quarantineInvalidLibrarySessions(db);
     const result = await db
-      .prepare(`SELECT ${selectColumns} FROM library_plans ORDER BY date DESC`)
+      .prepare(`SELECT ${selectColumns} FROM library_plans
+        WHERE NOT EXISTS (
+          SELECT 1 FROM session_quarantine quarantine
+          WHERE quarantine.record_id = 'library_plans:' || library_plans.date
+        )
+        ORDER BY date DESC`)
       .all();
-    return noStore({ plans: result.results });
+    return noStore({ plans: result.results, quarantined });
   } catch (error) {
     return noStore(
       { error: error instanceof Error ? error.message : "Library unavailable" },
@@ -168,10 +242,10 @@ export async function POST(request: Request) {
     const now = Date.now();
     await db
       .prepare(`INSERT INTO library_plans (
-        date, signal, open_range_low, open_range_high, entry, stop, target,
-        expected_move, confidence, rationale, actual_open, first_minute_close,
+        date, strategy_kind, signal, open_range_low, open_range_high, entry, stop, target,
+        expected_move, confidence, rationale, actual_open, actual_open_source, first_minute_close,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(date) DO UPDATE SET
         -- Freeze the original forecast/plan. Later writes may attach outcomes
         -- but must never rewrite the recommendation with hindsight.
@@ -180,6 +254,7 @@ export async function POST(request: Request) {
         updated_at = excluded.updated_at`)
       .bind(
         parsed.date,
+        parsed.strategyKind,
         parsed.signal,
         parsed.openRangeLow,
         parsed.openRangeHigh,
@@ -190,6 +265,7 @@ export async function POST(request: Request) {
         parsed.confidence,
         parsed.rationale,
         parsed.actualOpen,
+        parsed.actualOpenSource,
         parsed.firstMinuteClose,
         now,
         now,
@@ -219,6 +295,15 @@ export async function PATCH(request: Request) {
     if (typeof body.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(body.date)) {
       return noStore({ error: "date must use YYYY-MM-DD" }, { status: 400 });
     }
+    if (!validSessionDate(body.date)) {
+      return noStore({ error: "date must be a valid Nasdaq trading session" }, { status: 400 });
+    }
+    if (body.date > easternDate()) {
+      return noStore({ error: "Future-dated outcomes are not allowed" }, { status: 409 });
+    }
+    if (Date.now() < nasdaqSessionSchedule(body.date).regularOpenAt) {
+      return noStore({ error: "The target session has not opened; outcomes are not available" }, { status: 409 });
+    }
     const actualOpen = body.actualOpen == null ? null : body.actualOpen;
     const firstMinuteClose = body.firstMinuteClose == null ? null : body.firstMinuteClose;
     if ((actualOpen != null && !finite(actualOpen)) || (firstMinuteClose != null && !finite(firstMinuteClose))) {
@@ -227,15 +312,24 @@ export async function PATCH(request: Request) {
     if (actualOpen == null && firstMinuteClose == null) {
       return noStore({ error: "At least one outcome is required" }, { status: 400 });
     }
+    const actualOpenSource = body.actualOpenSource === "NASDAQ_OFFICIAL_CROSS"
+      ? "NASDAQ_OFFICIAL_CROSS"
+      : null;
+    if (actualOpen != null && actualOpenSource == null) {
+      return noStore({
+        error: "actualOpen requires actualOpenSource=NASDAQ_OFFICIAL_CROSS; a regular bar open is not official",
+      }, { status: 409 });
+    }
     const db = database();
     await ensureSchema(db);
     const result = await db
       .prepare(`UPDATE library_plans SET
         actual_open = COALESCE(actual_open, ?),
+        actual_open_source = COALESCE(actual_open_source, ?),
         first_minute_close = COALESCE(first_minute_close, ?),
         updated_at = ?
         WHERE date = ?`)
-      .bind(actualOpen, firstMinuteClose, Date.now(), body.date)
+      .bind(actualOpen, actualOpenSource, firstMinuteClose, Date.now(), body.date)
       .run();
     if (!result.meta.changes) {
       return noStore({ error: "No frozen pre-open plan exists for this date" }, { status: 404 });

@@ -70,18 +70,19 @@ const forecast = (at) => ({
 });
 
 test("Eastern capture windows work across daylight-saving offsets", () => {
-  assert.equal(scheduledCapturePhase(Date.parse("2026-07-20T13:25:00Z")), "preopen");
-  assert.equal(scheduledCapturePhase(Date.parse("2026-01-20T14:25:00Z")), "preopen");
+  assert.equal(scheduledCapturePhase(Date.parse("2026-07-20T13:24:00Z")), "preopen");
+  assert.equal(scheduledCapturePhase(Date.parse("2026-01-20T14:24:00Z")), "preopen");
   assert.equal(scheduledCapturePhase(Date.parse("2026-07-20T13:31:00Z")), "outcome");
   assert.equal(scheduledCapturePhase(Date.parse("2026-01-20T14:31:00Z")), "outcome");
   assert.equal(scheduledCapturePhase(Date.parse("2026-07-20T14:25:00Z")), null);
   assert.equal(scheduledCapturePhase(Date.parse("2026-07-19T13:25:00Z")), null);
-  assert.equal(scheduledCapturePhase(Date.parse("2026-07-17T13:25:00Z")), "preopen");
+  assert.equal(scheduledCapturePhase(Date.parse("2026-07-17T13:24:00Z")), "preopen");
   assert.equal(scheduledCaptureCheckpoint(Date.parse("2026-07-20T08:05:00Z")), "OVERNIGHT");
   assert.equal(scheduledCaptureCheckpoint(Date.parse("2026-07-20T09:30:00Z")), "T-4H");
   assert.equal(scheduledCaptureCheckpoint(Date.parse("2026-07-20T12:30:00Z")), "T-1H");
   assert.equal(scheduledCaptureCheckpoint(Date.parse("2026-07-20T13:00:00Z")), "T-30M");
-  assert.equal(scheduledCaptureCheckpoint(Date.parse("2026-07-20T13:25:00Z")), "T-5M");
+  assert.equal(scheduledCaptureCheckpoint(Date.parse("2026-07-20T13:24:00Z")), "T-5M");
+  assert.equal(scheduledCaptureCheckpoint(Date.parse("2026-07-20T13:25:00Z")), null);
 });
 
 test("the deployed Worker configuration uses one DST-safe Monday-Friday trigger", async () => {
@@ -90,19 +91,19 @@ test("the deployed Worker configuration uses one DST-safe Monday-Friday trigger"
   assert.doesNotMatch(vite, /\* \* [1-5](?:\D|$)/);
 });
 
-test("preopen capture matches point-in-time gates and produces a frozen T-5 plan", () => {
-  const at = Date.parse("2026-07-20T13:25:00Z");
+test("preopen capture matches point-in-time gates and produces a non-actionable T-5 research snapshot", () => {
+  const at = Date.parse("2026-07-20T13:24:30Z");
   const capture = buildScheduledPreopenCapture(market(at), forecast(at), at);
   assert.ok(capture);
-  assert.equal(capture.plan.date, "2026-07-20");
+  assert.equal(capture.plan, null);
   assert.equal(capture.snapshot.intervalLabel, "T-5M");
   assert.equal(capture.snapshot.capturedAt, at);
-  assert.ok(capture.plan.openRangeLow < capture.plan.openRangeHigh);
   assert.match(capture.snapshot.factorsJson, /cloudflare_cron/);
+  assert.match(capture.snapshot.factorsJson, /NON_ACTIONABLE_UNTIL_A_SEPARATE_MOO_MODEL_IS_VALIDATED/);
 });
 
 test("stale, missing, holiday, and future/out-of-order market inputs cannot create a plan", () => {
-  const at = Date.parse("2026-07-20T13:25:00Z");
+  const at = Date.parse("2026-07-20T13:24:30Z");
   assert.equal(buildScheduledPreopenCapture(market(at, { freshness: { history: { stale: true } } }), forecast(at), at), null);
   assert.equal(buildScheduledPreopenCapture(market(at, { freshness: { history: { stale: false, fetchedAt: new Date(at - 10 * 60_000).toISOString(), latestMinuteObservedAt: new Date(at - 60_000).toISOString() } } }), forecast(at), at), null);
   assert.equal(buildScheduledPreopenCapture(market(at, { targetSession: { evidenceQualified: false } }), forecast(at), at), null);
@@ -112,7 +113,7 @@ test("stale, missing, holiday, and future/out-of-order market inputs cannot crea
 });
 
 test("a stale Finnhub quote falls back to a fresh completed provider candle", () => {
-  const at = Date.parse("2026-07-20T13:25:00Z");
+  const at = Date.parse("2026-07-20T13:24:30Z");
   const input = market(at, {
     price: 999,
     premarket: { high: 201.2, low: 199.4, current: 999 },
@@ -134,13 +135,13 @@ test("a stale Finnhub quote falls back to a fresh completed provider candle", ()
   assert.ok(capture.snapshot.baseMedian < 300, "stale quote must not anchor the open");
 });
 
-test("all unattended forecast checkpoints persist while only T-5 creates Library", async () => {
+test("all unattended checkpoints persist research snapshots without manufacturing Library plans", async () => {
   const times = [
     ["2026-07-20T08:05:00Z", "OVERNIGHT"],
     ["2026-07-20T09:30:00Z", "T-4H"],
     ["2026-07-20T12:30:00Z", "T-1H"],
     ["2026-07-20T13:00:00Z", "T-30M"],
-    ["2026-07-20T13:25:00Z", "T-5M"],
+    ["2026-07-20T13:24:00Z", "T-5M"],
   ];
   for (const [iso, label] of times) {
     const at = Date.parse(iso);
@@ -157,12 +158,12 @@ test("all unattended forecast checkpoints persist while only T-5 creates Library
     });
     assert.equal(result.status, "captured");
     assert.equal(saved[0].snapshot.intervalLabel, label);
-    assert.equal(saved[0].plan == null, label !== "T-5M");
+    assert.equal(saved[0].plan, null);
   }
 });
 
 test("runner retries the freeze each minute while persistent inserts remain store-idempotent", async () => {
-  const at = Date.parse("2026-07-20T13:25:00Z");
+  const at = Date.parse("2026-07-20T13:24:30Z");
   const saved = [];
   const fetchPaths = [];
   const store = {
@@ -196,7 +197,7 @@ test("holiday/closed response skips all writes and never calls forecast", async 
     store,
   });
   assert.equal(result.status, "skipped");
-  assert.equal(calls, 1);
+  assert.equal(calls, 0, "monitoring-only/holiday time must not wake provider endpoints");
 });
 
 test("outcome window attaches only published, completed opening observations", async () => {
@@ -217,7 +218,7 @@ test("outcome window attaches only published, completed opening observations", a
     store,
   });
   assert.equal(result.status, "outcome_attached");
-  assert.equal(attached[0].actualOpen, 201.1);
+  assert.equal(attached[0].actualOpen, null);
   assert.equal(attached[0].firstMinuteClose, 201.35);
 });
 

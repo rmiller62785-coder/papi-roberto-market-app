@@ -5,13 +5,14 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 
 test("ships the NVDA decision dashboard instead of the starter preview", async () => {
-  const [page, layout, styles] = await Promise.all([
+  const [page, layout, styles, mooSurface] = await Promise.all([
     readFile(new URL("app/page.tsx", root), "utf8"),
     readFile(new URL("app/layout.tsx", root), "utf8"),
     readFile(new URL("app/globals.css", root), "utf8"),
+    readFile(new URL("app/components/MooDecisionSurface.tsx", root), "utf8"),
   ]);
 
-  assert.match(page, /Nvidia/);
+  assert.match(page, /Aperture/);
   assert.match(page, /Transparent forecast bridge/);
   assert.match(page, /SessionChart/);
   assert.match(page, /research-alert/);
@@ -22,8 +23,29 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(page, /Market API pulled/);
   assert.match(page, /Weighted APIs pulled/);
   assert.match(page, /f\.lastChecked/);
-  assert.match(page, /Event Repository/);
-  assert.match(page, /Weight Open Market/);
+  assert.match(page, /Evidence/);
+  assert.match(page, /Model Lab/);
+  assert.match(page, /MOO Planner/);
+  assert.match(page, /9:31 Confirmation/);
+  assert.match(page, /Sessions/);
+  assert.match(page, /Evidence/);
+  assert.match(page, /Model Lab/);
+  assert.match(page, /Data Health/);
+  assert.match(page, /workflow==="moo"\?<MooDecisionSurface/);
+  assert.match(page, /buildMooDecisionSnapshot/);
+  assert.match(mooSurface, /Predicted Official Open/);
+  assert.match(mooSurface, /NO TRADE/);
+  assert.match(mooSurface, /Modify \/ cancel · 09:25 ET/);
+  assert.match(mooSurface, /Final MOO entry · 09:28 ET/);
+  assert.match(mooSurface, /Long opening ticket/);
+  assert.match(mooSurface, /Short opening ticket/);
+  assert.match(mooSurface, /Maximum loss/);
+  assert.match(mooSurface, /Shortability/);
+  assert.match(page, /Tradegate BSX \(XGAT\)/);
+  assert.match(mooSurface, /Not configured/);
+  assert.match(styles, /\.moo-decision-surface/);
+  assert.match(styles, /@media\(max-width:390px\)/);
+  assert.doesNotMatch(mooSurface, />\$0\.00</);
   assert.match(page, /Source \/ Knowledge/);
   assert.match(page, /type ContributionSource=/);
   assert.match(page, /source\.knowledgeBase\.path/);
@@ -86,9 +108,9 @@ test("pairs free event, calendar, filing, and cross-market sources", async () =>
   assert.match(forecast, /COALESCE\(actual_open/);
   assert.match(forecast, /Math\.min\(\.\.\.checks\)/);
   assert.match(forecast, /newYorkWallTime/);
-  assert.match(forecast, /earlyCloseDate/);
+  assert.match(forecast, /nasdaqSessionSchedule/);
   assert.match(forecast, /safetyCapApplied/);
-  assert.match(forecast, /Opening forecasts freeze at 09:30 ET/);
+  assert.match(forecast, /Actionable MOO forecasts freeze at 09:24:30 ET/);
   assert.match(forecast, /forecast_preopen_freezes/);
   assert.match(forecast, /PREOPEN_FROZEN_RESEARCH/);
   assert.match(forecast, /No pre-open feature snapshot exists/);

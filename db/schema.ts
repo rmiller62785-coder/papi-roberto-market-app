@@ -2,6 +2,9 @@ import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const libraryPlans = sqliteTable("library_plans", {
   date: text("date").primaryKey(),
+  strategyKind: text("strategy_kind", {
+    enum: ["LEGACY_931_CONFIRMATION", "MOO_PLANNER"],
+  }).notNull().default("LEGACY_931_CONFIRMATION"),
   signal: text("signal", { enum: ["LONG", "SHORT", "WAIT"] }).notNull(),
   openRangeLow: real("open_range_low").notNull(),
   openRangeHigh: real("open_range_high").notNull(),
@@ -12,6 +15,9 @@ export const libraryPlans = sqliteTable("library_plans", {
   confidence: real("confidence").notNull(),
   rationale: text("rationale").notNull(),
   actualOpen: real("actual_open"),
+  actualOpenSource: text("actual_open_source", {
+    enum: ["NASDAQ_OFFICIAL_CROSS"],
+  }),
   firstMinuteClose: real("first_minute_close"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
@@ -44,7 +50,18 @@ export const forecastSnapshots = sqliteTable("forecast_snapshots", {
 export const forecastPreopenFreezes = sqliteTable("forecast_preopen_freezes", {
   targetDate: text("target_date").primaryKey(),
   frozenAt: integer("frozen_at").notNull(),
+  actionableCutoffAt: integer("actionable_cutoff_at"),
   payloadJson: text("payload_json").notNull(),
+});
+
+export const sessionQuarantine = sqliteTable("session_quarantine", {
+  recordId: text("record_id").primaryKey(),
+  sourceTable: text("source_table").notNull(),
+  sourceKey: text("source_key").notNull(),
+  sessionDate: text("session_date").notNull(),
+  reason: text("reason").notNull(),
+  quarantinedAt: integer("quarantined_at").notNull(),
+  detailsJson: text("details_json").notNull(),
 });
 
 export const automationCaptureHealth = sqliteTable("automation_capture_health", {
