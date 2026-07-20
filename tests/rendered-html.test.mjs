@@ -13,6 +13,8 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   ]);
 
   assert.match(page, /Aperture/);
+  assert.match(page, /NVDA MARKET INTELLIGENCE/);
+  assert.doesNotMatch(`${page}\n${layout}`, /Papi[\s._-]*Roberto/i);
   assert.match(page, /Transparent forecast bridge/);
   assert.match(page, /SessionChart/);
   assert.match(page, /research-alert/);

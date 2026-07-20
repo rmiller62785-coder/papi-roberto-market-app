@@ -6,7 +6,9 @@ import {
   calculateMooThirds,
   effectiveThirdCents,
   rebaseMooTargetCents,
+  sealMooFrozenDecisionContext,
 } from "../app/moo-strategy.ts";
+import { sealMooLocateProof } from "../app/moo-contract.ts";
 
 const readyAt = Date.parse("2026-07-20T13:24:00Z");
 
@@ -17,11 +19,27 @@ function liveUs(observedAt = readyAt - 1_000) {
     venue: "NASDAQ/SIP",
     provider: "test",
     entitlement: "REALTIME",
+    coverage: "CONSOLIDATED_SIP",
     observedAt,
     checkedAt: observedAt + 100,
     ageMs: 1_000,
     state: "LIVE",
   };
+}
+
+function locateProof(accountAlias, quantity, availableAt = readyAt) {
+  return sealMooLocateProof({
+    schemaVersion: "moo-locate-proof-v1",
+    broker: "fixture-broker",
+    accountAlias,
+    symbol: "NVDA",
+    targetSession: "2026-07-20",
+    quantity,
+    locateId: `locate-${accountAlias}-${quantity}`,
+    availableAt,
+    validUntil: Date.parse("2026-07-20T13:29:00Z"),
+    guaranteed: true,
+  });
 }
 
 function validInput(overrides = {}) {
@@ -54,7 +72,7 @@ function validInput(overrides = {}) {
 function persistedContext(overrides = {}) {
   const base = validInput();
   const frozenAt = Date.parse("2026-07-20T13:24:20Z");
-  return {
+  return sealMooFrozenDecisionContext({
     schemaVersion: "moo-phase1-v1",
     snapshotId: "frozen-2026-07-20-t5",
     targetSession: "2026-07-20",
@@ -70,7 +88,7 @@ function persistedContext(overrides = {}) {
     shortability: base.shortability,
     config: {},
     ...overrides,
-  };
+  });
 }
 
 test("literal 0.33, half-up rounding, and one tick reproduce handwritten thirds", () => {
@@ -124,16 +142,29 @@ test("the second handwritten fixture produces 203.13 and 201.11", () => {
 
 test("each broker fill independently rebases its ticket", () => {
   const snapshot = buildMooDecisionSnapshot(validInput({
+    nowMs: Date.parse("2026-07-20T13:30:01Z"),
+    frozenContext: persistedContext(),
     longFillCents: 20_280,
     shortFillCents: 20_270,
     actualOfficialOpenCents: 20_275,
-    officialOpenSource: "Nasdaq Opening Cross Q",
+    officialOpenSource: "NASDAQ_OFFICIAL_CROSS",
   }));
   assert.equal(snapshot.longTicket.rebasedTargetCents, 20_327);
   assert.equal(snapshot.shortTicket.rebasedTargetCents, 19_993);
   assert.equal(snapshot.predictionErrorCents, 10);
   assert.equal(rebaseMooTargetCents("LONG", 20_280, 57), 20_327);
   assert.equal(rebaseMooTargetCents("SHORT", 20_270, 287), 19_993);
+});
+
+test("opening-cross outcomes are ignored before the cross completes", () => {
+  const snapshot = buildMooDecisionSnapshot(validInput({
+    longFillCents: 20_280,
+    actualOfficialOpenCents: 20_275,
+    officialOpenSource: "NASDAQ_OFFICIAL_CROSS",
+  }));
+  assert.equal(snapshot.actualOfficialOpenCents, null);
+  assert.equal(snapshot.longTicket.actualFillCents, null);
+  assert.match(snapshot.warnings.join(" "), /ignored before/i);
 });
 
 test("an untrained transparent baseline remains visible but forces NO_TRADE and null confidence", () => {
@@ -169,10 +200,19 @@ test("strict tickets remain non-actionable until every risk control is configure
   const complete = buildMooDecisionSnapshot(validInput({
     longTicket: longConfiguration,
     shortTicket: shortConfiguration,
+    shortLocateProof: locateProof(shortConfiguration.accountLabel, shortConfiguration.quantity),
     config: { portfolioMaximumLossCents: 100 },
   }));
-  assert.equal(complete.longTicket.actionable, true);
+  assert.equal(complete.longTicket.actionable, false);
   assert.equal(complete.shortTicket.actionable, true);
+
+  const missingLocate = buildMooDecisionSnapshot(validInput({
+    longTicket: longConfiguration,
+    shortTicket: shortConfiguration,
+    config: { portfolioMaximumLossCents: 100 },
+  }));
+  assert.equal(missingLocate.shortTicket.actionable, false);
+  assert.match(missingLocate.warnings.join(" "), /account-specific NVDA locate/);
 
   for (const invalid of [
     { ...longConfiguration, quantity: 0 },
@@ -222,17 +262,71 @@ test("closed, unentitled, stale, low-quality, low-confidence, and missing-borrow
     const snapshot = buildMooDecisionSnapshot(input);
     assert.equal(snapshot.decision, "NO_TRADE", reason);
     assert.equal(snapshot.blockReason, reason);
-    assert.equal(snapshot.confidencePct, null);
+    if (reason === "LOW_CONFIDENCE") assert.equal(snapshot.confidencePct, 59);
+    else if (reason === "SHORTABILITY_UNCONFIRMED") assert.equal(snapshot.confidencePct, 68);
+    else assert.equal(snapshot.confidencePct, null);
   }
 });
 
-test("required-source policy cannot be empty or contain duplicates", () => {
-  for (const requiredSourceIds of [[], ["US", "US"]]) {
+test("a real-time IEX-only quote cannot satisfy the consolidated U.S. execution gate", () => {
+  const snapshot = buildMooDecisionSnapshot(validInput({
+    sources: [{ ...liveUs(), venue: "IEX", coverage: "IEX_SINGLE_EXCHANGE" }],
+  }));
+  assert.equal(snapshot.blockReason, "FEED_NOT_ENTITLED");
+  assert.equal(snapshot.decision, "NO_TRADE");
+  assert.match(snapshot.warnings.join(" "), /CONSOLIDATED_SIP/);
+});
+
+test("a calibrated model NO_TRADE is preserved as NO_EDGE with confidence and prediction", () => {
+  const snapshot = buildMooDecisionSnapshot(validInput({
+    prediction: { ...validInput().prediction, decision: "NO_TRADE", confidencePct: 73 },
+  }));
+
+  assert.equal(snapshot.decision, "NO_TRADE");
+  assert.equal(snapshot.blockReason, "NO_EDGE");
+  assert.equal(snapshot.decisionReasonCode, "NO_EDGE");
+  assert.equal(snapshot.predictedOfficialOpenCents, 20_265);
+  assert.equal(snapshot.confidencePct, 73);
+  assert.equal(snapshot.confidenceState, "AVAILABLE");
+  assert.equal(snapshot.longTicket.actionable, false);
+  assert.equal(snapshot.shortTicket.actionable, false);
+});
+
+test("required source data received after evaluation is rejected despite an earlier provider timestamp", () => {
+  const snapshot = buildMooDecisionSnapshot(validInput({
+    sources: [{
+      ...liveUs(readyAt - 1_000),
+      receivedAt: readyAt + 1,
+      processedAt: readyAt + 1,
+      availableAt: readyAt + 1,
+    }],
+  }));
+
+  assert.equal(snapshot.decision, "NO_TRADE");
+  assert.equal(snapshot.blockReason, "STALE_US_QUOTE");
+  assert.match(snapshot.warnings.join(" "), /not available to the application/i);
+});
+
+test("required-source policy cannot be empty, duplicated, unknown, or omit US SIP", () => {
+  for (const requiredSourceIds of [[], ["US", "US"], ["NOII"], ["US", "BOGUS"]]) {
     const snapshot = buildMooDecisionSnapshot(validInput({ requiredSourceIds }));
     assert.equal(snapshot.decision, "NO_TRADE");
     assert.equal(snapshot.blockReason, "FEED_NOT_ENTITLED");
-    assert.match(snapshot.warnings.join(" "), /at least one unique source/i);
+    assert.match(snapshot.warnings.join(" "), /policy is invalid/i);
   }
+});
+
+test("a mutated frozen context cannot be replayed after cutoff even when timestamps are backdated", () => {
+  const context = structuredClone(persistedContext());
+  context.prediction.predictedOfficialOpenCents = 99_999;
+  const snapshot = buildMooDecisionSnapshot(validInput({
+    nowMs: Date.parse("2026-07-20T13:26:00Z"),
+    frozenContext: context,
+    lateOrderAcknowledged: true,
+  }));
+  assert.equal(snapshot.decision, "NO_TRADE");
+  assert.equal(snapshot.blockReason, "DATA_PENDING");
+  assert.match(snapshot.warnings.join(" "), /schema or snapshot identity is invalid/i);
 });
 
 test("a live prediction cannot be replayed into another target session", () => {
@@ -326,12 +420,12 @@ test("trained prediction identity requires model, schema, feature snapshot, and 
 test("an invalid frozen timestamp cannot activate a persisted decision context", () => {
   const nowMs = Date.parse("2026-07-20T13:26:00Z");
   for (const frozenAt of [Number.NaN, 0, Date.parse("2026-07-20T13:24:31Z")]) {
+    const frozenContext = structuredClone(persistedContext());
+    frozenContext.frozenAt = frozenAt;
+    frozenContext.prediction.generatedAt = 0;
     const snapshot = buildMooDecisionSnapshot(validInput({
       nowMs,
-      frozenContext: persistedContext({
-        frozenAt,
-        prediction: { ...validInput().prediction, generatedAt: 0 },
-      }),
+      frozenContext,
       lateOrderAcknowledged: true,
     }));
     assert.equal(snapshot.decision, "NO_TRADE");

@@ -25,6 +25,7 @@ import {
   type MooReadinessSummary,
   type MooStrictCommissionState,
 } from "../moo-readiness";
+import type { MarketValue } from "../market-contract";
 
 type Language = "en" | "es";
 
@@ -66,6 +67,14 @@ export type MooPlanningInput = {
   quoteObservedAt?: number | null;
   quoteSource?: string | null;
   quoteFreshness?: string | null;
+  marketStates?: {
+    priorClose: MarketValue<number>;
+    previousHigh: MarketValue<number>;
+    previousLow: MarketValue<number>;
+    premarketCurrent: MarketValue<number>;
+    premarketHigh: MarketValue<number>;
+    premarketLow: MarketValue<number>;
+  };
   targetSession: string;
 };
 
@@ -100,6 +109,14 @@ export type BrokerStatusPayload = {
   detail: string;
   indicativeOnly: boolean;
   locateGuaranteed: boolean;
+};
+
+export type MooCommissioningEvidence = {
+  executionMode: string;
+  blockers: string[];
+  modelPromoted: boolean;
+  artifactValidated: boolean;
+  riskPolicyVersion: string | null;
 };
 
 const defaultSideConfig = (accountLabel: string): PaperSideConfig => ({
@@ -255,11 +272,30 @@ function fieldExplanation(field: MooPlanningField<unknown>, lang: Language) {
 function valueState(state: MooValueState, lang: Language) {
   const values: Record<MooValueState, [string, string]> = {
     AVAILABLE: ["Available", "Disponible"],
+    FROZEN: ["Frozen", "Congelado"],
     PENDING: ["Pending", "Pendiente"],
+    NOT_STARTED: ["Not started", "No iniciado"],
+    MARKET_CLOSED: ["Market closed", "Mercado cerrado"],
+    STALE: ["Stale", "Vencido"],
+    NOT_ENTITLED: ["Not entitled", "Sin autorización"],
+    NOT_CONFIGURED: ["Not configured", "No configurado"],
+    NOT_PROMOTED: ["Model not promoted", "Modelo no promovido"],
+    NO_EDGE: ["No qualified edge", "Sin ventaja calificada"],
+    MISSED_CHECKPOINT: ["Checkpoint missed", "Punto de control omitido"],
+    INVALID: ["Invalid", "Inválido"],
     UNAVAILABLE: ["Unavailable", "No disponible"],
     INSUFFICIENT_BARS: ["Insufficient bars", "Velas insuficientes"],
   };
   return copy(lang, ...values[state]);
+}
+
+function marketAbsence(field: MarketValue<number> | undefined, lang: Language, fallback: [string, string]) {
+  if (!field) return copy(lang, ...fallback);
+  if (field.availability === "NOT_STARTED") return copy(lang, "Not started for selected session", "No iniciado para la sesión seleccionada");
+  if (field.availability === "MISSING") return copy(lang, "No archived value", "Sin valor archivado");
+  if (field.availability === "NOT_ENTITLED") return copy(lang, "Required feed not entitled", "Fuente requerida sin autorización");
+  if (field.availability === "SOURCE_ERROR") return copy(lang, "Source temporarily unavailable", "Fuente temporalmente no disponible");
+  return copy(lang, ...fallback);
 }
 
 function lifecycleLabel(snapshot: MooDecisionSnapshot, lang: Language) {
@@ -325,6 +361,11 @@ function TicketCard({ ticket, snapshot, lang }: { ticket: MooTicket; snapshot: M
         ? copy(lang, "Unconfirmed · ticket blocked", "Sin confirmar · orden bloqueada")
         : copy(lang, "Not applicable", "No aplica");
   const unconfigured = copy(lang, "Not configured · use paper planner", "No configurado · use el planificador de prueba");
+  const targetPending = copy(
+    lang,
+    "Pending · requires a selected side and completed range thirds",
+    "Pendiente · requiere un lado seleccionado y tercios de rango completos",
+  );
 
   return (
     <article className={`moo-ticket ${ticket.side.toLowerCase()} ${ticket.favored ? "favored" : ""}`} aria-label={copy(lang, `${ticket.side} MOO strict ticket`, `Orden MOO estricta ${isShort ? "corta" : "larga"}`)}>
@@ -357,7 +398,7 @@ function TicketCard({ ticket, snapshot, lang }: { ticket: MooTicket; snapshot: M
       </div>
       <dl className="moo-ticket-risk">
         <div><dt>{copy(lang, "Order type", "Tipo de orden")}</dt><dd>MOO</dd></div>
-        <div><dt>{copy(lang, "Target offset", "Distancia al objetivo")}</dt><dd>{cents(ticket.targetMoveCents) ?? unconfigured}</dd></div>
+        <div><dt>{copy(lang, "Target offset", "Distancia al objetivo")}</dt><dd>{cents(ticket.targetMoveCents) ?? targetPending}</dd></div>
         <div><dt>{copy(lang, "Stop offset", "Distancia al stop")}</dt><dd>{cents(ticket.stopOffsetCents) ?? unconfigured}</dd></div>
         <div><dt>{copy(lang, "Quantity", "Cantidad")}</dt><dd>{ticket.quantity ?? unconfigured}</dd></div>
         <div><dt>{copy(lang, "Account", "Cuenta")}</dt><dd>{ticket.accountLabel ?? unconfigured}</dd></div>
@@ -493,12 +534,16 @@ function PaperPlanningPanel({
   researchPreview,
   planning,
   initialBrokerStatus,
+  brokerStatusUnavailable,
+  nowMs,
   lang,
 }: {
   snapshot: MooDecisionSnapshot;
   researchPreview: MooResearchPreview;
   planning?: MooPlanningInput;
   initialBrokerStatus?: BrokerStatusPayload | null;
+  brokerStatusUnavailable: boolean;
+  nowMs: number;
   lang: Language;
 }) {
   const targetSession = planning?.targetSession ?? snapshot.targetSession;
@@ -517,6 +562,9 @@ function PaperPlanningPanel({
   }, [config, storageKey]);
 
   useEffect(() => {
+    if (brokerStatusUnavailable) {
+      return;
+    }
     if (initialBrokerStatus) {
       return;
     }
@@ -546,10 +594,12 @@ function PaperPlanningPanel({
     void refresh();
     const timer = window.setInterval(() => void refresh(), 30_000);
     return () => { controller.abort(); window.clearInterval(timer); };
-  }, [initialBrokerStatus, targetSession]);
+  }, [brokerStatusUnavailable, initialBrokerStatus, targetSession]);
 
-  const effectiveBrokerStatus = initialBrokerStatus ?? brokerStatus;
-  const effectiveBrokerState = initialBrokerStatus
+  const effectiveBrokerStatus = brokerStatusUnavailable ? null : initialBrokerStatus ?? brokerStatus;
+  const effectiveBrokerState = brokerStatusUnavailable
+    ? "UNAVAILABLE"
+    : initialBrokerStatus
     ? initialBrokerStatus.status === "live" || initialBrokerStatus.status === "limited" ? "LIVE" : "UNAVAILABLE"
     : brokerState;
 
@@ -580,7 +630,11 @@ function PaperPlanningPanel({
   const risksReady = paperTicketComplete(paperSnapshot.longTicket) && paperTicketComplete(paperSnapshot.shortTicket);
   const accountLabelsReady = paperSnapshot.longTicket.accountLabel.state === "READY" && paperSnapshot.shortTicket.accountLabel.state === "READY";
   const brokerReadiness = summarizeMooReadiness(snapshot, effectiveBrokerStatus);
-  const brokerFreshnessEligible = effectiveBrokerStatus != null && ["fresh", "cached"].includes(effectiveBrokerStatus.freshness.state) && effectiveBrokerStatus.freshness.ageMs != null && effectiveBrokerStatus.freshness.ageMs <= effectiveBrokerStatus.freshness.maxAgeMs;
+  const brokerElapsedAgeMs = effectiveBrokerStatus == null
+    ? null
+    : Math.max(effectiveBrokerStatus.freshness.ageMs ?? 0, Math.max(0, nowMs - effectiveBrokerStatus.checkedAt));
+  const brokerFreshnessEligible = effectiveBrokerStatus != null && ["fresh", "cached"].includes(effectiveBrokerStatus.freshness.state) &&
+    brokerElapsedAgeMs != null && brokerElapsedAgeMs <= effectiveBrokerStatus.freshness.maxAgeMs;
   const borrowReferenceCurrent = effectiveBrokerStatus?.configured === true && effectiveBrokerStatus.status === "live" && brokerFreshnessEligible && brokerReadiness.broker.indicativeShortable === true;
   const borrowReady = borrowReferenceCurrent && brokerReadiness.broker.strictLocateReady;
   const indicativeBorrowDetail = brokerReadiness.broker.indicativeEasyToBorrow
@@ -603,6 +657,8 @@ function PaperPlanningPanel({
         : copy(lang, "Unconfirmed · blocked", "Sin confirmar · bloqueado"),
     detail: effectiveBrokerStatus?.status === "live" || effectiveBrokerStatus?.status === "limited"
       ? `${copy(lang, "Borrow status", "Estado de préstamo")}: ${effectiveBrokerStatus.borrowStatus ?? "—"} · ${indicativeBorrowDetail} · ${copy(lang, "checked", "consultado")} ${etDateTime(effectiveBrokerStatus.checkedAt, lang)}`
+      : brokerStatusUnavailable
+        ? copy(lang, "Dated broker metadata is diagnostic-only until Strict status refreshes.", "Los metadatos fechados del bróker son solo de diagnóstico hasta que se actualice el estado estricto.")
       : effectiveBrokerState === "PRIVATE"
         ? copy(lang, "Private authenticated broker check required.", "Se requiere una verificación privada autenticada del bróker.")
         : copy(lang, "No fresh broker borrow observation is available.", "No hay una observación reciente de préstamo del bróker."),
@@ -638,9 +694,9 @@ function PaperPlanningPanel({
       </div>
 
       <div className="moo-paper-formula-grid moo-live-input-grid" aria-label={copy(lang, "Live inputs used by the paper planner", "Entradas en vivo usadas por el planificador de prueba")}>
-        <div><span>{copy(lang, "Prior official close", "Cierre oficial anterior")}</span><strong>{cents(planning?.priorOfficialCloseCents ?? null) ?? copy(lang, "Missing: prior close", "Falta: cierre anterior")}</strong><small>{copy(lang, "Previous completed Nasdaq session", "Sesión Nasdaq completada anterior")}</small></div>
-        <div><span>{copy(lang, "Current premarket price", "Precio actual de preapertura")}</span><strong>{cents(planning?.premarketCurrentCents ?? null) ?? copy(lang, "Missing: premarket current", "Falta: precio actual de preapertura")}</strong><small>{etDateTime(planning?.quoteObservedAt ?? null, lang)}</small></div>
-        <div><span>{copy(lang, "Premarket high / low", "Máximo / mínimo de preapertura")}</span><strong>{cents(planning?.premarketHighCents ?? null) ?? copy(lang, "Missing high", "Falta máximo")} / {cents(planning?.premarketLowCents ?? null) ?? copy(lang, "Missing low", "Falta mínimo")}</strong><small>{copy(lang, "Selected trading date only", "Solo la fecha de negociación seleccionada")}</small></div>
+        <div><span>{copy(lang, "Prior official close", "Cierre oficial anterior")}</span><strong>{cents(planning?.priorOfficialCloseCents ?? null) ?? marketAbsence(planning?.marketStates?.priorClose, lang, ["Missing: prior close", "Falta: cierre anterior"])}</strong><small>{copy(lang, "Previous completed Nasdaq session", "Sesión Nasdaq completada anterior")}</small></div>
+        <div><span>{copy(lang, "Current premarket price", "Precio actual de preapertura")}</span><strong>{cents(planning?.premarketCurrentCents ?? null) ?? marketAbsence(planning?.marketStates?.premarketCurrent, lang, ["Missing: premarket current", "Falta: precio actual de preapertura"])}</strong><small>{etDateTime(planning?.quoteObservedAt ?? null, lang)}</small></div>
+        <div><span>{copy(lang, "Premarket high / low", "Máximo / mínimo de preapertura")}</span><strong>{cents(planning?.premarketHighCents ?? null) ?? marketAbsence(planning?.marketStates?.premarketHigh, lang, ["Missing high", "Falta máximo"])} / {cents(planning?.premarketLowCents ?? null) ?? marketAbsence(planning?.marketStates?.premarketLow, lang, ["Missing low", "Falta mínimo"])}</strong><small>{copy(lang, "Selected trading date only", "Solo la fecha de negociación seleccionada")}</small></div>
         <div><span>{copy(lang, "Premarket range", "Rango de preapertura")}</span><strong>{cents(paperSnapshot.premarketRangeCents.value) ?? copy(lang, "Incomplete high/low", "Máximo/mínimo incompleto")}</strong><small>{planningStateLabel(paperSnapshot.premarketRangeCents.state, lang)}</small></div>
         <div><span>{copy(lang, "Major / minor thirds", "Tercios mayor / menor")}</span><strong>{cents(paperSnapshot.majorThirdCents.value) ?? "—"} / {cents(paperSnapshot.minorThirdCents.value) ?? "—"}</strong><small>0.33 · ROUND_HALF_UP · +$0.01</small></div>
         <div><span>{copy(lang, "Quote source / freshness", "Fuente / vigencia de cotización")}</span><strong>{planning?.quoteSource ?? copy(lang, "Missing source", "Falta fuente")}</strong><small>{planning?.quoteFreshness ?? copy(lang, "Unavailable", "No disponible")} · {etDateTime(planning?.marketCheckedAt ?? null, lang)}</small></div>
@@ -705,6 +761,7 @@ function strictSourceName(source: MooSourceHealth, lang: Language) {
     NOII: ["Nasdaq NOII post-freeze monitoring", "Monitoreo NOII de Nasdaq posterior al cierre"],
   };
   const label = labels[source.id];
+  if (!label) return source.label || source.id || copy(lang, "Unknown source", "Fuente desconocida");
   return copy(lang, label[0], label[1]);
 }
 
@@ -721,6 +778,7 @@ function strictVenueName(source: MooSourceHealth, lang: Language) {
 }
 
 function warningLabel(warning: string, lang: Language) {
+  if (warning === "LAST_GOOD_SERVER_AUDIT_ONLY") return copy(lang, "The dated last-good server evaluation is shown for diagnosis only. All strict actionability is disabled until a current validation succeeds.", "La última evaluación fechada válida del servidor se muestra solo para diagnóstico. Toda operabilidad estricta queda deshabilitada hasta que una validación vigente tenga éxito.");
   if (lang === "en") return warning;
   if (/real-time entitlement is required/i.test(warning)) return "Se requiere una autorización de datos en tiempo real apta para ejecución.";
   if (/source is unavailable/i.test(warning)) return "Una fuente estricta requerida no está disponible.";
@@ -865,6 +923,7 @@ function blockerLabel(code: MooDominantBlockerCode, lang: Language) {
     MODEL_NOT_TRAINED: ["Opening model not trained", "Modelo de apertura no entrenado"],
     LOW_DATA_QUALITY: ["Data quality below the safety gate", "Calidad de datos bajo el límite de seguridad"],
     LOW_CONFIDENCE: ["Direction confidence below the strict threshold", "Confianza direccional bajo el umbral estricto"],
+    NO_EDGE: ["Model found no qualified edge", "El modelo no encontró una ventaja calificada"],
     SHORTABILITY_UNCONFIRMED: ["Shortability is unconfirmed", "Disponibilidad para corto sin confirmar"],
     RISK_POLICY_UNCONFIGURED: ["Strict risk policy is not configured", "La política estricta de riesgo no está configurada"],
     NONE: ["No blocker detected", "No se detectó ningún bloqueo"],
@@ -882,6 +941,7 @@ function blockerDetail(code: MooDominantBlockerCode, lang: Language) {
     MODEL_NOT_TRAINED: ["No trained, versioned point-in-time opening model is available for this strict decision.", "No hay un modelo de apertura puntual, entrenado y versionado para esta decisión estricta."],
     LOW_DATA_QUALITY: ["The verified feature snapshot does not meet the configured quality threshold.", "La captura verificada de variables no cumple el umbral de calidad configurado."],
     LOW_CONFIDENCE: ["The calibrated directional confidence does not clear the strict decision threshold.", "La confianza direccional calibrada no supera el umbral de decisión estricta."],
+    NO_EDGE: ["A calibrated commissioned model found no directional edge after its configured thresholds and costs. NO TRADE is the intended result.", "Un modelo calibrado y habilitado no encontró una ventaja direccional después de sus umbrales y costos configurados. NO OPERAR es el resultado previsto."],
     SHORTABILITY_UNCONFIRMED: ["A short-side decision requires an account-specific locate; indicative asset metadata is not enough.", "Una decisión de corto requiere una localización específica de la cuenta; los metadatos indicativos del activo no son suficientes."],
     RISK_POLICY_UNCONFIGURED: ["Strict ticket risk limits and distinct account labels have not passed the shared risk policy.", "Los límites de riesgo de las órdenes estrictas y las etiquetas de cuenta distintas no han aprobado la política de riesgo compartida."],
     NONE: ["All configured decision gates passed. This surface remains review-only and does not submit an order.", "Todos los controles de decisión configurados se aprobaron. Esta superficie sigue siendo solo para revisión y no envía una orden."],
@@ -906,12 +966,18 @@ function stateNotice(state: ReturnType<typeof strictSurfaceState>, lang: Languag
   return null;
 }
 
-export function MooDecisionSurface({ snapshot, planningSources, planning, brokerReference, lang }: { snapshot: MooDecisionSnapshot; planningSources: MooPlanningSourceList; planning?: MooPlanningInput; brokerReference?: BrokerStatusPayload | null; lang: Language }) {
-  const [now, setNow] = useState(() => Date.now());
+export function MooDecisionSurface({ snapshot, planningSources, planning, brokerReference, commissioning, lang }: { snapshot: MooDecisionSnapshot; planningSources: MooPlanningSourceList; planning?: MooPlanningInput; brokerReference?: BrokerStatusPayload | null; commissioning?: MooCommissioningEvidence | null; lang: Language }) {
+  const [clock, setClock] = useState(() => ({ snapshotId: snapshot.snapshotId, elapsedMs: 0 }));
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    const startedAt = performance.now();
+    const timer = window.setInterval(() => setClock({
+      snapshotId: snapshot.snapshotId,
+      elapsedMs: Math.max(0, performance.now() - startedAt),
+    }), 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [snapshot.snapshotId]);
+  const elapsedMs = clock.snapshotId === snapshot.snapshotId ? clock.elapsedMs : 0;
+  const now = snapshot.generatedAt + elapsedMs;
   const deadlines = useMemo(() => snapshot.deadlines.slice().sort((a, b) => a.at - b.at), [snapshot.deadlines]);
   const predicted = cents(snapshot.predictedOfficialOpenCents) ?? valueState(snapshot.predictedOpenState, lang);
   const decisionTone = snapshot.decision === "LONG_FAVORED" ? "long" : snapshot.decision === "SHORT_FAVORED" ? "short" : "no-trade";
@@ -925,7 +991,9 @@ export function MooDecisionSurface({ snapshot, planningSources, planning, broker
     reason: copy(lang, "Selected-session research is loading.", "La investigación de la sesión seleccionada está cargando."),
   };
   const planningInput = planning ?? planningSources.planningInput;
-  const readiness = summarizeMooReadiness(snapshot);
+  const diagnosticOnly = snapshot.warnings.includes("LAST_GOOD_SERVER_AUDIT_ONLY");
+  const currentBrokerReference = diagnosticOnly ? null : brokerReference;
+  const readiness = summarizeMooReadiness(snapshot, currentBrokerReference ?? undefined);
   const requiredSourceIds = new Set(readiness.sourceGroups.requiredNow.items.map((source) => source.id));
   const optionalSourceIds = new Set(readiness.sourceGroups.optionalResearch.items.map((source) => source.id));
   const monitoringSourceIds = new Set(readiness.sourceGroups.postFreezeMonitoring.items.map((source) => source.id));
@@ -934,7 +1002,82 @@ export function MooDecisionSurface({ snapshot, planningSources, planning, broker
   const monitoringSources = snapshot.sources.filter((source) => monitoringSourceIds.has(source.id));
   const surfaceState = strictSurfaceState(readiness);
   const notice = stateNotice(surfaceState, lang);
-  const hasFrozenArtifact = snapshot.frozenAt != null;
+  const strictCommissioned = commissioning != null && commissioning.executionMode !== "NOT_COMMISSIONED";
+  const hasFrozenArtifact = snapshot.frozenAt != null && commissioning?.artifactValidated === true;
+  const decisionFreezeAt = deadlines.find((deadline) => deadline.label === "DECISION_FREEZE")?.at ?? snapshot.actionCutoffAt;
+  const modelReady = strictCommissioned && commissioning?.modelPromoted === true && Boolean(snapshot.modelVersion?.trim() && snapshot.featureSchemaVersion?.trim());
+  const featureSnapshotReady = hasFrozenArtifact && Boolean(snapshot.featureSnapshotId?.trim());
+  const dataQualityReady = snapshot.dataQualityScore != null;
+  const favoredTicket = snapshot.decision === "LONG_FAVORED"
+    ? snapshot.longTicket
+    : snapshot.decision === "SHORT_FAVORED"
+      ? snapshot.shortTicket
+      : null;
+  const riskReady = strictCommissioned && hasFrozenArtifact && Boolean(commissioning?.riskPolicyVersion?.trim()) && favoredTicket?.actionable === true;
+  const commissioningItems = [
+    {
+      id: "execution-feed",
+      state: readiness.requiredReady === readiness.requiredTotal && readiness.requiredTotal > 0 ? "ready" : "blocked",
+      title: copy(lang, "Execution market data", "Datos de mercado de ejecución"),
+      value: `${readiness.requiredReady}/${readiness.requiredTotal} ${copy(lang, "required ready", "requeridas listas")}`,
+      detail: readiness.requiredReady === readiness.requiredTotal && readiness.requiredTotal > 0
+        ? copy(lang, "The active strict policy has qualified, current inputs.", "La política estricta activa tiene entradas calificadas y vigentes.")
+        : copy(lang, "A licensed consolidated U.S. feed must be received and time-qualified by the server.", "El servidor debe recibir y validar temporalmente una fuente consolidada de EE. UU. con licencia."),
+    },
+    {
+      id: "model",
+      state: modelReady ? "ready" : "blocked",
+      title: copy(lang, "Promoted point-in-time model", "Modelo puntual promovido"),
+      value: modelReady ? snapshot.modelVersion! : copy(lang, "Not commissioned", "No habilitado"),
+      detail: modelReady
+        ? `${copy(lang, "Server-reported model / feature schema", "Modelo / esquema de variables informado por el servidor")}: ${snapshot.featureSchemaVersion}. ${copy(lang, "Artifact validation remains authoritative.", "La validación del artefacto sigue siendo la autoridad.")}`
+        : copy(lang, "Requires walk-forward evidence, costs, baselines, calibration and an approved promotion record.", "Requiere evidencia progresiva, costos, referencias, calibración y un registro de promoción aprobado."),
+    },
+    {
+      id: "feature-snapshot",
+      state: featureSnapshotReady && dataQualityReady ? "ready" : "blocked",
+      title: copy(lang, "Feature snapshot & quality", "Captura de variables y calidad"),
+      value: featureSnapshotReady ? snapshot.featureSnapshotId! : copy(lang, "No immutable snapshot", "Sin captura inmutable"),
+      detail: dataQualityReady
+        ? `${copy(lang, "Qualified data score", "Puntuación de datos calificados")}: ${snapshot.dataQualityScore}/100`
+        : copy(lang, "Created only from same-session values available at or before the decision cutoff.", "Se crea solo con valores de la misma sesión disponibles antes o en el límite de decisión."),
+    },
+    {
+      id: "freeze",
+      state: hasFrozenArtifact ? "ready" : now < decisionFreezeAt ? "waiting" : "blocked",
+      title: copy(lang, "Immutable decision freeze", "Cierre de decisión inmutable"),
+      value: hasFrozenArtifact
+        ? etDateTime(snapshot.frozenAt, lang)
+        : now < decisionFreezeAt
+          ? copy(lang, "Scheduled", "Programado")
+          : copy(lang, "Missed or unavailable", "Omitido o no disponible"),
+      detail: hasFrozenArtifact
+        ? copy(lang, "Post-freeze monitoring cannot rewrite this artifact.", "El monitoreo posterior no puede reescribir este artefacto.")
+        : `${copy(lang, "Cutoff", "Límite")}: ${etDateTime(decisionFreezeAt, lang)}`,
+    },
+    {
+      id: "risk",
+      state: riskReady ? "ready" : "blocked",
+      title: copy(lang, "Strict risk policy", "Política estricta de riesgo"),
+      value: riskReady ? copy(lang, "Favored ticket complete", "Orden favorecida completa") : copy(lang, "Not configured", "No configurada"),
+      detail: riskReady
+        ? copy(lang, "Size, stop, reserve, maximum loss and time stop are bound to the frozen artifact.", "Tamaño, stop, reserva, pérdida máxima y límite de tiempo están vinculados al artefacto congelado.")
+        : copy(lang, "Paper-planner values are browser-local and can never populate this strict policy.", "Los valores del planificador de prueba son locales al navegador y nunca pueden completar esta política estricta."),
+    },
+    {
+      id: "broker",
+      state: snapshot.decision !== "SHORT_FAVORED" ? "waiting" : readiness.broker.strictLocateReady ? "ready" : "blocked",
+      title: copy(lang, "Broker & locate controls", "Controles de bróker y localización"),
+      value: snapshot.decision !== "SHORT_FAVORED"
+        ? snapshot.decision === "LONG_FAVORED"
+          ? copy(lang, "Short locate not applicable to LONG", "La localización corta no aplica a LARGO")
+          : copy(lang, "Activates only for a SHORT decision", "Se activa solo para una decisión CORTA")
+        : readiness.broker.strictLocateReady
+          ? copy(lang, "Account-specific locate proof present", "Prueba de localización específica de la cuenta presente")
+          : copy(lang, "Short locate not proven", "Localización para corto no comprobada"),
+      detail: copy(lang, "Asset metadata is only indicative; a short ticket needs fresh account-, symbol- and quantity-specific proof.", "Los metadatos del activo son solo indicativos; una orden corta necesita prueba reciente específica de cuenta, símbolo y cantidad."),
+    },
+  ] as const;
 
   return (
     <section className={`moo-decision-surface panel ${decisionTone} state-${surfaceState}`} aria-labelledby="moo-decision-title" aria-busy={surfaceState === "loading"}>
@@ -969,9 +1112,9 @@ export function MooDecisionSurface({ snapshot, planningSources, planning, broker
         </div>
         <div className="moo-gate-artifact">
           <span>{copy(lang, "STRICT ARTIFACT", "ARTEFACTO ESTRICTO")}</span>
-          <strong>{hasFrozenArtifact ? copy(lang, "PRESENT", "PRESENTE") : copy(lang, "NOT FROZEN", "NO CONGELADO")}</strong>
+          <strong>{hasFrozenArtifact ? copy(lang, "VALIDATED", "VALIDADO") : copy(lang, "NOT VALIDATED", "NO VALIDADO")}</strong>
           <p>{commissionLabel(readiness.strictCommissionState, lang)} · {readiness.connectionMode === "REST_POLLING" ? copy(lang, "REST polling", "sondeo REST") : readiness.connectionMode}</p>
-          <small>{hasFrozenArtifact ? etDateTime(snapshot.frozenAt, lang) : copy(lang, "No immutable strict snapshot is available.", "No hay una captura estricta inmutable disponible.")}</small>
+          <small>{hasFrozenArtifact ? etDateTime(snapshot.frozenAt, lang) : copy(lang, "No server-validated immutable strict artifact is available.", "No hay un artefacto estricto inmutable validado por el servidor.")}</small>
         </div>
       </section>
 
@@ -1022,6 +1165,23 @@ export function MooDecisionSurface({ snapshot, planningSources, planning, broker
         <span><b>{copy(lang, "TP cushion", "Margen de objetivo")}</b>{cents(snapshot.takeProfitCushionCents)}</span>
       </div>
 
+      <section className="moo-commissioning" aria-labelledby="moo-commissioning-title">
+        <div className="moo-commissioning-head">
+          <div><span className="moo-overline">{copy(lang, "WHY VALUES ARE PENDING", "POR QUÉ HAY VALORES PENDIENTES")}</span><strong id="moo-commissioning-title">{copy(lang, "Strict commissioning path", "Ruta de habilitación estricta")}</strong></div>
+          <p>{copy(lang, "Every empty execution field maps to an explicit prerequisite. The gate displays the latest valid state, but it never invents a price, entitlement, model result or broker guarantee.", "Cada campo de ejecución vacío corresponde a un requisito explícito. El control muestra el último estado válido, pero nunca inventa un precio, autorización, resultado del modelo ni garantía del bróker.")}</p>
+        </div>
+        <div className="moo-commissioning-grid">
+          {commissioningItems.map((item) => (
+            <article className={item.state} key={item.id}>
+              <div><i aria-hidden="true"/><span>{item.state === "ready" ? copy(lang, "READY", "LISTO") : item.state === "waiting" ? copy(lang, "LIFECYCLE", "CICLO") : copy(lang, "REQUIRED", "REQUERIDO")}</span></div>
+              <h3>{item.title}</h3>
+              <strong>{item.value}</strong>
+              <p>{item.detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
       {snapshot.lifecycle === "CROSS_COMPLETE" ? (
         <div className="moo-cross-result">
           <div><span>{hasFrozenArtifact ? copy(lang, "Frozen prediction", "Predicción congelada") : copy(lang, "Strict prediction", "Predicción estricta")}</span><strong>{predicted}</strong></div>
@@ -1049,7 +1209,7 @@ export function MooDecisionSurface({ snapshot, planningSources, planning, broker
         <TicketCard ticket={snapshot.shortTicket} snapshot={snapshot} lang={lang}/>
       </div>
 
-      <PaperPlanningPanel key={planningInput?.targetSession ?? snapshot.targetSession} snapshot={snapshot} researchPreview={researchPreview} planning={planningInput} initialBrokerStatus={brokerReference} lang={lang}/>
+      <PaperPlanningPanel key={planningInput?.targetSession ?? snapshot.targetSession} snapshot={snapshot} researchPreview={researchPreview} planning={planningInput} initialBrokerStatus={currentBrokerReference} brokerStatusUnavailable={diagnosticOnly} nowMs={now} lang={lang}/>
 
       <section className="moo-planning-band" aria-labelledby="moo-planning-title">
         <div className="moo-health-head">
@@ -1064,8 +1224,9 @@ export function MooDecisionSurface({ snapshot, planningSources, planning, broker
   );
 }
 
-export function MooDataHealthPanel({ snapshot, lang }: { snapshot: MooDecisionSnapshot; lang: Language }) {
-  const readiness = summarizeMooReadiness(snapshot);
+export function MooDataHealthPanel({ snapshot, brokerReference, lang }: { snapshot: MooDecisionSnapshot; brokerReference?: BrokerStatusPayload | null; lang: Language }) {
+  const diagnosticOnly = snapshot.warnings.includes("LAST_GOOD_SERVER_AUDIT_ONLY");
+  const readiness = summarizeMooReadiness(snapshot, diagnosticOnly ? undefined : brokerReference ?? undefined);
   const requiredSourceIds = new Set(readiness.sourceGroups.requiredNow.items.map((source) => source.id));
   const optionalSourceIds = new Set(readiness.sourceGroups.optionalResearch.items.map((source) => source.id));
   const monitoringSourceIds = new Set(readiness.sourceGroups.postFreezeMonitoring.items.map((source) => source.id));

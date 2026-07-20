@@ -1,11 +1,17 @@
 import { applyForecastAdjustment } from "./forecast-adjustment.ts";
 import { computeOpeningAnalysis } from "./opening-analysis.ts";
-import { ensureForecastSnapshotOutcomeColumns } from "./d1-schema.ts";
+import {
+  ensureForecastSnapshotOutcomeColumns,
+  ensureMarketPersistenceSchema,
+  ensureMooSafetySchemaOnce,
+} from "./d1-schema.ts";
 import {
   isNasdaqSessionDate,
   nasdaqSessionSchedule,
   newYorkDateKey,
 } from "./market-session.ts";
+import type { TargetMarketEnvelope } from "./market-contract.ts";
+import { createMarketStore } from "./market-store.ts";
 
 type Bar = {
   time: number;
@@ -26,6 +32,7 @@ type Daily = {
 };
 
 type MarketPayload = {
+  marketContract?: TargetMarketEnvelope;
   targetDate: string;
   checkedAt: string;
   session: string;
@@ -101,12 +108,21 @@ export type ScheduledCaptureStore = {
     firstMinuteClose: number | null;
     capturedAt: number;
   }): Promise<number>;
+  saveMarketCheckpoint?(input: {
+    envelope: TargetMarketEnvelope;
+    analysisBars: Bar[];
+    checkpoint: ScheduledInterval | "OUTCOME";
+    capturedAt: number;
+  }): Promise<void>;
   recordRun?(input: {
     scheduledAt: number;
+    startedAt: number;
     completedAt: number;
     phase: Exclude<ScheduledCapturePhase, null>;
+    checkpoint: ScheduledInterval | "OUTCOME";
     status: ScheduledCaptureResult["status"] | "failed";
     targetDate: string | null;
+    detailCode: string | null;
     detail: string | null;
   }): Promise<void>;
 };
@@ -115,10 +131,12 @@ export type ScheduledCaptureResult = {
   phase: ScheduledCapturePhase;
   status: "skipped" | "captured" | "freeze_only" | "outcome_attached";
   targetDate?: string;
+  reasonCode?: string;
   reason?: string;
 };
 
 export const ACTIONABLE_MOO_FREEZE_TIME_ET = "09:24:30";
+export const MAX_SCHEDULED_CAPTURE_DELAY_MS = 90_000;
 
 const finite = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
@@ -338,32 +356,85 @@ export async function runScheduledCapture(input: {
   const phase = scheduledCapturePhase(input.scheduledTime);
   const checkpoint = scheduledCaptureCheckpoint(input.scheduledTime);
   if (!phase) return { phase, status: "skipped", reason: "outside Eastern capture windows" };
-  const nowMs = input.nowMs ?? Date.now();
+  const startedAt = input.nowMs ?? Date.now();
   let targetDate: string | null = null;
   const finish = async (result: ScheduledCaptureResult) => {
     await input.store.recordRun?.({
       scheduledAt: input.scheduledTime,
+      startedAt,
       completedAt: input.nowMs ?? Date.now(),
       phase,
+      checkpoint: checkpoint as ScheduledInterval | "OUTCOME",
       status: result.status,
       targetDate: result.targetDate ?? targetDate,
+      detailCode: result.reasonCode ?? null,
       detail: result.reason ?? null,
     });
     return result;
   };
+  const scheduleDelayMs = startedAt - input.scheduledTime;
+  if (scheduleDelayMs > MAX_SCHEDULED_CAPTURE_DELAY_MS) {
+    return finish({
+      phase,
+      status: "skipped",
+      targetDate: easternDate(input.scheduledTime),
+      reasonCode: "SCHEDULED_INVOCATION_TOO_LATE",
+      reason: "scheduled capture started too late for point-in-time evidence",
+    });
+  }
+  if (scheduleDelayMs < -30_000) {
+    return finish({
+      phase,
+      status: "skipped",
+      targetDate: easternDate(input.scheduledTime),
+      reasonCode: "SCHEDULED_INVOCATION_FUTURE_SKEW",
+      reason: "scheduled capture time is ahead of the worker clock",
+    });
+  }
+  const scheduledSessionDate = easternDate(input.scheduledTime);
+  if (checkpoint === "T-5M" && startedAt > actionableMooFreezeAt(scheduledSessionDate)) {
+    return finish({
+      phase,
+      status: "skipped",
+      targetDate: scheduledSessionDate,
+      reasonCode: "ACTIONABLE_FREEZE_CUTOFF_PASSED",
+      reason: "the actionable MOO evidence cutoff has passed",
+    });
+  }
   try {
+    const marketView = checkpoint === "T-5M" ? "&view=DECISION_FREEZE" : "";
     const market = await responseJson<MarketPayload>(
-      await input.fetchApp(`/api/market?symbol=NVDA&automation=${input.scheduledTime}`),
+      await input.fetchApp(`/api/market?symbol=NVDA&automation=${input.scheduledTime}${marketView}`),
       "Market endpoint",
     );
     targetDate = market.targetDate;
-    if (targetDate !== easternDate(nowMs)) {
-      return finish({ phase, status: "skipped", targetDate, reason: "not a current U.S. market session" });
+    if (targetDate !== easternDate(startedAt)) {
+      return finish({
+        phase,
+        status: "skipped",
+        targetDate,
+        reasonCode: "TARGET_SESSION_MISMATCH",
+        reason: "not a current U.S. market session",
+      });
     }
 
     if (phase === "outcome") {
       if (market.session !== "MARKET OPEN") {
-        return finish({ phase, status: "skipped", targetDate, reason: "regular market is not open" });
+        return finish({
+          phase,
+          status: "skipped",
+          targetDate,
+          reasonCode: "REGULAR_MARKET_NOT_OPEN",
+          reason: "regular market is not open",
+        });
+      }
+      if (market.marketContract) {
+        await input.store.saveMarketCheckpoint?.({
+          envelope: market.marketContract,
+          analysisBars: market.analysisBars ?? market.bars,
+          checkpoint: "OUTCOME",
+          capturedAt: input.nowMs ?? Date.now(),
+        });
       }
       // market.day.open is a regular-bar/day-open field, not the Nasdaq
       // Official Opening Cross. Preserve the distinction and leave the
@@ -374,17 +445,48 @@ export async function runScheduledCapture(input: {
         ? market.firstMinute.close
         : null;
       if (firstMinuteClose == null) {
-        return finish({ phase, status: "skipped", targetDate, reason: "opening outcome is not published yet" });
+        return finish({
+          phase,
+          status: "skipped",
+          targetDate,
+          reasonCode: "OPENING_OUTCOME_PENDING",
+          reason: "opening outcome is not published yet",
+        });
       }
-      const changedRows = await input.store.attachOutcome({ targetDate, actualOpen, firstMinuteClose, capturedAt: nowMs });
+      const changedRows = await input.store.attachOutcome({
+        targetDate,
+        actualOpen,
+        firstMinuteClose,
+        capturedAt: input.nowMs ?? Date.now(),
+      });
       if (changedRows === 0) {
-        return finish({ phase, status: "skipped", targetDate, reason: "no pre-open snapshot or Library plan exists to receive the outcome" });
+        return finish({
+          phase,
+          status: "skipped",
+          targetDate,
+          reasonCode: "NO_PREOPEN_ARTIFACT_FOR_OUTCOME",
+          reason: "no pre-open snapshot or Library plan exists to receive the outcome",
+        });
       }
       return finish({ phase, status: "outcome_attached", targetDate });
     }
 
     if (market.session !== "PREMARKET") {
-      return finish({ phase, status: "skipped", targetDate, reason: "target session is not in premarket" });
+      return finish({
+        phase,
+        status: "skipped",
+        targetDate,
+        reasonCode: "TARGET_NOT_PREMARKET",
+        reason: "target session is not in premarket",
+      });
+    }
+    if (market.marketContract) {
+      await input.store.saveMarketCheckpoint?.({
+        envelope: market.marketContract,
+        analysisBars: market.analysisBars ?? market.bars,
+        checkpoint: checkpoint as ScheduledInterval,
+        capturedAt: input.nowMs ?? Date.now(),
+      });
     }
     // A successful GET writes the monotonic forecast_preopen_freezes row. It is
     // intentionally invoked on every admitted minute so the last successful
@@ -393,10 +495,11 @@ export async function runScheduledCapture(input: {
       await input.fetchApp(`/api/forecast?targetDate=${encodeURIComponent(targetDate)}&automation=${input.scheduledTime}`),
       "Forecast endpoint",
     );
+    const captureAt = input.nowMs ?? Date.now();
     const capture = buildScheduledPreopenCapture(
       market,
       forecast,
-      nowMs,
+      captureAt,
       checkpoint as ScheduledInterval,
     );
     if (!capture) {
@@ -404,6 +507,7 @@ export async function runScheduledCapture(input: {
         phase,
         status: "freeze_only",
         targetDate,
+        reasonCode: "POINT_IN_TIME_MARKET_GATES_FAILED",
         reason: `forecast froze, but the ${checkpoint} snapshot failed point-in-time market-data gates`,
       });
     }
@@ -412,10 +516,13 @@ export async function runScheduledCapture(input: {
   } catch (error) {
     await input.store.recordRun?.({
       scheduledAt: input.scheduledTime,
+      startedAt,
       completedAt: input.nowMs ?? Date.now(),
       phase,
+      checkpoint: checkpoint as ScheduledInterval | "OUTCOME",
       status: "failed",
       targetDate,
+      detailCode: "SCHEDULED_CAPTURE_FAILED",
       detail: error instanceof Error ? error.message.slice(0, 500) : "unknown scheduled capture failure",
     });
     throw error;
@@ -472,6 +579,7 @@ const createAutomationHealthTableSql = `CREATE TABLE IF NOT EXISTS automation_ca
 )`;
 
 export function createD1ScheduledCaptureStore(database: D1Database): ScheduledCaptureStore {
+  const marketStore = createMarketStore(database);
   const ensure = async () => {
     await database.batch([
       database.prepare(createLibraryTableSql),
@@ -480,9 +588,14 @@ export function createD1ScheduledCaptureStore(database: D1Database): ScheduledCa
       database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS forecast_snapshots_target_interval_idx ON forecast_snapshots (target_date, interval_label)"),
       database.prepare(createAutomationHealthTableSql),
     ]);
+    await ensureMooSafetySchemaOnce(database);
     await ensureForecastSnapshotOutcomeColumns(database);
+    await ensureMarketPersistenceSchema(database);
   };
   return {
+    async saveMarketCheckpoint(input) {
+      await marketStore.saveScheduledCheckpoint(input);
+    },
     async savePreopen(plan, snapshot) {
       await ensure();
       const statements = [
@@ -581,10 +694,51 @@ export function createD1ScheduledCaptureStore(database: D1Database): ScheduledCa
       const results = await database.batch(statements);
       return results.reduce((sum, result) => sum + Number(result.meta?.changes ?? 0), 0);
     },
-    async recordRun({ scheduledAt, completedAt, phase, status, targetDate, detail }) {
+    async recordRun({
+      scheduledAt,
+      startedAt,
+      completedAt,
+      phase,
+      checkpoint,
+      status,
+      targetDate,
+      detailCode,
+      detail,
+    }) {
       await ensure();
       const successful = status === "captured" || status === "outcome_attached" || status === "freeze_only";
-      await database
+      const transportSucceeded = status !== "failed" &&
+        detailCode !== "SCHEDULED_INVOCATION_TOO_LATE" &&
+        detailCode !== "SCHEDULED_INVOCATION_FUTURE_SKEW";
+      const snapshotSucceeded = status === "captured" || status === "outcome_attached";
+      const freezeSucceeded = status === "captured" || status === "freeze_only";
+      const jobKey = `NVDA:${easternDate(scheduledAt)}:${checkpoint}:${scheduledAt}`;
+      const runId = `${jobKey}:${status}`;
+      const appendRun = database
+        .prepare(`INSERT INTO scheduler_runs (
+          run_id,job_key,scheduled_at,started_at,completed_at,phase,checkpoint,
+          status,target_date,transport_succeeded,snapshot_succeeded,freeze_succeeded,
+          detail_code,detail,created_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(run_id) DO NOTHING`)
+        .bind(
+          runId,
+          jobKey,
+          scheduledAt,
+          startedAt,
+          completedAt,
+          phase,
+          checkpoint,
+          status,
+          targetDate,
+          transportSucceeded ? 1 : 0,
+          snapshotSucceeded ? 1 : 0,
+          freezeSucceeded ? 1 : 0,
+          detailCode,
+          detail,
+          completedAt,
+        );
+      const updateLegacyHealth = database
         .prepare(`INSERT INTO automation_capture_health (
           id,last_attempt_at,last_success_at,last_preopen_at,last_outcome_at,
           scheduled_at,phase,status,target_date,detail
@@ -610,8 +764,8 @@ export function createD1ScheduledCaptureStore(database: D1Database): ScheduledCa
           status,
           targetDate,
           detail,
-        )
-        .run();
+        );
+      await database.batch([appendRun, updateLegacyHealth]);
     },
   };
 }

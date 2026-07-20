@@ -1,5 +1,6 @@
+import { env } from "cloudflare:workers";
 import { pullAlpacaBrokerStatus } from "../../../alpaca-broker-status.ts";
-import { buildMooSystemStatus } from "../../../moo-system-status.ts";
+import { buildMooSystemStatus, readMooStreamHealth } from "../../../moo-system-status.ts";
 import { validateTargetSession } from "../../../target-session.ts";
 
 const HEADERS = {
@@ -19,9 +20,13 @@ export async function GET(request: Request) {
     );
   }
 
-  const brokerReference = await pullAlpacaBrokerStatus();
+  const runtime = env as unknown as { DB?: D1Database };
+  const [brokerReference, streamHealth] = await Promise.all([
+    pullAlpacaBrokerStatus(),
+    readMooStreamHealth(runtime.DB, nowMs),
+  ]);
   return Response.json(
-    buildMooSystemStatus({ nowMs, targetSession: validation.date, brokerReference }),
+    buildMooSystemStatus({ nowMs, targetSession: validation.date, brokerReference, streamHealth }),
     { headers: HEADERS },
   );
 }

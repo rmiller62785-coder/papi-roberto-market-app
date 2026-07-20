@@ -1,0 +1,22 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "aperture-nvda-market-stream-dev",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-18",
+  "durable_objects": {
+    "bindings": [
+      { "name": "MARKET_STREAM", "class_name": "NvdaMarketStream" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["NvdaMarketStream"] }
+  ],
+  "vars": {
+    "ALPACA_FEED": "iex",
+    "SITES_INGESTION_URL": "http://localhost:3000/api/internal/market-stream",
+    "SITES_INGESTION_AUDIENCE": "aperture-sites-market-ingestion",
+    "BROWSER_ALLOWED_ORIGINS": "http://localhost:3000",
+    "MAX_BROWSER_CLIENTS": "25"
+  },
+  "triggers": { "crons": ["*/5 * * * *"] }
+}

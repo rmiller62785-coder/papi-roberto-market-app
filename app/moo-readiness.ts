@@ -1,8 +1,15 @@
-import type {
-  MooBlockReason,
-  MooDecisionSnapshot,
-  MooSourceHealth,
+import {
+  canonicalMooJson,
+  isMooSourceId,
+  validateMooRequiredSourceIds,
+  validateMooLocateProof,
+  type MooBlockReason,
+  type MooDecisionSnapshot,
+  type MooFeedCoverage,
+  type MooSourceHealth,
 } from "./moo-contract.ts";
+import { nasdaqSessionSchedule } from "./market-session.ts";
+import { validateMooDecisionArtifact, type MooDecisionArtifact } from "./moo-artifact-store.ts";
 
 export type MooSourceRole = "REQUIRED_NOW" | "OPTIONAL_RESEARCH" | "POST_FREEZE_MONITORING";
 export type MooConnectionMode = "REST_POLLING";
@@ -39,6 +46,7 @@ export type MooSourceReadiness = {
   duplicate: boolean;
   state: MooSourceHealth["state"] | "MISSING";
   entitlement: MooSourceHealth["entitlement"] | "MISSING";
+  coverage: MooFeedCoverage | "MISSING";
   available: boolean;
   strictReady: boolean;
 };
@@ -80,18 +88,48 @@ const SOURCE_IDS_BY_ROLE = {
   POST_FREEZE_MONITORING: ["NOII"],
 } as const satisfies Record<MooSourceRole, readonly MooSourceHealth["id"][]>;
 
+const STRICT_FEED_COVERAGE: Record<MooSourceHealth["id"], MooFeedCoverage> = {
+  US: "CONSOLIDATED_SIP",
+  NVD: "DIRECT_VENUE",
+  FX: "INSTITUTIONAL_FX",
+  FUTURES: "CME_ENTITLED",
+  NOII: "NASDAQ_NOII",
+};
+const STRICT_MAX_SOURCE_AGE_MS: Record<MooSourceHealth["id"], number> = {
+  US: 2_000, NVD: 10_000, FX: 60_000, FUTURES: 10_000, NOII: 2_000,
+};
+
 function sourceAvailable(source: MooSourceHealth | undefined) {
   return source != null && ["LIVE", "DEGRADED", "DELAYED"].includes(source.state);
 }
 
-function sourceStrictReady(source: MooSourceHealth | undefined, duplicate: boolean) {
-  return source != null && !duplicate && source.state === "LIVE" && source.entitlement === "REALTIME";
+function sourceStrictReady(source: MooSourceHealth | undefined, duplicate: boolean, evaluatedAt: number) {
+  if (source == null || !isMooSourceId(source.id) || duplicate || source.state !== "LIVE" ||
+    source.entitlement !== "REALTIME" || source.coverage !== STRICT_FEED_COVERAGE[source.id] ||
+    typeof source.provider !== "string" || source.provider.trim().length === 0 ||
+    (source.reasonCode != null && source.reasonCode !== "VALUE_PRESENT") ||
+    !Number.isSafeInteger(source.observedAt) || !Number.isSafeInteger(source.checkedAt) ||
+    source.observedAt! > evaluatedAt || source.checkedAt! > evaluatedAt ||
+    source.checkedAt! < source.observedAt! - 1_000) return false;
+  const derivedAge = Math.max(0, evaluatedAt - source.observedAt!);
+  const reportedAge = Number.isSafeInteger(source.ageMs) && source.ageMs! >= 0 ? source.ageMs! : derivedAge;
+  if (Math.max(derivedAge, reportedAge) > STRICT_MAX_SOURCE_AGE_MS[source.id]) return false;
+  const sourceTimes = [source.receivedAt, source.processedAt, source.availableAt];
+  if (sourceTimes.some((time) => time != null) &&
+    (!Number.isSafeInteger(source.receivedAt) || !Number.isSafeInteger(source.processedAt) ||
+      !Number.isSafeInteger(source.availableAt) || source.receivedAt! < source.observedAt! ||
+      source.processedAt! < source.receivedAt! || source.availableAt! < source.processedAt! ||
+      source.checkedAt! < source.availableAt! || source.availableAt! > evaluatedAt)) return false;
+  if (source.validUntil != null && (!Number.isSafeInteger(source.validUntil) || source.validUntil < evaluatedAt)) return false;
+  return source != null && !duplicate && source.state === "LIVE" && source.entitlement === "REALTIME" &&
+    source.coverage === STRICT_FEED_COVERAGE[source.id];
 }
 
 function groupSources(
   sources: MooSourceHealth[],
   role: MooSourceRole,
   sourceIds: readonly MooSourceHealth["id"][] = SOURCE_IDS_BY_ROLE[role],
+  evaluatedAt = Date.now(),
 ): MooReadinessGroup {
   const items = sourceIds.map((id): MooSourceReadiness => {
     const matches = sources.filter((source) => source.id === id);
@@ -105,8 +143,9 @@ function groupSources(
       duplicate,
       state: source?.state ?? "MISSING",
       entitlement: source?.entitlement ?? "MISSING",
+      coverage: source?.coverage ?? "MISSING",
       available,
-      strictReady: sourceStrictReady(source, duplicate),
+      strictReady: sourceStrictReady(source, duplicate, evaluatedAt),
     };
   });
   return {
@@ -127,13 +166,15 @@ function borrowStatusCode(value: string | null | undefined): MooBorrowStatusCode
 
 function requiredSourceBlocker(group: MooReadinessGroup): MooBlockReason | null {
   for (const source of group.items) {
-    if (!source.present || source.duplicate || source.entitlement !== "REALTIME") {
+    if (!source.present || source.duplicate || source.entitlement !== "REALTIME" ||
+      source.coverage !== STRICT_FEED_COVERAGE[source.id]) {
       return "FEED_NOT_ENTITLED";
     }
     if (source.state === "DEGRADED" || source.state === "DELAYED") {
       return source.id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
     }
     if (source.state !== "LIVE") return "DATA_PENDING";
+    if (!source.strictReady) return source.id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
   }
   return null;
 }
@@ -142,6 +183,7 @@ function dominantBlocker(
   snapshot: MooDecisionSnapshot,
   requiredNow: MooReadinessGroup,
   strictLocateReady: boolean,
+  artifactAuthorized: boolean,
 ): MooDominantBlockerCode {
   if (snapshot.blockReason !== "NONE") return snapshot.blockReason;
   const sourceBlocker = requiredSourceBlocker(requiredNow);
@@ -155,15 +197,32 @@ function dominantBlocker(
     snapshot.majorThirdCents == null ||
     snapshot.minorThirdCents == null
   ) return "DATA_PENDING";
-  if (snapshot.decision === "NO_TRADE") return "LOW_CONFIDENCE";
+  if (snapshot.decision === "NO_TRADE") {
+    return snapshot.decisionReasonCode === "NO_EDGE" ? "NO_EDGE" : "LOW_CONFIDENCE";
+  }
   if (snapshot.confidencePct == null) return "LOW_CONFIDENCE";
   if (snapshot.decision === "SHORT_FAVORED" && !strictLocateReady) {
     return "SHORTABILITY_UNCONFIRMED";
   }
-  if (!snapshot.longTicket.actionable || !snapshot.shortTicket.actionable) {
+  const favoredTicket = snapshot.decision === "LONG_FAVORED"
+    ? snapshot.longTicket
+    : snapshot.shortTicket;
+  if (!favoredTicket.actionable) {
     return "RISK_POLICY_UNCONFIGURED";
   }
+  if (!artifactAuthorized) return "RISK_POLICY_UNCONFIGURED";
   return "NONE";
+}
+
+function artifactAuthorizesSnapshot(snapshot: MooDecisionSnapshot, artifact?: MooDecisionArtifact | null) {
+  if (!artifact) return false;
+  try {
+    if (!validateMooDecisionArtifact(artifact).valid) return false;
+    const expectedState = snapshot.decision === "NO_TRADE" && snapshot.decisionReasonCode === "NO_EDGE" ? "NO_EDGE" : "READY";
+    return artifact.state === expectedState && canonicalMooJson(artifact.decisionSnapshot) === canonicalMooJson(snapshot);
+  } catch {
+    return false;
+  }
 }
 
 function commissionState(
@@ -174,7 +233,7 @@ function commissionState(
     Boolean(snapshot.modelVersion?.trim()) &&
     Boolean(snapshot.featureSchemaVersion?.trim());
   if (!modelCommissioned) return "NOT_COMMISSIONED";
-  if (snapshot.decision === "NO_TRADE" && blocker === "LOW_CONFIDENCE") {
+  if (snapshot.decision === "NO_TRADE" && (blocker === "LOW_CONFIDENCE" || blocker === "NO_EDGE")) {
     return "COMMISSIONED_NO_TRADE";
   }
   return blocker === "NONE" ? "COMMISSIONED_READY" : "COMMISSIONED_BLOCKED";
@@ -200,34 +259,52 @@ function paperState(snapshot: MooDecisionSnapshot): MooPaperOperationalState {
 
 /**
  * Summarizes the existing strict snapshot without changing any decision gate.
- * Broker asset metadata remains indicative; when supplied, only an explicit
- * guaranteed-locate flag can satisfy the summary's strict locate check.
+ * Broker asset metadata remains indicative. Strict readiness is derived from
+ * immutable, account-specific locate evidence embedded in the snapshot.
  */
 export function summarizeMooReadiness(
   snapshot: MooDecisionSnapshot,
   broker?: MooBrokerReadinessInput | null,
+  strictArtifact?: MooDecisionArtifact | null,
 ): MooReadinessSummary {
-  const requiredSourceIds: readonly MooSourceHealth["id"][] = snapshot.requiredSourceIds?.length
-    ? snapshot.requiredSourceIds
-    : ["US"];
+  const requiredPolicy = validateMooRequiredSourceIds(snapshot.requiredSourceIds);
+  const requiredSourceIds: readonly MooSourceHealth["id"][] = requiredPolicy.valid ? snapshot.requiredSourceIds : ["US"];
   const requiredSet = new Set(requiredSourceIds);
-  const requiredNow = groupSources(snapshot.sources, "REQUIRED_NOW", requiredSourceIds);
+  const evaluatedAt = snapshot.frozenAt ?? snapshot.generatedAt;
+  const requiredNow = groupSources(snapshot.sources, "REQUIRED_NOW", requiredSourceIds, evaluatedAt);
   const optionalResearch = groupSources(
     snapshot.sources,
     "OPTIONAL_RESEARCH",
     SOURCE_IDS_BY_ROLE.OPTIONAL_RESEARCH.filter((id) => !requiredSet.has(id)),
+    evaluatedAt,
   );
   const postFreezeMonitoring = groupSources(
     snapshot.sources,
     "POST_FREEZE_MONITORING",
     SOURCE_IDS_BY_ROLE.POST_FREEZE_MONITORING.filter((id) => !requiredSet.has(id)),
+    evaluatedAt,
   );
   const indicativeBorrowStatusCode = borrowStatusCode(broker?.borrowStatus);
-  const guaranteedLocateConfirmed = broker == null
-    ? snapshot.shortTicket.shortability === "AVAILABLE"
-    : broker.locateGuaranteed === true;
+  // Preserve the public broker-status contract as indicative metadata only.
+  // This claim cannot replace the immutable locate evidence validated below.
+  const brokerLocateMetadataClaimed = broker?.locateGuaranteed === true;
+  void brokerLocateMetadataClaimed;
+  const schedule = nasdaqSessionSchedule(snapshot.targetSession);
+  const locateEvaluationAt = snapshot.frozenAt ?? snapshot.generatedAt;
+  const guaranteedLocateConfirmed = snapshot.shortTicket.accountLabel != null &&
+    snapshot.shortTicket.quantity != null &&
+    validateMooLocateProof(snapshot.shortLocateProof, {
+      accountAlias: snapshot.shortTicket.accountLabel,
+      targetSession: snapshot.targetSession,
+      quantity: snapshot.shortTicket.quantity,
+      availableBy: locateEvaluationAt,
+      validThrough: schedule.finalEntryAt,
+    }).valid;
   const strictLocateReady = snapshot.shortTicket.shortability === "AVAILABLE" && guaranteedLocateConfirmed;
-  const blocker = dominantBlocker(snapshot, requiredNow, strictLocateReady);
+  const artifactAuthorized = artifactAuthorizesSnapshot(snapshot, strictArtifact);
+  const blocker = requiredPolicy.valid
+    ? dominantBlocker(snapshot, requiredNow, strictLocateReady, artifactAuthorized)
+    : "FEED_NOT_ENTITLED";
 
   return {
     sourceGroups: { requiredNow, optionalResearch, postFreezeMonitoring },

@@ -1,0 +1,21 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "aperture-nvda-market-stream",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-18",
+  "durable_objects": {
+    "bindings": [
+      { "name": "MARKET_STREAM", "class_name": "NvdaMarketStream" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["NvdaMarketStream"] }
+  ],
+  "vars": {
+    "ALPACA_FEED": "iex",
+    "SITES_INGESTION_AUDIENCE": "aperture-sites-market-ingestion",
+    "BROWSER_ALLOWED_ORIGINS": "https://aperture-nvda-plan.rmiller62785.chatgpt.site",
+    "MAX_BROWSER_CLIENTS": "100"
+  },
+  "triggers": { "crons": ["*/5 * * * *"] }
+}

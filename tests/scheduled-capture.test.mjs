@@ -4,10 +4,12 @@ import test from "node:test";
 import {
   buildScheduledPreopenCapture,
   createD1ScheduledCaptureStore,
+  MAX_SCHEDULED_CAPTURE_DELAY_MS,
   runScheduledCapture,
   scheduledCaptureCheckpoint,
   scheduledCapturePhase,
 } from "../app/scheduled-capture.ts";
+import { summarizeSchedulerHealth } from "../app/scheduler-health.ts";
 
 const bar = (time, close, volume = 1000) => ({
   time,
@@ -86,10 +88,15 @@ test("Eastern capture windows work across daylight-saving offsets", () => {
   assert.equal(scheduledCaptureCheckpoint(Date.parse("2026-07-20T13:25:00Z")), null);
 });
 
-test("the deployed Worker configuration uses one DST-safe Monday-Friday trigger", async () => {
-  const vite = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
-  assert.match(vite, /crons:\s*\["\* 8-14 \* \* MON-FRI"\]/);
-  assert.doesNotMatch(vite, /\* \* [1-5](?:\D|$)/);
+test("the deployed Worker uses an every-minute bootstrap heartbeat while capture admission remains ET-safe", async () => {
+  const [vite, worker] = await Promise.all([
+    readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(vite, /crons:\s*\["\* \* \* \* \*"\]/);
+  assert.match(vite, /including weekends/);
+  assert.match(worker, /ensureMooSafetySchemaOnce\(env\.DB, controller\.scheduledTime\)[\s\S]*?\.then\(\(\) => runScheduledCapture/);
+  assert.equal(scheduledCapturePhase(Date.parse("2026-07-18T16:00:00Z")), null);
 });
 
 test("preopen capture matches point-in-time gates and produces a non-actionable T-5 research snapshot", () => {
@@ -179,6 +186,126 @@ test("runner retries the freeze each minute while persistent inserts remain stor
   assert.equal(result.status, "captured");
   assert.equal(saved.length, 1);
   assert.deepEqual(fetchPaths.map((path) => path.split("?")[0]), ["/api/market", "/api/forecast"]);
+});
+
+test("an accepted scheduled checkpoint persists the normalized market contract before the research snapshot", async () => {
+  const at = Date.parse("2026-07-20T13:24:00Z");
+  const contract = { schemaVersion: "target-market-v1", symbol: "NVDA", targetDate: "2026-07-20" };
+  const calls = [];
+  const payload = market(at, { marketContract: contract });
+  const result = await runScheduledCapture({
+    scheduledTime: at,
+    nowMs: at,
+    fetchApp: async (path) => Response.json(path.startsWith("/api/market") ? payload : forecast(at)),
+    store: {
+      async saveMarketCheckpoint(input) { calls.push({ kind: "market", input }); },
+      async savePreopen() { calls.push({ kind: "research" }); },
+      async attachOutcome() { assert.fail("outcome should not run"); return 0; },
+    },
+  });
+  assert.equal(result.status, "captured");
+  assert.deepEqual(calls.map((call) => call.kind), ["market", "research"]);
+  assert.deepEqual(calls[0].input.envelope, contract);
+  assert.equal(calls[0].input.checkpoint, "T-5M");
+  assert.deepEqual(calls[0].input.analysisBars, payload.analysisBars);
+});
+
+test("T-5M admits 09:24:29 with the decision-freeze view and rejects 09:24:31 before any fetch or artifact write", async () => {
+  const scheduledTime = Date.parse("2026-07-20T13:24:00Z");
+  const acceptedAt = scheduledTime + 29_000;
+  const acceptedPaths = [];
+  let acceptedWrites = 0;
+  const acceptedMarket = market(acceptedAt, { marketContract: { schemaVersion: "target-market-v1", symbol: "NVDA", targetDate: "2026-07-20" } });
+  const accepted = await runScheduledCapture({
+    scheduledTime,
+    nowMs: acceptedAt,
+    fetchApp: async (path) => {
+      acceptedPaths.push(path);
+      return Response.json(path.startsWith("/api/market") ? acceptedMarket : forecast(acceptedAt));
+    },
+    store: {
+      async saveMarketCheckpoint() { acceptedWrites += 1; },
+      async savePreopen() { acceptedWrites += 1; },
+      async attachOutcome() { assert.fail("outcome should not run"); return 0; },
+    },
+  });
+  assert.equal(accepted.status, "captured");
+  assert.equal(acceptedWrites, 2);
+  assert.match(acceptedPaths[0], /view=DECISION_FREEZE/);
+
+  let rejectedFetches = 0;
+  let rejectedWrites = 0;
+  const rejected = await runScheduledCapture({
+    scheduledTime,
+    nowMs: scheduledTime + 31_000,
+    fetchApp: async () => { rejectedFetches += 1; return Response.json({}); },
+    store: {
+      async saveMarketCheckpoint() { rejectedWrites += 1; },
+      async savePreopen() { rejectedWrites += 1; },
+      async attachOutcome() { rejectedWrites += 1; return 0; },
+    },
+  });
+  assert.equal(rejected.status, "skipped");
+  assert.equal(rejected.reasonCode, "ACTIONABLE_FREEZE_CUTOFF_PASSED");
+  assert.equal(rejectedFetches, 0);
+  assert.equal(rejectedWrites, 0);
+});
+
+test("a delayed cron invocation is recorded but cannot backfill point-in-time evidence", async () => {
+  const scheduledTime = Date.parse("2026-07-20T13:24:00Z");
+  const recorded = [];
+  let fetches = 0;
+  const result = await runScheduledCapture({
+    scheduledTime,
+    nowMs: scheduledTime + MAX_SCHEDULED_CAPTURE_DELAY_MS + 1,
+    fetchApp: async () => {
+      fetches += 1;
+      return Response.json({});
+    },
+    store: {
+      async savePreopen() { assert.fail("late invocation must not save"); },
+      async attachOutcome() { assert.fail("late invocation must not attach"); return 0; },
+      async recordRun(run) { recorded.push(run); },
+    },
+  });
+  assert.equal(result.status, "skipped");
+  assert.equal(result.reasonCode, "SCHEDULED_INVOCATION_TOO_LATE");
+  assert.equal(fetches, 0);
+  assert.equal(recorded[0].checkpoint, "T-5M");
+  assert.equal(recorded[0].detailCode, "SCHEDULED_INVOCATION_TOO_LATE");
+});
+
+test("scheduler persistence is append-only and idempotent by deterministic run id", async () => {
+  const source = await readFile(new URL("../app/scheduled-capture.ts", import.meta.url), "utf8");
+  assert.match(source, /INSERT INTO scheduler_runs/);
+  assert.match(source, /ON CONFLICT\(run_id\) DO NOTHING/);
+  assert.match(source, /const runId = `\$\{jobKey\}:\$\{status\}`/);
+  assert.doesNotMatch(source, /UPDATE scheduler_runs/i);
+});
+
+test("scheduler health separates transport, snapshot, and freeze success", () => {
+  const now = Date.parse("2026-07-20T13:25:00Z");
+  const health = summarizeSchedulerHealth([{
+    runId: "run-1",
+    jobKey: "job-1",
+    scheduledAt: Date.parse("2026-07-20T13:24:00Z"),
+    startedAt: Date.parse("2026-07-20T13:24:01Z"),
+    completedAt: Date.parse("2026-07-20T13:24:20Z"),
+    phase: "preopen",
+    checkpoint: "T-5M",
+    status: "freeze_only",
+    targetDate: "2026-07-20",
+    transportSucceeded: 1,
+    snapshotSucceeded: 0,
+    freezeSucceeded: 1,
+    detailCode: "POINT_IN_TIME_MARKET_GATES_FAILED",
+    detail: "snapshot failed gates",
+  }], now);
+  assert.equal(health.status, "degraded");
+  assert.equal(health.lastTransportSuccessAt, Date.parse("2026-07-20T13:24:20Z"));
+  assert.equal(health.lastSnapshotSuccessAt, null);
+  assert.equal(health.lastFreezeSuccessAt, Date.parse("2026-07-20T13:24:20Z"));
+  assert.equal(health.consecutiveFailures, 0);
 });
 
 test("holiday/closed response skips all writes and never calls forecast", async () => {

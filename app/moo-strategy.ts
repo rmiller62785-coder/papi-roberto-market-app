@@ -1,10 +1,17 @@
-import type {
-  MooBlockReason,
-  MooDecision,
-  MooDecisionSnapshot,
-  MooSide,
-  MooSourceHealth,
-  MooTicket,
+import {
+  deepFreezeMoo,
+  isMooSourceId,
+  mooCanonicalDigest,
+  validateMooRequiredSourceIds,
+  validateMooLocateProof,
+  type MooFeedCoverage,
+  type MooBlockReason,
+  type MooDecision,
+  type MooDecisionSnapshot,
+  type MooLocateProof,
+  type MooSide,
+  type MooSourceHealth,
+  type MooTicket,
 } from "./moo-contract.ts";
 import { mooDeadlines, mooLifecycleAt, nasdaqSessionSchedule } from "./market-session.ts";
 
@@ -60,10 +67,54 @@ export type MooFrozenDecisionContext = {
   premarketHighCents: number | null;
   premarketLowCents: number | null;
   shortability: MooTicket["shortability"];
+  shortLocateProof?: MooLocateProof | null;
   longTicket?: MooTicketConfiguration;
   shortTicket?: MooTicketConfiguration;
   config?: MooStrategyConfiguration;
+  contentHash: string;
 };
+
+export function computeMooFrozenDecisionContextDigest(
+  context: Omit<MooFrozenDecisionContext, "contentHash"> | MooFrozenDecisionContext,
+) {
+  return mooCanonicalDigest(context as unknown as Record<string, unknown>);
+}
+
+export function validateMooFrozenDecisionContext(
+  context: MooFrozenDecisionContext | null | undefined,
+  targetSession?: string,
+) {
+  const errors: string[] = [];
+  if (!context || typeof context !== "object") return { valid: false, errors: ["FROZEN_CONTEXT_INVALID"] };
+  if (context.schemaVersion !== "moo-phase1-v1") errors.push("FROZEN_CONTEXT_SCHEMA_INVALID");
+  if (targetSession != null && context.targetSession !== targetSession) errors.push("FROZEN_CONTEXT_TARGET_MISMATCH");
+  if (!nonemptyString(context.snapshotId)) errors.push("FROZEN_CONTEXT_ID_MISSING");
+  if (!safeNonnegativeInteger(context.frozenAt)) errors.push("FROZEN_CONTEXT_TIME_INVALID");
+  const policy = validateMooRequiredSourceIds(context.requiredSourceIds);
+  if (!policy.valid) errors.push(...policy.errors);
+  if (!Array.isArray(context.sources) || context.sources.some((source) => !isMooSourceId(source?.id))) {
+    errors.push("FROZEN_CONTEXT_SOURCE_INVALID");
+  }
+  if (!/^sha256:[0-9a-f]{64}$/.test(context.contentHash)) errors.push("FROZEN_CONTEXT_HASH_INVALID");
+  else {
+    try {
+      if (computeMooFrozenDecisionContextDigest(context) !== context.contentHash) errors.push("FROZEN_CONTEXT_HASH_MISMATCH");
+    } catch { errors.push("FROZEN_CONTEXT_HASH_UNSERIALIZABLE"); }
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+export function sealMooFrozenDecisionContext(
+  context: Omit<MooFrozenDecisionContext, "contentHash">,
+) {
+  const value: MooFrozenDecisionContext = {
+    ...context,
+    contentHash: computeMooFrozenDecisionContextDigest(context),
+  };
+  const validation = validateMooFrozenDecisionContext(value, value.targetSession);
+  if (!validation.valid) throw new TypeError(`Invalid frozen MOO context: ${validation.errors.join(", ")}`);
+  return deepFreezeMoo(value);
+}
 
 export type BuildMooDecisionInput = {
   nowMs: number;
@@ -90,6 +141,7 @@ export type BuildMooDecisionInput = {
   longFillCents?: number | null;
   shortFillCents?: number | null;
   shortability?: MooTicket["shortability"];
+  shortLocateProof?: MooLocateProof | null;
   lateOrderAcknowledged?: boolean;
   longTicket?: MooTicketConfiguration;
   shortTicket?: MooTicketConfiguration;
@@ -111,6 +163,14 @@ const DEFAULT_SOURCE_AGE_MS: Record<MooSourceHealth["id"], number> = {
   FX: 60_000,
   FUTURES: 10_000,
   NOII: 2_000,
+};
+
+const STRICT_FEED_COVERAGE: Record<MooSourceHealth["id"], MooFeedCoverage> = {
+  US: "CONSOLIDATED_SIP",
+  NVD: "DIRECT_VENUE",
+  FX: "INSTITUTIONAL_FX",
+  FUTURES: "CME_ENTITLED",
+  NOII: "NASDAQ_NOII",
 };
 
 function safeNonnegativeInteger(value: unknown): value is number {
@@ -228,6 +288,10 @@ function sourceGate(
   config: MooStrategyConfiguration,
   warnings: string[],
 ): MooBlockReason | null {
+  if (sources.some((source) => !isMooSourceId(source?.id))) {
+    warnings.push("The source-health snapshot contains an unknown source identifier.");
+    return "FEED_NOT_ENTITLED";
+  }
   const maxSkew = safeNonnegativeInteger(config.maximumClockSkewMs) ? config.maximumClockSkewMs : 1_000;
   for (const id of requiredIds) {
     const matchingSources = sources.filter((candidate) => candidate.id === id);
@@ -242,6 +306,10 @@ function sourceGate(
     const source = matchingSources[0];
     if (source.entitlement !== "REALTIME") {
       warnings.push(`${source.label} is ${source.entitlement.toLowerCase().replaceAll("_", " ")}; real-time entitlement is required.`);
+      return "FEED_NOT_ENTITLED";
+    }
+    if (source.coverage !== STRICT_FEED_COVERAGE[id]) {
+      warnings.push(`${source.label} coverage is ${source.coverage ?? "unknown"}; ${STRICT_FEED_COVERAGE[id]} is required.`);
       return "FEED_NOT_ENTITLED";
     }
     if (source.state === "UNAVAILABLE" || source.state === "CLOSED") {
@@ -262,6 +330,30 @@ function sourceGate(
     }
     if (source.checkedAt < source.observedAt - maxSkew) {
       warnings.push(`${source.label} has an API check time that predates its observation.`);
+      return id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
+    }
+    const expandedTimes = [source.receivedAt, source.processedAt, source.availableAt, source.validUntil];
+    if (expandedTimes.some((value) => value != null && !safeNonnegativeInteger(value))) {
+      warnings.push(`${source.label} has invalid expanded point-in-time provenance.`);
+      return id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
+    }
+    const receivedAt = source.receivedAt ?? source.observedAt;
+    const processedAt = source.processedAt ?? receivedAt;
+    const availableAt = source.availableAt ?? processedAt;
+    if (
+      receivedAt < source.observedAt - maxSkew ||
+      processedAt < receivedAt - maxSkew ||
+      availableAt < processedAt - maxSkew
+    ) {
+      warnings.push(`${source.label} has non-monotonic receive, process, or availability timestamps.`);
+      return id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
+    }
+    if (receivedAt > evaluatedAt || processedAt > evaluatedAt || availableAt > evaluatedAt) {
+      warnings.push(`${source.label} was not available to the application at evaluation time.`);
+      return id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
+    }
+    if (source.validUntil != null && source.validUntil < evaluatedAt) {
+      warnings.push(`${source.label} expired before evaluation.`);
       return id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
     }
     const derivedAge = Math.max(0, evaluatedAt - source.observedAt);
@@ -300,7 +392,9 @@ function ticket(
     side,
     orderType: "MOO",
     favored,
-    actionable: actionable && riskConfigured,
+    // The opposite-side ticket remains an auditable comparison. It can never
+    // become execution-ready merely because the favored ticket passed gates.
+    actionable: actionable && favored && riskConfigured,
     thirdRole: decision === "NO_TRADE" ? "UNASSIGNED" : favored ? "MAJOR" : "MINOR",
     assignedDistanceCents: assignedDistance,
     targetMoveCents: move,
@@ -356,9 +450,7 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
   const warnings: string[] = [];
   const frozenContext = input.frozenContext ?? null;
   const frozenIdentityValid = frozenContext != null &&
-    frozenContext.schemaVersion === "moo-phase1-v1" &&
-    frozenContext.targetSession === input.targetSession &&
-    nonemptyString(frozenContext.snapshotId) &&
+    validateMooFrozenDecisionContext(frozenContext, input.targetSession).valid &&
     safeNonnegativeInteger(frozenContext.frozenAt) &&
     frozenContext.frozenAt >= schedule.premarketOpenAt &&
     frozenContext.frozenAt <= schedule.decisionFreezeAt &&
@@ -380,6 +472,7 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
     premarketHighCents: null,
     premarketLowCents: null,
     shortability: "UNCONFIRMED" as const,
+    shortLocateProof: null,
     longTicket: undefined,
     shortTicket: undefined,
   };
@@ -432,11 +525,12 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
     warnings.push("The frozen prediction has no persisted source-health snapshot.");
   }
   const requiredSourceIds = decisionInputs.requiredSourceIds ?? ["US"];
-  const requiredSourcePolicyValid = requiredSourceIds.length > 0 && new Set(requiredSourceIds).size === requiredSourceIds.length;
+  const requiredSourcePolicy = validateMooRequiredSourceIds(requiredSourceIds);
+  const requiredSourcePolicyValid = requiredSourcePolicy.valid;
   let blockReason: MooBlockReason = "NONE";
   if (!requiredSourcePolicyValid) {
     blockReason = "FEED_NOT_ENTITLED";
-    warnings.push("Required-source policy must contain at least one unique source identifier.");
+    warnings.push(`Strict required-source policy is invalid: ${requiredSourcePolicy.errors.join(", ")}.`);
   } else if (lifecycle === "FUTURE_SESSION") {
     blockReason = "TARGET_SESSION_NOT_STARTED";
     warnings.push("The selected target session has not started; execution remains blocked until that session's premarket window.");
@@ -456,10 +550,12 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
   const confidence = prediction && safePercent(prediction.confidencePct) ? prediction.confidencePct : null;
   if (
     blockReason === "NONE" &&
-    (prediction?.decision === "NO_TRADE" || confidence == null || confidence < (config.minimumConfidencePct ?? 60))
+    (confidence == null || confidence < (config.minimumConfidencePct ?? 60))
   ) blockReason = "LOW_CONFIDENCE";
+  if (blockReason === "NONE" && prediction?.decision === "NO_TRADE") blockReason = "NO_EDGE";
   if (blockReason === "NONE" && (thirds.majorThirdCents == null || thirds.minorThirdCents == null)) blockReason = "DATA_PENDING";
   const shortability = decisionInputs.shortability ?? "UNCONFIRMED";
+  const shortLocateProof = decisionInputs.shortLocateProof ?? null;
   if (blockReason === "NONE" && prediction?.decision === "SHORT_FAVORED" && shortability !== "AVAILABLE") {
     blockReason = "SHORTABILITY_UNCONFIRMED";
   }
@@ -474,30 +570,51 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
       : "UNAVAILABLE";
   const lifecycleActionable = lifecycle === "READY" || lifecycle === "FROZEN" || (lifecycle === "LATE_LOCKED" && input.lateOrderAcknowledged === true);
   const riskPolicyConfigured = portfolioRiskConfigurationValid(decisionInputs.longTicket, decisionInputs.shortTicket, config);
-  const actionable = decision !== "NO_TRADE" && lifecycleActionable && riskPolicyConfigured;
+  const shortConfiguration = decisionInputs.shortTicket;
+  const locateValid = decision !== "SHORT_FAVORED" || (
+    nonemptyString(shortConfiguration?.accountLabel) &&
+    safeNonnegativeInteger(shortConfiguration?.quantity) && shortConfiguration!.quantity! > 0 &&
+    validateMooLocateProof(shortLocateProof, {
+      accountAlias: shortConfiguration!.accountLabel!,
+      targetSession: input.targetSession,
+      quantity: shortConfiguration!.quantity!,
+      availableBy: evaluationTime,
+      validThrough: schedule.finalEntryAt,
+    }).valid
+  );
+  const actionable = decision !== "NO_TRADE" && lifecycleActionable && riskPolicyConfigured && locateValid;
   if (decision !== "NO_TRADE" && lifecycleActionable && !riskPolicyConfigured) {
     warnings.push("Both strict ticket risk configurations, distinct account labels, internally consistent loss limits, and a combined portfolio loss cap are required.");
+  }
+  if (decision === "SHORT_FAVORED" && lifecycleActionable && riskPolicyConfigured && !locateValid) {
+    warnings.push("A guaranteed, account-specific NVDA locate covering the configured quantity through final MOO entry is required before the short ticket can become actionable.");
   }
   if (lifecycle === "LATE_LOCKED" && !input.lateOrderAcknowledged) warnings.push("A new MOO is late and locked; explicit acknowledgement is required.");
   if (lifecycle === "ENTRY_CLOSED") warnings.push("Final MOO entry deadline has passed; monitoring only.");
   if (lifecycle === "CROSS_COMPLETE") warnings.push("Opening Cross window has passed; estimates are preserved for audit.");
 
-  const actualOfficialOpenCents = safeNonnegativeInteger(input.actualOfficialOpenCents)
+  const outcomeWindowOpen = lifecycle === "CROSS_COMPLETE";
+  const actualOfficialOpenCents = outcomeWindowOpen && input.officialOpenSource === "NASDAQ_OFFICIAL_CROSS" && safeNonnegativeInteger(input.actualOfficialOpenCents)
     ? input.actualOfficialOpenCents
     : null;
+  if (!outcomeWindowOpen && (input.actualOfficialOpenCents != null || input.longFillCents != null || input.shortFillCents != null)) {
+    warnings.push("Outcome-only opening-cross or fill data was ignored before the Opening Cross completed.");
+  }
   const cushionCents = safeNonnegativeInteger(config.takeProfitCushionCents)
     ? config.takeProfitCushionCents
     : 10;
   const longTicket = ticket(
-    "LONG", decision, predictedOpenCents, input.longFillCents,
+    "LONG", decision, predictedOpenCents, outcomeWindowOpen ? input.longFillCents : null,
     thirds.majorThirdCents, thirds.minorThirdCents, cushionCents,
     actionable, shortability, decisionInputs.longTicket,
   );
   const shortTicket = ticket(
-    "SHORT", decision, predictedOpenCents, input.shortFillCents,
+    "SHORT", decision, predictedOpenCents, outcomeWindowOpen ? input.shortFillCents : null,
     thirds.majorThirdCents, thirds.minorThirdCents, cushionCents,
     actionable, shortability, decisionInputs.shortTicket,
   );
+  const confidenceAuditable = prediction?.trained === true && confidence != null &&
+    ["NONE", "LOW_CONFIDENCE", "NO_EDGE", "SHORTABILITY_UNCONFIRMED"].includes(blockReason);
 
   return {
     schemaVersion: "moo-phase1-v1",
@@ -507,16 +624,30 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
     frozenAt: afterFreeze && prediction ? frozenAt : null,
     lifecycle,
     decision,
+    decisionReasonCode: blockReason === "NO_EDGE"
+      ? "NO_EDGE"
+      : blockReason === "NONE"
+        ? "DIRECTIONAL_EDGE"
+        : "GATE_BLOCKED",
     blockReason,
     predictedOfficialOpenCents: predictedOpenCents,
     predictedOpenState,
     actualOfficialOpenCents,
-    officialOpenSource: actualOfficialOpenCents == null ? null : (input.officialOpenSource ?? null),
+    officialOpenSource: actualOfficialOpenCents == null ? null : "NASDAQ_OFFICIAL_CROSS",
     predictionErrorCents: predictedOpenCents == null || actualOfficialOpenCents == null
       ? null
       : actualOfficialOpenCents - predictedOpenCents,
-    confidencePct: decision === "NO_TRADE" ? null : confidence,
+    // A calibrated model result remains auditable when a safety threshold or
+    // legitimate NO_EDGE decision produces NO_TRADE. Untrained baselines do
+    // not receive a confidence value.
+    confidencePct: confidenceAuditable ? confidence : null,
+    confidenceState: confidenceAuditable
+      ? "AVAILABLE"
+      : prediction?.trained
+        ? "UNAVAILABLE"
+        : "NOT_PROMOTED",
     dataQualityScore: quality,
+    dataQualityState: quality == null ? "UNAVAILABLE" : "AVAILABLE",
     modelVersion: prediction?.modelVersion ?? null,
     featureSnapshotId: prediction?.featureSnapshotId ?? null,
     featureSchemaVersion: prediction?.featureSchemaVersion ?? null,
@@ -529,6 +660,7 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
     takeProfitCushionCents: cushionCents,
     longTicket,
     shortTicket,
+    shortLocateProof,
     sources,
     requiredSourceIds,
     warnings,

@@ -14,10 +14,11 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
-  // Cloudflare cron is UTC. One broad weekday trigger covers both DST offsets;
-  // the Worker admits only the named America/New_York checkpoint windows.
+  // The minute heartbeat converges controlled schema state promptly after a
+  // deploy, including weekends. The capture guard still admits only the named
+  // America/New_York session windows and makes no provider calls otherwise.
   triggers: {
-    crons: ["* 8-14 * * MON-FRI"],
+    crons: ["* * * * *"],
   },
   d1_databases: d1
     ? [

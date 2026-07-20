@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { ensureMooSafetySchemaOnce } from "../app/d1-schema";
 import { createD1ScheduledCaptureStore, runScheduledCapture } from "../app/scheduled-capture";
 
 interface Env {
@@ -52,12 +53,13 @@ const worker = {
   scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     const store = createD1ScheduledCaptureStore(env.DB);
     ctx.waitUntil(
-      runScheduledCapture({
-        scheduledTime: controller.scheduledTime,
-        fetchApp: (path) =>
-          handler.fetch(new Request(new URL(path, "https://nvda-scheduler.internal")), env, ctx),
-        store,
-      })
+      ensureMooSafetySchemaOnce(env.DB, controller.scheduledTime)
+        .then(() => runScheduledCapture({
+          scheduledTime: controller.scheduledTime,
+          fetchApp: (path) =>
+            handler.fetch(new Request(new URL(path, "https://nvda-scheduler.internal")), env, ctx),
+          store,
+        }))
         .then((result) => console.log("NVDA scheduled capture", result))
         .catch((error) => console.error("NVDA scheduled capture failed", error)),
     );

@@ -3,7 +3,11 @@ import { pullGermanMarketEvidence, type GermanMarketEvidence } from "../../germa
 import { pullPolymarketEvidence, type PolymarketEvidence } from "../../polymarket";
 import { aggregateForecastContributions } from "../../forecast-adjustment";
 import { asNonActionableResearchForecast } from "../../forecast-contract";
-import { ensureForecastSnapshotOutcomeColumns } from "../../d1-schema";
+import {
+  ensureForecastSnapshotOutcomeColumns,
+  ensureMooSafetySchemaOnce,
+  requireMooSafetySchema,
+} from "../../d1-schema";
 import { canPersistForecastFreeze, isAuthorizedScheduledForecastCapture } from "../../forecast-freeze-boundary";
 import { classifyMarketEvent, earningsImpactSession } from "../../event-classification";
 import {
@@ -285,6 +289,7 @@ async function initializeDatabase() {
   const d = db();
   const now = Date.now();
   await d.batch(schema.map((statement) => d.prepare(statement)));
+  await ensureMooSafetySchemaOnce(d, now);
   await ensureForecastSnapshotOutcomeColumns(d);
   await d.batch(
     defaults.map((item) =>
@@ -1072,6 +1077,7 @@ export async function GET(request: Request) {
     // Schema creation, seed repair, and cleanup are scheduler/write concerns.
     // A public GET validates first and remains read-only against D1.
     if (internalAutomation) await ensure();
+    else await requireMooSafetySchema(db());
     const intelligence = await pullIntelligence(targetDate);
     const d = db();
     const configuredWeights = await weights();

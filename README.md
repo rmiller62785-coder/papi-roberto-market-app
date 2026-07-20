@@ -19,10 +19,13 @@ Production: <https://aperture-nvda-plan.rmiller62785.chatgpt.site>
 - `app/api/forecast`: explicitly non-actionable research evidence and stored research checkpoints.
 - `app/api/moo/status`: server-owned Strict MOO commissioning/readiness snapshot plus a public-safe paper broker reference.
 - `worker/index.ts` + `app/scheduled-capture.ts`: browser-independent scheduled research capture.
-- D1: research weights, checkpoints, scheduler-owned freezes, automation health, and session archive. Public forecast reads do not persist event rows.
-- Browser transport: visibility/session-aware REST polling with request timeouts and last-good research preservation. Strict status has a short server validity lease and is withheld on offline, expired, or lifecycle-mismatched evaluations. No WebSocket, SSE, or durable upstream stream supervisor is configured in this Sites project.
+- The Sites Worker minute heartbeat also completes the idempotent historical-schema bootstrap after deploy, including weekends. Public GET routes only verify the readiness marker and never run bootstrap DDL; market capture still exits before provider calls outside its named Eastern windows.
+- D1: research weights, checkpoints, scheduler-owned freezes, automation health, immutable provider observations, completed-minute revisions, session archives, ingestion replay nonces, and contiguous stream acknowledgements. Public GET routes remain read-only.
+- `app/api/internal/market-stream`: audience-bound HMAC receiver for the separate durable stream service. Requests are replay-protected, runtime-validated, recorded idempotently by stream/sequence, and acknowledged only after the immutable prefix is durable.
+- `services/market-stream`: independently deployable Cloudflare Worker + SQLite Durable Object. It owns provider WebSockets, restart recovery, authoritative provider-bar versions, an ordered delivery outbox, and browser fanout. Its production configuration defaults to research-only Alpaca IEX; SIP cannot be treated as execution-grade without explicit entitlement confirmation.
+- Browser transport: visibility/session-aware REST polling with request timeouts and last-good research preservation. Strict status has a short server validity lease and is withheld on offline, expired, or lifecycle-mismatched evaluations. The durable service is optional until separately commissioned; REST remains the safe fallback.
 
-Execution-grade streaming should be added through a server-owned durable ingestion service, never direct browser/provider sockets. Candidate permanent connections are consolidated U.S. quotes/trades, broker order/fill updates, account locate/borrow, and optional NOII monitoring. SEC, BLS, news, earnings, Polymarket, and other slow evidence should remain scheduled or TTL-polled.
+Execution-grade streaming must use the server-owned durable ingestion service, never a direct browser/provider credential. Candidate permanent connections are consolidated U.S. quotes/trades, broker order/fill updates, account locate/borrow, and optional NOII monitoring. SEC, BLS, news, earnings, Polymarket, and other slow evidence remain scheduled or TTL-polled.
 
 ## Configuration
 
@@ -31,7 +34,10 @@ Copy `.env.example` for local development. Secrets stay server-side.
 - `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY`: Alpaca IEX reference quote, SIP completed daily history, and paper asset metadata.
 - `FINNHUB_API_KEY`: fallback quote, company/news, earnings, and cross-market research.
 - `WEIGHTS_ADMIN_EMAILS`: comma-separated allowlist for authenticated production-weight writes.
+- `SITES_INGESTION_AUDIENCE` / `SITES_INGESTION_SECRET`: shared receiver identity and HMAC secret for the durable stream service. Configure these only in Sites and the Worker secret managers.
 - `DB`: D1 binding declared in `.openai/hosting.json`.
+
+The Worker has its own configuration and commissioning checklist in `services/market-stream/README.md`. Do not paste credentials into issues, commits, logs, or chat.
 
 ## Development
 
@@ -45,7 +51,7 @@ npm test
 npm run lint
 ```
 
-Tests cover market calendars and DST, stale/future-skewed data, unfinished candles, strict freeze boundaries, source entitlements, broker metadata safety, adaptive polling, server-owned Strict status, risk math, research contracts, and scheduled capture.
+Tests cover market calendars and DST, stale/future-skewed data, unfinished candles, strict freeze boundaries, source entitlements, broker metadata safety, adaptive polling, server-owned Strict status, risk math, immutable artifacts, D1 as-of persistence, stream authentication/contracts, research isolation, and scheduled capture.
 
 ## Deployment
 

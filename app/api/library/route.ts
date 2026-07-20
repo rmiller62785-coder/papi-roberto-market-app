@@ -1,5 +1,10 @@
 import { env } from "cloudflare:workers";
-import { isNasdaqSessionDate, nasdaqSessionSchedule } from "../../market-session";
+import {
+  ensureMooSafetySchemaOnce,
+  MooSafetySchemaUnavailableError,
+  requireMooSafetySchema,
+} from "../../d1-schema.ts";
+import { isNasdaqSessionDate, nasdaqSessionSchedule } from "../../market-session.ts";
 
 type Signal = "LONG" | "SHORT" | "WAIT";
 
@@ -52,12 +57,16 @@ const createQuarantineTableSql = `CREATE TABLE IF NOT EXISTS session_quarantine 
 const createDateIndexSql =
   "CREATE INDEX IF NOT EXISTS library_plans_date_idx ON library_plans (date DESC)";
 
+const DEFAULT_LIBRARY_PAGE_SIZE = 100;
+const MAX_LIBRARY_PAGE_SIZE = 100;
+
 function database() {
   if (!env.DB) throw new Error("Library database is unavailable");
   return env.DB;
 }
 
 async function ensureSchema(db: D1Database) {
+  await ensureMooSafetySchemaOnce(db);
   await db.batch([
     db.prepare(createTableSql),
     db.prepare(createDateIndexSql),
@@ -74,40 +83,107 @@ const easternDate = (nowMs = Date.now()) =>
     day: "2-digit",
   }).format(new Date(nowMs));
 
-async function quarantineInvalidLibrarySessions(db: D1Database) {
-  const rows = await db
-    .prepare(`SELECT date,signal,actual_open AS actualOpen,first_minute_close AS firstMinuteClose
-      FROM library_plans`)
+type LibraryMaintenancePage = {
+  scanned: number;
+  quarantined: number;
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
+/**
+ * Bounded legacy-data repair for the authenticated maintenance path. Public
+ * reads must never invoke this function: it deliberately writes quarantine
+ * records while preserving the original Library row.
+ */
+export async function quarantineInvalidLibrarySessionsPage(
+  db: D1Database,
+  cursor: string | null,
+  limit: number,
+): Promise<LibraryMaintenancePage> {
+  const cursorClause = cursor ? "WHERE date < ?" : "";
+  const statement = db.prepare(`SELECT date,signal,actual_open AS actualOpen,first_minute_close AS firstMinuteClose
+      FROM library_plans
+      ${cursorClause}
+      ORDER BY date DESC
+      LIMIT ?`);
+  const rows = await (cursor
+    ? statement.bind(cursor, limit + 1)
+    : statement.bind(limit + 1))
     .all<{ date: string; signal: string; actualOpen: number | null; firstMinuteClose: number | null }>();
-  const invalid = rows.results.filter((row) => !validSessionDate(row.date));
-  if (!invalid.length) return 0;
-  const quarantinedAt = Date.now();
-  await db.batch(
-    invalid.map((row) => db.prepare(
-      `INSERT INTO session_quarantine (
-        record_id,source_table,source_key,session_date,reason,quarantined_at,details_json
-      ) VALUES (?,?,?,?,?,?,?)
-      ON CONFLICT(record_id) DO NOTHING`,
-    ).bind(
-      `library_plans:${row.date}`,
-      "library_plans",
-      row.date,
-      row.date,
-      "NOT_A_NASDAQ_SESSION",
-      quarantinedAt,
-      JSON.stringify({
-        signal: row.signal,
-        hadActualOpen: row.actualOpen != null,
-        hadFirstMinuteClose: row.firstMinuteClose != null,
-      }),
-    )),
-  );
-  return invalid.length;
+  const hasMore = rows.results.length > limit;
+  const page = rows.results.slice(0, limit);
+  const invalid = page.filter((row) => !validSessionDate(row.date));
+  let quarantined = 0;
+  if (invalid.length) {
+    const quarantinedAt = Date.now();
+    const results = await db.batch(
+      invalid.map((row) => db.prepare(
+        `INSERT INTO session_quarantine (
+          record_id,source_table,source_key,session_date,reason,quarantined_at,details_json
+        ) VALUES (?,?,?,?,?,?,?)
+        ON CONFLICT(record_id) DO NOTHING`,
+      ).bind(
+        `library_plans:${row.date}`,
+        "library_plans",
+        row.date,
+        row.date,
+        "NOT_A_NASDAQ_SESSION",
+        quarantinedAt,
+        JSON.stringify({
+          signal: row.signal,
+          hadActualOpen: row.actualOpen != null,
+          hadFirstMinuteClose: row.firstMinuteClose != null,
+        }),
+      )),
+    );
+    quarantined = results.reduce((sum, result) => sum + (result.meta.changes ?? 0), 0);
+  }
+  return {
+    scanned: page.length,
+    quarantined,
+    nextCursor: hasMore ? page.at(-1)?.date ?? null : null,
+    hasMore,
+  };
+}
+
+type LibraryReadPage = {
+  cursor: string | null;
+  limit: number;
+};
+
+function validIsoDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const timestamp = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value;
+}
+
+function parseLibraryReadPage(request?: Request): LibraryReadPage | string {
+  const url = new URL(request?.url ?? "https://library.internal/api/library");
+  const rawLimit = url.searchParams.get("limit");
+  const limit = rawLimit == null ? DEFAULT_LIBRARY_PAGE_SIZE : Number(rawLimit);
+  if (
+    (rawLimit != null && !/^\d+$/.test(rawLimit)) ||
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > MAX_LIBRARY_PAGE_SIZE
+  ) {
+    return `limit must be an integer from 1 to ${MAX_LIBRARY_PAGE_SIZE}`;
+  }
+  const cursor = url.searchParams.get("cursor");
+  if (cursor != null && !validIsoDate(cursor)) return "cursor must use YYYY-MM-DD";
+  return { cursor, limit };
+}
+
+function missingLibrarySchema(error: unknown) {
+  if (error instanceof MooSafetySchemaUnavailableError) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /no such (?:table|column)|has no column named/i.test(message);
 }
 
 function noStore(body: unknown, init: ResponseInit = {}) {
   const headers = new Headers(init.headers);
   headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  headers.set("X-Content-Type-Options", "nosniff");
   return Response.json(body, { ...init, headers });
 }
 
@@ -205,24 +281,79 @@ const selectColumns = `
   created_at AS createdAt,
   updated_at AS updatedAt`;
 
-export async function GET() {
+export async function serveLibraryRead(db: D1Database, request?: Request) {
+  const page = parseLibraryReadPage(request);
+  if (typeof page === "string") {
+    return noStore({ error: "INVALID_LIBRARY_PAGE", detail: page }, { status: 400 });
+  }
   try {
-    const db = database();
-    await ensureSchema(db);
-    const quarantined = await quarantineInvalidLibrarySessions(db);
-    const result = await db
-      .prepare(`SELECT ${selectColumns} FROM library_plans
+    await requireMooSafetySchema(db);
+    const cursorClause = page.cursor ? "AND library_plans.date < ?" : "";
+    const statement = db.prepare(`SELECT ${selectColumns} FROM library_plans
         WHERE NOT EXISTS (
           SELECT 1 FROM session_quarantine quarantine
           WHERE quarantine.record_id = 'library_plans:' || library_plans.date
         )
-        ORDER BY date DESC`)
-      .all();
-    return noStore({ plans: result.results, quarantined });
+        ${cursorClause}
+        ORDER BY library_plans.date DESC
+        LIMIT ?`);
+    const result = await (page.cursor
+      ? statement.bind(page.cursor, page.limit + 1)
+      : statement.bind(page.limit + 1))
+      .all<Record<string, unknown> & { date: string }>();
+    const hasMore = result.results.length > page.limit;
+    const consumed = result.results.slice(0, page.limit);
+    // Defense in depth for a fresh or partially backfilled database. Invalid
+    // sessions remain hidden without turning this public request into a write.
+    const plans = consumed.filter((row) => validSessionDate(row.date));
+    return noStore({
+      plans,
+      // Kept for compatibility with existing clients. Public reads no longer
+      // create quarantine records, so this value is always zero.
+      quarantined: 0,
+      nextCursor: hasMore ? consumed.at(-1)?.date ?? null : null,
+      hasMore,
+      limit: page.limit,
+    });
   } catch (error) {
     console.error("library GET failed", error instanceof Error ? error.message : error);
     return noStore(
-      { error: "LIBRARY_UNAVAILABLE" },
+      { error: missingLibrarySchema(error) ? "LIBRARY_SCHEMA_UNAVAILABLE" : "LIBRARY_UNAVAILABLE" },
+      { status: 503 },
+    );
+  }
+}
+
+export async function GET(request?: Request) {
+  try {
+    return await serveLibraryRead(database(), request);
+  } catch (error) {
+    console.error("library GET failed", error instanceof Error ? error.message : error);
+    return noStore({ error: "LIBRARY_UNAVAILABLE" }, { status: 503 });
+  }
+}
+
+/**
+ * Authenticated, cursor-driven maintenance endpoint for legacy invalid-session
+ * rows. Each call scans at most 100 rows, preserves source rows, and returns the
+ * cursor required to continue the backfill.
+ */
+export async function PUT(request: Request) {
+  try {
+    const authorizationError = libraryWriteError(request);
+    if (authorizationError) return authorizationError;
+    const page = parseLibraryReadPage(request);
+    if (typeof page === "string") {
+      return noStore({ error: "INVALID_LIBRARY_PAGE", detail: page }, { status: 400 });
+    }
+    const db = database();
+    await ensureSchema(db);
+    const maintenance = await quarantineInvalidLibrarySessionsPage(db, page.cursor, page.limit);
+    return noStore({ maintenance: "LIBRARY_SESSION_QUARANTINE", ...maintenance });
+  } catch (error) {
+    console.error("library PUT failed", error instanceof Error ? error.message : error);
+    return noStore(
+      { error: missingLibrarySchema(error) ? "LIBRARY_SCHEMA_UNAVAILABLE" : "LIBRARY_MAINTENANCE_UNAVAILABLE" },
       { status: 503 },
     );
   }
