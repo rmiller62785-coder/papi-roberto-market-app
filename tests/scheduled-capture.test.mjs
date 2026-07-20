@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   buildScheduledPreopenCapture,
+  createD1ScheduledCaptureStore,
   runScheduledCapture,
   scheduledCaptureCheckpoint,
   scheduledCapturePhase,
@@ -239,4 +240,159 @@ test("outcome is not reported as attached when no pre-open rows exist", async ()
   });
   assert.equal(result.status, "skipped");
   assert.match(result.reason, /no pre-open snapshot/i);
+});
+
+test("the D1 store persists a completed first-minute outcome without an official open", async () => {
+  class Statement {
+    constructor(database, sql) {
+      this.database = database;
+      this.sql = sql;
+      this.values = [];
+    }
+    bind(...values) {
+      this.values = values;
+      return this;
+    }
+    async all() {
+      if (/PRAGMA table_info\(forecast_snapshots\)/i.test(this.sql)) {
+        return { results: [...this.database.snapshotColumns].map((name) => ({ name })) };
+      }
+      return { results: [] };
+    }
+    async run() {
+      const added = this.sql.match(/ALTER TABLE forecast_snapshots ADD COLUMN (\w+)/i)?.[1];
+      if (added) this.database.snapshotColumns.add(added);
+      return { meta: { changes: 0 } };
+    }
+  }
+  class InMemoryD1 {
+    constructor() {
+      this.snapshots = new Map();
+      this.libraryPlans = new Map();
+      this.snapshotColumns = new Set([
+        "first_minute_close",
+        "first_minute_error",
+        "outcome_captured_at",
+      ]);
+    }
+    prepare(sql) {
+      return new Statement(this, sql);
+    }
+    async batch(statements) {
+      return statements.map((statement) => {
+        if (/INSERT INTO library_plans/i.test(statement.sql)) {
+          const [date, signal] = statement.values;
+          if (this.libraryPlans.has(date)) return { meta: { changes: 0 } };
+          this.libraryPlans.set(date, {
+            date,
+            signal,
+            actualOpen: null,
+            firstMinuteClose: null,
+            updatedAt: statement.values.at(-1),
+          });
+          return { meta: { changes: 1 } };
+        }
+        if (/UPDATE library_plans SET/i.test(statement.sql)) {
+          const [actualOpen, firstMinuteClose, updatedAt, date] = statement.values;
+          const plan = this.libraryPlans.get(date);
+          if (!plan) return { meta: { changes: 0 } };
+          const hasNewOfficial = actualOpen != null && plan.actualOpen == null;
+          const hasNewFirstMinute = firstMinuteClose != null && plan.firstMinuteClose == null;
+          if (!hasNewOfficial && !hasNewFirstMinute) return { meta: { changes: 0 } };
+          if (hasNewOfficial) plan.actualOpen = actualOpen;
+          if (hasNewFirstMinute) plan.firstMinuteClose = firstMinuteClose;
+          plan.updatedAt = updatedAt;
+          return { meta: { changes: 1 } };
+        }
+        if (/INSERT INTO forecast_snapshots/i.test(statement.sql)) {
+          const [targetDate, capturedAt, intervalLabel, baseMedian, adjustedMedian,
+            adjustedLow, adjustedHigh, factorsJson] = statement.values;
+          const key = `${targetDate}:${intervalLabel}`;
+          if (this.snapshots.has(key)) return { meta: { changes: 0 } };
+          this.snapshots.set(key, {
+            targetDate, capturedAt, intervalLabel, baseMedian, adjustedMedian,
+            adjustedLow, adjustedHigh, factorsJson, actualOpen: null,
+            medianError: null, firstMinuteClose: null, firstMinuteError: null,
+            outcomeCapturedAt: null,
+          });
+          return { meta: { changes: 1 } };
+        }
+        if (/UPDATE forecast_snapshots SET/i.test(statement.sql)) {
+          const [actualOpen, , actualForError, firstMinuteClose, , firstMinuteForError,
+            outcomeCapturedAt, targetDate] = statement.values;
+          let changes = 0;
+          for (const snapshot of this.snapshots.values()) {
+            if (snapshot.targetDate !== targetDate) continue;
+            const hasNewOfficial = actualOpen != null && snapshot.actualOpen == null;
+            const hasNewFirstMinute = firstMinuteClose != null && snapshot.firstMinuteClose == null;
+            if (!hasNewOfficial && !hasNewFirstMinute) continue;
+            if (hasNewOfficial) {
+              snapshot.actualOpen = actualOpen;
+              snapshot.medianError = Math.abs(actualForError - snapshot.adjustedMedian);
+            }
+            if (hasNewFirstMinute) {
+              snapshot.firstMinuteClose = firstMinuteClose;
+              snapshot.firstMinuteError = Math.abs(firstMinuteForError - snapshot.adjustedMedian);
+            }
+            snapshot.outcomeCapturedAt ??= outcomeCapturedAt;
+            changes += 1;
+          }
+          return { meta: { changes } };
+        }
+        return { meta: { changes: 0 } };
+      });
+    }
+  }
+
+  const database = new InMemoryD1();
+  const store = createD1ScheduledCaptureStore(database);
+  const capturedAt = Date.parse("2026-07-20T13:24:00Z");
+  await store.savePreopen({
+    date: "2026-07-20",
+    signal: "WAIT",
+    openRangeLow: 199,
+    openRangeHigh: 203,
+    entry: null,
+    stop: null,
+    target: null,
+    expectedMove: 2,
+    confidence: 0,
+    rationale: "Persistence fixture",
+  }, {
+    targetDate: "2026-07-20",
+    intervalLabel: "T-5M",
+    capturedAt,
+    baseMedian: 200,
+    adjustedMedian: 201,
+    adjustedLow: 199,
+    adjustedHigh: 203,
+    factorsJson: "{}",
+  });
+
+  const outcomeAt = Date.parse("2026-07-20T13:32:00Z");
+  const changes = await store.attachOutcome({
+    targetDate: "2026-07-20",
+    actualOpen: null,
+    firstMinuteClose: 201.35,
+    capturedAt: outcomeAt,
+  });
+  const saved = database.snapshots.get("2026-07-20:T-5M");
+  const savedPlan = database.libraryPlans.get("2026-07-20");
+  assert.equal(changes, 2);
+  assert.equal(saved.actualOpen, null);
+  assert.equal(saved.firstMinuteClose, 201.35);
+  assert.ok(Math.abs(saved.firstMinuteError - 0.35) < 1e-9);
+  assert.equal(saved.outcomeCapturedAt, outcomeAt);
+  assert.equal(savedPlan.actualOpen, null);
+  assert.equal(savedPlan.firstMinuteClose, 201.35);
+  assert.equal(savedPlan.updatedAt, outcomeAt);
+
+  const duplicateChanges = await store.attachOutcome({
+    targetDate: "2026-07-20",
+    actualOpen: null,
+    firstMinuteClose: 201.35,
+    capturedAt: outcomeAt + 60_000,
+  });
+  assert.equal(duplicateChanges, 0, "outcome attachment remains idempotent");
+  assert.equal(savedPlan.updatedAt, outcomeAt, "a retry does not rewrite the Library timestamp");
 });

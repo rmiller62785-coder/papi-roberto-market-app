@@ -3,18 +3,18 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://aperture-nvda-plan.rmiller62785.chatgpt.site"),
-  title: "Aperture NVDA — MOO Opening Planner",
-  description: "Point-in-time NVDA Market-on-Open decision support with explicit deadlines, independent long and short paper tickets, source health, and a separate 9:31 confirmation workflow.",
+  title: "Aperture NVDA — Live Opening Intelligence",
+  description: "Live NVDA opening research with weighted ranges, event evidence, historical sessions, candlesticks, EMA context, and a separate fail-safe Strict MOO Gate.",
   icons: { icon: "/favicon.svg" },
   openGraph: {
-    title: "Aperture NVDA — MOO Opening Planner",
-    description: "One qualified opening decision, both MOO paper tickets, explicit Nasdaq deadlines, and visible data entitlements.",
+    title: "Aperture NVDA — Live Opening Intelligence",
+    description: "Weighted opening research, live market APIs, events, candlesticks, EMA context, history, and a separate Strict MOO execution gate.",
     images: [{ url: "/og-v2.png", width: 1733, height: 909 }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Aperture NVDA — MOO Opening Planner",
-    description: "Transparent, point-in-time NVDA MOO research and paper planning.",
+    title: "Aperture NVDA — Live Opening Intelligence",
+    description: "Transparent NVDA opening research with live data, history, candles, EMA context, and explicit execution safety gates.",
     images: ["/og-v2.png"],
   },
 };

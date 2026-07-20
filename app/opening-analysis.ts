@@ -311,7 +311,10 @@ export function computeOpeningAnalysis(input: OpeningAnalysisInput): OpeningAnal
   if (side === "LONG" && finite(price) && Math.max(price, input.upperThird, input.pivotHigh) >= input.rangeHigh) side = "WAIT";
   if (side === "SHORT" && finite(price) && Math.min(price, input.lowerThird, input.pivotLow) <= input.rangeLow) side = "WAIT";
 
-  const hasTargetSessionEvidence = input.targetSessionEvidence !== false;
+  // Directional setup state requires an affirmative point-in-time assertion.
+  // Omission must fail closed so a new caller cannot accidentally promote
+  // prior-session context into a target-session setup.
+  const hasTargetSessionEvidence = input.targetSessionEvidence === true;
   if (!hasTargetSessionEvidence) side = "WAIT";
   const setupSide = side;
   // Prefer actual NVDA 9:30-9:31 ranges. Fall back to a transparent range

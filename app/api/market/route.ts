@@ -1,3 +1,11 @@
+import {
+  isNasdaqSessionDate,
+  nasdaqSessionSchedule,
+  newYorkDateKey,
+  nextNasdaqSession,
+  previousNasdaqSession,
+} from "../../market-session.ts";
+
 type Quote = {
   high?: Array<number | null>;
   low?: Array<number | null>;
@@ -73,11 +81,18 @@ type AlpacaBarsResponse = {
   symbol?: string;
 };
 
-type HistoryCache = {
+type ChartCache = {
   expires: number;
   fetchedAt: number;
-  daily: Chart;
-  minute: Chart;
+  chart: Chart;
+};
+
+type ChartResult = {
+  chart: Chart | null;
+  fetchedAt: number | null;
+  cacheHit: boolean;
+  staleIfError: boolean;
+  error: string | null;
 };
 
 type FinnhubQuoteCache = {
@@ -104,6 +119,9 @@ type SourceStatus = "ok" | "stale" | "error" | "standby" | "not_configured";
 const HISTORY_CACHE_MS = 60_000;
 const HISTORY_STALE_MS = 120_000;
 const OPEN_QUOTE_STALE_MS = 90_000;
+const PREMARKET_QUOTE_STALE_MS = 3 * 60_000;
+const AFTER_HOURS_QUOTE_STALE_MS = 5 * 60_000;
+const PROVIDER_FUTURE_SKEW_MS = 30_000;
 // The browser may check this endpoint every two seconds, but the free Finnhub
 // plan cannot safely sustain one upstream quote request per browser poll. A
 // short server cache keeps the UI responsive while making provider freshness
@@ -146,7 +164,8 @@ async function yahoo(interval: string, range: string, prepost = true) {
   return chart;
 }
 
-let historyCache: HistoryCache | null = null;
+let dailyHistoryCache: ChartCache | null = null;
+let minuteHistoryCache: ChartCache | null = null;
 let finnhubQuoteCache: FinnhubQuoteCache | null = null;
 let alpacaSnapshotCache: AlpacaSnapshotCache | null = null;
 let alpacaDailyCache: AlpacaDailyCache | null = null;
@@ -155,23 +174,58 @@ let alpacaDailyCache: AlpacaDailyCache | null = null;
  * Yahoo history is deliberately cached for one minute. A request to this route
  * therefore does not imply that a new Yahoo observation was fetched.
  */
-async function marketHistory(): Promise<HistoryCache & { cacheHit: boolean }> {
+async function chartHistory(
+  kind: "daily" | "minute",
+): Promise<ChartResult> {
   const now = Date.now();
-  if (historyCache && historyCache.expires > now) {
-    return { ...historyCache, cacheHit: true };
+  const cached = kind === "daily" ? dailyHistoryCache : minuteHistoryCache;
+  if (cached && cached.expires > now) {
+    return {
+      chart: cached.chart,
+      fetchedAt: cached.fetchedAt,
+      cacheHit: true,
+      staleIfError: false,
+      error: null,
+    };
   }
+  try {
+    const chart = kind === "daily"
+      ? await yahoo("1d", "1mo", false)
+      : await yahoo("1m", "5d", true);
+    const fetchedAt = Date.now();
+    const next = { expires: fetchedAt + HISTORY_CACHE_MS, fetchedAt, chart };
+    if (kind === "daily") dailyHistoryCache = next;
+    else minuteHistoryCache = next;
+    return { chart, fetchedAt, cacheHit: false, staleIfError: false, error: null };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : `Yahoo ${kind} history failed`;
+    if (cached) {
+      return {
+        chart: cached.chart,
+        fetchedAt: cached.fetchedAt,
+        cacheHit: true,
+        staleIfError: true,
+        error: detail,
+      };
+    }
+    return { chart: null, fetchedAt: null, cacheHit: false, staleIfError: false, error: detail };
+  }
+}
+
+async function marketHistory() {
   const [daily, minute] = await Promise.all([
-    yahoo("1d", "1mo", false),
-    yahoo("1m", "5d", true),
+    chartHistory("daily"),
+    chartHistory("minute"),
   ]);
-  const fetchedAt = Date.now();
-  historyCache = {
-    expires: fetchedAt + HISTORY_CACHE_MS,
-    fetchedAt,
-    daily,
-    minute,
-  };
-  return { ...historyCache, cacheHit: false };
+  return { daily, minute };
+}
+
+export function __resetMarketRouteCachesForTests() {
+  dailyHistoryCache = null;
+  minuteHistoryCache = null;
+  finnhubQuoteCache = null;
+  alpacaSnapshotCache = null;
+  alpacaDailyCache = null;
 }
 
 function ny(epochSeconds: number) {
@@ -197,136 +251,40 @@ function valid(value: unknown): value is number {
 const keyFromParts = (parts: Record<string, string>) =>
   `${parts.year}-${parts.month}-${parts.day}`;
 
-function observedFixed(year: number, month: number, day: number) {
-  const date = new Date(Date.UTC(year, month, day));
-  const weekday = date.getUTCDay();
-  if (weekday === 6) date.setUTCDate(date.getUTCDate() - 1);
-  if (weekday === 0) date.setUTCDate(date.getUTCDate() + 1);
-  return date.toISOString().slice(0, 10);
-}
-
-function nthWeekday(year: number, month: number, weekday: number, n: number) {
-  const date = new Date(Date.UTC(year, month, 1));
-  date.setUTCDate(1 + ((7 + weekday - date.getUTCDay()) % 7) + (n - 1) * 7);
-  return date.toISOString().slice(0, 10);
-}
-
-function lastWeekday(year: number, month: number, weekday: number) {
-  const date = new Date(Date.UTC(year, month + 1, 0));
-  date.setUTCDate(date.getUTCDate() - ((7 + date.getUTCDay() - weekday) % 7));
-  return date.toISOString().slice(0, 10);
-}
-
-function easterSunday(year: number) {
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31) - 1;
-  const day = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(Date.UTC(year, month, day));
-}
-
-function marketHoliday(key: string) {
-  const year = Number(key.slice(0, 4));
-  const goodFriday = easterSunday(year);
-  goodFriday.setUTCDate(goodFriday.getUTCDate() - 2);
-  return new Set([
-    observedFixed(year, 0, 1),
-    observedFixed(year + 1, 0, 1),
-    nthWeekday(year, 0, 1, 3),
-    nthWeekday(year, 1, 1, 3),
-    goodFriday.toISOString().slice(0, 10),
-    lastWeekday(year, 4, 1),
-    observedFixed(year, 5, 19),
-    observedFixed(year, 6, 4),
-    nthWeekday(year, 8, 1, 1),
-    nthWeekday(year, 10, 4, 4),
-    observedFixed(year, 11, 25),
-  ]).has(key);
-}
-
-function shiftDateKey(key: string, days: number) {
-  const date = new Date(`${key}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function previousMarketSession(key: string) {
-  let prior = shiftDateKey(key, -1);
-  while (new Date(`${prior}T00:00:00Z`).getUTCDay() % 6 === 0 || marketHoliday(prior)) {
-    prior = shiftDateKey(prior, -1);
-  }
-  return prior;
-}
-
-function earlyClose(key: string) {
-  const year = Number(key.slice(0, 4));
-  const thanksgiving = nthWeekday(year, 10, 4, 4);
-  const dayAfterThanksgiving = shiftDateKey(thanksgiving, 1);
-  const beforeIndependenceHoliday = previousMarketSession(observedFixed(year, 6, 4));
-  const christmasEve = `${year}-12-24`;
-  return (
-    key === dayAfterThanksgiving ||
-    key === beforeIndependenceHoliday ||
-    (key === christmasEve && !marketHoliday(key))
-  );
-}
-
-const regularCloseMinute = (key: string) => (earlyClose(key) ? 13 * 60 : 16 * 60);
-
-function targetSessionDate(nowMs = Date.now()) {
-  const parts = ny(nowMs / 1000);
-  const minute = Number(parts.hour) * 60 + Number(parts.minute);
-  const currentKey = keyFromParts(parts);
-  const date = new Date(
-    Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)),
-  );
-  if (minute >= regularCloseMinute(currentKey)) date.setUTCDate(date.getUTCDate() + 1);
-  while (
-    date.getUTCDay() === 0 ||
-    date.getUTCDay() === 6 ||
-    marketHoliday(date.toISOString().slice(0, 10))
-  ) {
-    date.setUTCDate(date.getUTCDate() + 1);
-  }
-  return date.toISOString().slice(0, 10);
+export function marketTargetSessionDate(nowMs = Date.now()) {
+  const currentKey = newYorkDateKey(nowMs);
+  if (!isNasdaqSessionDate(currentKey)) return nextNasdaqSession(currentKey);
+  const schedule = nasdaqSessionSchedule(currentKey);
+  return nowMs >= schedule.regularCloseAt
+    ? nextNasdaqSession(currentKey, { inclusive: false })
+    : currentKey;
 }
 
 /** Market state is calendar/time based and never inferred from feed success. */
-function sessionState(nowMs = Date.now()): {
+export function marketSessionState(nowMs = Date.now()): {
   session: Session;
   regularMarketOpen: boolean;
   reason: "weekend" | "holiday" | "early_close" | "outside_regular_hours" | null;
   regularCloseMinute: number;
 } {
-  const parts = ny(nowMs / 1000);
-  const key = keyFromParts(parts);
+  const key = newYorkDateKey(nowMs);
   const date = new Date(`${key}T00:00:00Z`);
   if (date.getUTCDay() === 0 || date.getUTCDay() === 6) {
     return { session: "CLOSED", regularMarketOpen: false, reason: "weekend", regularCloseMinute: 960 };
   }
-  if (marketHoliday(key)) {
+  if (!isNasdaqSessionDate(key)) {
     return { session: "CLOSED", regularMarketOpen: false, reason: "holiday", regularCloseMinute: 960 };
   }
-  const minute = Number(parts.hour) * 60 + Number(parts.minute);
-  const closeMinute = regularCloseMinute(key);
+  const schedule = nasdaqSessionSchedule(key);
+  const closeMinute = schedule.earlyClose ? 13 * 60 : 16 * 60;
   const session: Session =
-    minute < 240
+    nowMs < schedule.premarketOpenAt
       ? "CLOSED"
-      : minute < 570
+      : nowMs < schedule.regularOpenAt
         ? "PREMARKET"
-        : minute < closeMinute
+        : nowMs < schedule.regularCloseAt
           ? "MARKET OPEN"
-          : minute < 1200
+          : nowMs < schedule.afterHoursCloseAt
             ? "AFTER-HOURS"
             : "CLOSED";
   return {
@@ -334,14 +292,15 @@ function sessionState(nowMs = Date.now()): {
     regularMarketOpen: session === "MARKET OPEN",
     reason: session === "MARKET OPEN"
       ? null
-      : earlyClose(key) && minute >= closeMinute
+      : schedule.earlyClose && nowMs >= schedule.regularCloseAt
         ? "early_close"
         : "outside_regular_hours",
     regularCloseMinute: closeMinute,
   };
 }
 
-function chartBars(chart: Chart) {
+function chartBars(chart: Chart | null) {
+  if (!chart) return [];
   const quote = chart.indicators?.quote?.[0];
   return (chart.timestamp ?? [])
     .map((timestamp, index) => ({
@@ -467,6 +426,81 @@ async function alpacaDailyHistory(credentials: { keyId: string; secretKey: strin
 const iso = (value: number | null | undefined) =>
   valid(value) ? new Date(value).toISOString() : null;
 
+type QuoteProvider = "alpaca_iex" | "finnhub" | "yahoo";
+
+export type MarketQuoteCandidate = {
+  provider: QuoteProvider;
+  price: number;
+  observedAtMs: number | null;
+  fetchedAtMs: number | null;
+  source: string;
+};
+
+type QuoteHealth = {
+  ageMs: number | null;
+  stale: boolean;
+  futureSkew: boolean;
+  currentForSession: boolean;
+  state: "current" | "stale" | "market_closed" | "unavailable";
+};
+
+function quoteThreshold(session: Session) {
+  if (session === "MARKET OPEN") return OPEN_QUOTE_STALE_MS;
+  if (session === "PREMARKET") return PREMARKET_QUOTE_STALE_MS;
+  if (session === "AFTER-HOURS") return AFTER_HOURS_QUOTE_STALE_MS;
+  return null;
+}
+
+export function marketQuoteHealth(
+  observedAtMs: number | null,
+  session: Session,
+  nowMs: number,
+): QuoteHealth {
+  const threshold = quoteThreshold(session);
+  const hasObservation = valid(observedAtMs);
+  const futureSkew = hasObservation && observedAtMs > nowMs + PROVIDER_FUTURE_SKEW_MS;
+  const rawAge = hasObservation ? nowMs - observedAtMs : null;
+  const ageMs = rawAge == null ? null : Math.max(0, rawAge);
+  if (session === "CLOSED") {
+    return {
+      ageMs,
+      stale: false,
+      futureSkew,
+      currentForSession: false,
+      state: hasObservation && !futureSkew ? "market_closed" : "unavailable",
+    };
+  }
+  const currentForSession = Boolean(
+    hasObservation && !futureSkew && threshold != null && rawAge! <= threshold,
+  );
+  return {
+    ageMs,
+    stale: !currentForSession,
+    futureSkew,
+    currentForSession,
+    state: currentForSession ? "current" : "stale",
+  };
+}
+
+export function selectMarketQuote(
+  candidates: MarketQuoteCandidate[],
+  session: Session,
+  nowMs: number,
+) {
+  const usable = candidates.filter((candidate) => valid(candidate.price) && candidate.price > 0);
+  if (!usable.length) return null;
+  const evaluated = usable.map((candidate) => ({
+    ...candidate,
+    health: marketQuoteHealth(candidate.observedAtMs, session, nowMs),
+  }));
+  const current = evaluated.find((candidate) => candidate.health.currentForSession);
+  if (current) return current;
+  const timestamped = evaluated
+    .filter((candidate) => valid(candidate.observedAtMs) && !candidate.health.futureSkew)
+    .sort((a, b) => (b.observedAtMs ?? 0) - (a.observedAtMs ?? 0));
+  return timestamped[0] ?? evaluated[0];
+}
+
 export async function GET() {
   const endpointCheckedAtMs = Date.now();
   try {
@@ -474,9 +508,9 @@ export async function GET() {
       process?: { env?: Record<string, string> };
     }).process?.env?.FINNHUB_API_KEY;
     const alpaca = alpacaCredentials();
-    const targetDate = targetSessionDate(endpointCheckedAtMs);
-    const todayKey = etDate(new Date(endpointCheckedAtMs));
-    const marketState = sessionState(endpointCheckedAtMs);
+    const targetDate = marketTargetSessionDate(endpointCheckedAtMs);
+    const todayKey = newYorkDateKey(endpointCheckedAtMs);
+    const marketState = marketSessionState(endpointCheckedAtMs);
     const history = await marketHistory();
     let alpacaDaily: Awaited<ReturnType<typeof alpacaDailyHistory>> | null = null;
     let alpacaDailyDetail = alpaca
@@ -494,15 +528,10 @@ export async function GET() {
     }
     const nowParts = ny(endpointCheckedAtMs / 1000);
     const nowMinute = Number(nowParts.hour) * 60 + Number(nowParts.minute);
-    const fetchedParts = ny(history.fetchedAt / 1000);
-    const fetchedMinute = Number(fetchedParts.hour) * 60 + Number(fetchedParts.minute);
-    const todaySessionFinalized =
-      nowMinute >= marketState.regularCloseMinute &&
-      fetchedMinute >= marketState.regularCloseMinute;
-    const dailyChart = history.daily;
-    const minuteChart = history.minute;
-    const dailyQuote = dailyChart.indicators?.quote?.[0];
-    const yahooDailyRows = (dailyChart.timestamp ?? [])
+    const dailyChart = history.daily.chart;
+    const minuteChart = history.minute.chart;
+    const dailyQuote = dailyChart?.indicators?.quote?.[0];
+    const yahooDailyRows = (dailyChart?.timestamp ?? [])
       .map((timestamp, index) => ({
         date: displayDate(new Date(timestamp * 1000)),
         dateKey: etDate(new Date(timestamp * 1000)),
@@ -538,7 +567,6 @@ export async function GET() {
            timestampMs: number;
         } =>
            row.dateKey < targetDate &&
-           (row.dateKey < todayKey || todaySessionFinalized) &&
            Number.isFinite(row.timestampMs) &&
            valid(row.open) &&
            valid(row.high) &&
@@ -569,18 +597,10 @@ export async function GET() {
       }));
 
     const latestHistoryBar = historicalBars.at(-1) ?? null;
-    let price = minuteChart.meta?.regularMarketPrice ?? latestHistoryBar?.close ?? null;
-    let legacyAsOf = latestHistoryBar
-      ? new Date(latestHistoryBar.time).toISOString()
-      : new Date(history.fetchedAt).toISOString();
-    let quoteObservedAtMs = latestHistoryBar?.time ?? null;
-    let quoteFetchedAtMs: number | null = history.fetchedAt;
-    let source = "Yahoo Finance NVDA chart fallback · may be delayed";
-    let realtime = false;
-    let selectedQuoteProvider: "alpaca_iex" | "finnhub" | "yahoo" = "yahoo";
     let alpacaLive: AlpacaSnapshot | null = null;
     let liveQuote: FinnhubQuote | null = null;
     let alpacaFetchedAtMs: number | null = null;
+    let finnhubFetchedAtMs: number | null = null;
     let alpacaStatus: SourceStatus = alpaca ? "error" : "not_configured";
     let alpacaDetail = alpaca
       ? "Alpaca IEX snapshot request did not complete"
@@ -595,16 +615,6 @@ export async function GET() {
         const result = await alpacaSnapshot(alpaca);
         alpacaLive = result.snapshot;
         alpacaFetchedAtMs = result.fetchedAt;
-        quoteFetchedAtMs = result.fetchedAt;
-        const tradeTime = Date.parse(alpacaLive.latestTrade?.t ?? "");
-        quoteObservedAtMs = Number.isFinite(tradeTime) ? tradeTime : null;
-        price = alpacaLive.latestTrade!.p!;
-        legacyAsOf = quoteObservedAtMs == null
-          ? ""
-          : new Date(quoteObservedAtMs).toISOString();
-        source = "Alpaca IEX NVDA snapshot · single-exchange coverage";
-        selectedQuoteProvider = "alpaca_iex";
-        alpacaStatus = quoteObservedAtMs != null ? "ok" : "stale";
         alpacaDetail = `${result.cacheHit ? "Cached" : "Fresh"} IEX snapshot returned with latest trade and quote timestamps`;
       } catch (error) {
         alpacaDetail = error instanceof Error
@@ -613,25 +623,33 @@ export async function GET() {
       }
     }
 
-    if (!alpacaLive && finnhubKey) {
+    const parsedAlpacaObservedAt = Date.parse(alpacaLive?.latestTrade?.t ?? "");
+    const alpacaCandidate: MarketQuoteCandidate | null = alpacaLive && valid(alpacaLive.latestTrade?.p)
+      ? {
+        provider: "alpaca_iex",
+        price: alpacaLive.latestTrade!.p!,
+        observedAtMs: Number.isFinite(parsedAlpacaObservedAt) ? parsedAlpacaObservedAt : null,
+        fetchedAtMs: alpacaFetchedAtMs,
+        source: "Alpaca IEX NVDA snapshot · single-exchange coverage",
+      }
+      : null;
+    const alpacaHealth = marketQuoteHealth(
+      alpacaCandidate?.observedAtMs ?? null,
+      marketState.session,
+      endpointCheckedAtMs,
+    );
+    if (alpacaLive) {
+      alpacaStatus = alpacaCandidate?.observedAtMs != null ? "ok" : "stale";
+      if (alpacaHealth.stale || alpacaHealth.futureSkew) alpacaStatus = "stale";
+      if (alpacaHealth.futureSkew) alpacaDetail += "; invalid future timestamp";
+      else if (alpacaHealth.stale) alpacaDetail += "; observation is not current for this session";
+    }
+
+    if (finnhubKey && marketState.session !== "CLOSED" && (!alpacaCandidate || !alpacaHealth.currentForSession)) {
       try {
         const result = await finnhubQuote(finnhubKey);
         liveQuote = result.quote;
-        quoteFetchedAtMs = result.fetchedAt;
-        quoteObservedAtMs = liveQuote.t ? liveQuote.t * 1000 : null;
-        price = liveQuote.c!;
-        // Preserve the legacy non-null asOf field, but expose whether this value
-        // is a provider observation or only the fetch time in freshness.quote.
-        legacyAsOf = quoteObservedAtMs == null
-          ? ""
-          : new Date(quoteObservedAtMs).toISOString();
-        source = "Finnhub NVDA quote snapshot";
-        selectedQuoteProvider = "finnhub";
-        // A timestamped snapshot is not automatically "real-time." Outside
-        // regular hours it is a closed/extended-session observation, and while
-        // open it must also pass the explicit age gate below.
-        realtime = false;
-        finnhubStatus = quoteObservedAtMs != null ? "ok" : "stale";
+        finnhubFetchedAtMs = result.fetchedAt;
         finnhubDetail = liveQuote.t
           ? `${result.cacheHit ? "Cached" : "Fresh"} quote snapshot returned with provider observation time`
           : "Quote snapshot returned without a provider observation time";
@@ -640,6 +658,58 @@ export async function GET() {
           error instanceof Error ? error.message : "Finnhub quote request failed";
       }
     }
+
+    const finnhubCandidate: MarketQuoteCandidate | null = liveQuote && valid(liveQuote.c)
+      ? {
+        provider: "finnhub",
+        price: liveQuote.c,
+        observedAtMs: liveQuote.t ? liveQuote.t * 1000 : null,
+        fetchedAtMs: finnhubFetchedAtMs,
+        source: "Finnhub NVDA quote snapshot",
+      }
+      : null;
+    const finnhubHealth = marketQuoteHealth(
+      finnhubCandidate?.observedAtMs ?? null,
+      marketState.session,
+      endpointCheckedAtMs,
+    );
+    if (liveQuote) {
+      finnhubStatus = finnhubCandidate?.observedAtMs != null ? "ok" : "stale";
+      if (finnhubHealth.stale || finnhubHealth.futureSkew) finnhubStatus = "stale";
+      if (finnhubHealth.futureSkew) finnhubDetail += "; invalid future timestamp";
+      else if (finnhubHealth.stale) finnhubDetail += "; observation is not current for this session";
+    }
+    const yahooCandidate: MarketQuoteCandidate | null = latestHistoryBar
+      ? {
+        provider: "yahoo",
+        price: latestHistoryBar.close,
+        observedAtMs: latestHistoryBar.time,
+        fetchedAtMs: history.minute.fetchedAt,
+        source: "Yahoo Finance NVDA chart fallback · may be delayed",
+      }
+      : null;
+    const selectedQuote = selectMarketQuote(
+      [alpacaCandidate, finnhubCandidate, yahooCandidate].filter(
+        (candidate): candidate is MarketQuoteCandidate => candidate != null,
+      ),
+      marketState.session,
+      endpointCheckedAtMs,
+    );
+    const selectedQuoteProvider: QuoteProvider = selectedQuote?.provider ?? "yahoo";
+    const quoteObservedAtMs = selectedQuote?.observedAtMs ?? null;
+    const quoteFetchedAtMs = selectedQuote?.fetchedAtMs ?? null;
+    const selectedQuoteHealth = selectedQuote?.health ?? marketQuoteHealth(
+      null,
+      marketState.session,
+      endpointCheckedAtMs,
+    );
+    const quoteAgeMs = selectedQuoteHealth.ageMs;
+    const quoteStale = selectedQuoteHealth.stale;
+    let selectedQuoteStatus: SourceStatus = quoteObservedAtMs != null ? "ok" : "stale";
+    if (quoteStale || selectedQuoteHealth.futureSkew) selectedQuoteStatus = "stale";
+    let source = selectedQuote?.source ?? "Current NVDA quote unavailable";
+    const legacyAsOf = iso(quoteObservedAtMs) ?? "";
+    const realtime = Boolean(marketState.regularMarketOpen && selectedQuoteHealth.currentForSession);
 
     const parts = historicalBars.map((bar) => {
       const timeParts = ny(bar.time / 1000);
@@ -661,7 +731,7 @@ export async function GET() {
           (Number(timeParts.hour) === 9 && Number(timeParts.minute) < 30),
       )
       .map((item) => item.bar);
-    const targetCloseMinute = regularCloseMinute(targetDate);
+    const targetCloseMinute = nasdaqSessionSchedule(targetDate).earlyClose ? 13 * 60 : 16 * 60;
     const regular = targetBars
       .filter(
         ({ parts: timeParts }) => {
@@ -696,30 +766,18 @@ export async function GET() {
     const quoteDay =
       targetDate === todayKey && marketState.session === "MARKET OPEN";
     const endpointCompletedAtMs = Date.now();
-    const historyCacheAgeMs = Math.max(0, endpointCompletedAtMs - history.fetchedAt);
-    const quoteAgeMs = valid(quoteObservedAtMs)
-      ? Math.max(0, endpointCompletedAtMs - quoteObservedAtMs)
-      : null;
-    const quoteStale = Boolean(
-      marketState.regularMarketOpen &&
-        (!valid(quoteAgeMs) || quoteAgeMs > OPEN_QUOTE_STALE_MS),
-    );
-    let selectedQuoteStatus: SourceStatus = selectedQuoteProvider === "alpaca_iex"
-      ? alpacaStatus
-      : selectedQuoteProvider === "finnhub"
-        ? finnhubStatus
-        : "stale";
-    if (selectedQuoteStatus === "ok" && quoteStale) {
-      selectedQuoteStatus = "stale";
-      if (selectedQuoteProvider === "alpaca_iex") alpacaStatus = "stale";
-      if (selectedQuoteProvider === "finnhub") finnhubStatus = "stale";
-    }
-    realtime = Boolean(
-      selectedQuoteStatus === "ok" &&
-        marketState.regularMarketOpen &&
-        valid(quoteAgeMs) &&
-        quoteAgeMs <= OPEN_QUOTE_STALE_MS,
-    );
+    const minuteHistoryCacheAgeMs = history.minute.fetchedAt == null
+      ? null
+      : Math.max(0, endpointCompletedAtMs - history.minute.fetchedAt);
+    const dailyHistoryCacheAgeMs = history.daily.fetchedAt == null
+      ? null
+      : Math.max(0, endpointCompletedAtMs - history.daily.fetchedAt);
+    const historyCacheAgeMs = minuteHistoryCacheAgeMs ?? dailyHistoryCacheAgeMs;
+    const minuteHistoryStale =
+      minuteChart == null ||
+      history.minute.staleIfError ||
+      minuteHistoryCacheAgeMs == null ||
+      minuteHistoryCacheAgeMs > HISTORY_STALE_MS;
 
     const completedDailyTimestamps = selectedDailyRows
       .filter((row) => daily.some((item) => item.dateKey === row.dateKey))
@@ -746,20 +804,140 @@ export async function GET() {
     const oldestInputObservedAtMs = observedCandidates.length
       ? Math.min(...observedCandidates)
       : null;
+    const expectedPreviousSession = previousNasdaqSession(targetDate, { inclusive: false });
+    const expectedPreviousDaily = daily.find((row) => row.dateKey === expectedPreviousSession);
+    const snapshotBarDate = (bar: AlpacaBar | undefined) => {
+      const timestamp = Date.parse(bar?.t ?? "");
+      return Number.isFinite(timestamp) ? newYorkDateKey(timestamp) : null;
+    };
+    type PreviousCloseEvidence = {
+      value: number;
+      session: string | null;
+      provider: string;
+      fetchedAtMs: number | null;
+      dateVerified: boolean;
+    };
+    const dailyProvider = alpacaDailyRows.length ? "alpaca_sip_history" : "yahoo_daily";
+    const dailyFetchedAtMs = alpacaDailyRows.length
+      ? alpacaDaily?.fetchedAt ?? null
+      : history.daily.fetchedAt;
+    const snapshotCandidates = [alpacaLive?.dailyBar, alpacaLive?.prevDailyBar]
+      .flatMap((bar): PreviousCloseEvidence[] => {
+        const session = snapshotBarDate(bar);
+        return valid(bar?.c) && session && session < targetDate
+          ? [{
+              value: bar!.c!,
+              session,
+              provider: "alpaca_iex_snapshot",
+              fetchedAtMs: alpacaFetchedAtMs,
+              dateVerified: true,
+            }]
+          : [];
+      });
+    const verifiedPreviousClose: PreviousCloseEvidence | null = expectedPreviousDaily
+      ? {
+          value: expectedPreviousDaily.close,
+          session: expectedPreviousSession,
+          provider: dailyProvider,
+          fetchedAtMs: dailyFetchedAtMs,
+          dateVerified: true,
+        }
+      : snapshotCandidates.find((candidate) => candidate.session === expectedPreviousSession) ?? null;
+    const latestDaily = daily.at(-1);
+    const datedFallbackCandidates: PreviousCloseEvidence[] = [
+      ...(latestDaily
+        ? [{
+            value: latestDaily.close,
+            session: latestDaily.dateKey ?? null,
+            provider: dailyProvider,
+            fetchedAtMs: dailyFetchedAtMs,
+            dateVerified: true,
+          }]
+        : []),
+      ...snapshotCandidates,
+    ].filter((candidate) => candidate.session !== expectedPreviousSession)
+      .sort((left, right) => (right.session ?? "").localeCompare(left.session ?? ""));
+    const undatedFallbackCandidates: PreviousCloseEvidence[] = [
+      ...(valid(liveQuote?.pc)
+        ? [{
+            value: liveQuote!.pc!,
+            session: null,
+            provider: "finnhub_quote_previous_close",
+            fetchedAtMs: finnhubFetchedAtMs,
+            dateVerified: false,
+          }]
+        : []),
+      ...(valid(minuteChart?.meta?.chartPreviousClose)
+        ? [{
+            value: minuteChart!.meta!.chartPreviousClose!,
+            session: null,
+            provider: "yahoo_chart_previous_close",
+            fetchedAtMs: history.minute.fetchedAt,
+            dateVerified: false,
+          }]
+        : []),
+      ...(valid(minuteChart?.meta?.previousClose)
+        ? [{
+            value: minuteChart!.meta!.previousClose!,
+            session: null,
+            provider: "yahoo_previous_close",
+            fetchedAtMs: history.minute.fetchedAt,
+            dateVerified: false,
+          }]
+        : []),
+    ];
+    const fallbackPreviousClose = datedFallbackCandidates[0] ?? undatedFallbackCandidates[0] ?? null;
+    const previousCloseEvidence = verifiedPreviousClose ?? fallbackPreviousClose;
+    // previousClose is forecast-critical. Never substitute an older or undated
+    // candidate for the expected prior Nasdaq session; expose that evidence
+    // separately so callers can diagnose degradation without consuming it.
+    const previousClose = verifiedPreviousClose?.value ?? null;
+    const previousCloseStatus = verifiedPreviousClose
+      ? "verified"
+      : previousCloseEvidence
+        ? "degraded"
+        : "unavailable";
+    if (!selectedQuote) {
+      source = verifiedPreviousClose
+        ? `Verified ${expectedPreviousSession} NVDA close · no current quote`
+        : "Current quote and verified prior-session close unavailable";
+    }
+    const price = selectedQuote?.price ?? previousClose;
+    if (!valid(price) && !daily.length && !historicalBars.length) {
+      throw new Error("All quote and historical providers are unavailable");
+    }
+    const displaySessionDate = targetBars.length ? targetDate : latestDate ?? null;
+    const displaySessionRelation = targetBars.length
+      ? "target_session"
+      : displaySessionDate
+        ? "latest_available"
+        : "unavailable";
+    const yahooDailyStatus: SourceStatus = dailyChart
+      ? history.daily.staleIfError || (dailyHistoryCacheAgeMs ?? Infinity) > HISTORY_STALE_MS
+        ? "stale"
+        : "ok"
+      : "error";
+    const dailyStatus: SourceStatus = alpacaDaily ? "ok" : yahooDailyStatus;
+    const minuteStatus: SourceStatus = minuteChart
+      ? minuteHistoryStale ? "stale" : "ok"
+      : "error";
+    const yahooStatus: SourceStatus = yahooDailyStatus === "error" && minuteStatus === "error"
+      ? "error"
+      : yahooDailyStatus !== "ok" || minuteStatus !== "ok"
+        ? "stale"
+        : "ok";
+    const alpacaCurrent = alpacaHealth.currentForSession;
+    const finnhubCurrent = finnhubHealth.currentForSession;
 
     return Response.json(
       {
         symbol: "NVDA",
         targetDate,
         price,
-        previousClose:
-          daily.at(-1)?.close ??
-          alpacaLive?.dailyBar?.c ??
-          alpacaLive?.prevDailyBar?.c ??
-          liveQuote?.pc ??
-          minuteChart.meta?.chartPreviousClose ??
-          minuteChart.meta?.previousClose ??
-          null,
+        previousClose,
+        previousCloseSession: verifiedPreviousClose?.session ?? null,
+        previousCloseExpectedSession: expectedPreviousSession,
+        previousCloseStatus,
         // Backward-compatible aliases. checkedAt is the endpoint completion,
         // while asOf remains the selected quote's best available timestamp.
         asOf: legacyAsOf,
@@ -779,6 +957,13 @@ export async function GET() {
           ...marketState,
           evaluatedAt: new Date(endpointCheckedAtMs).toISOString(),
         },
+        displaySession: {
+          date: displaySessionDate,
+          relation: displaySessionRelation,
+          provider: minuteChart ? "yahoo_minute" : null,
+          barCount: displayBars.length,
+          latestObservedAt: iso(displayBars.at(-1)?.time),
+        },
         freshness: {
           endpoint: {
             checkedAt: new Date(endpointCheckedAtMs).toISOString(),
@@ -786,27 +971,57 @@ export async function GET() {
           },
           quote: {
             provider: selectedQuoteProvider,
+            status: selectedQuoteStatus,
             observedAt: iso(quoteObservedAtMs),
             fetchedAt: iso(quoteFetchedAtMs),
             ageMs: quoteAgeMs,
             stale: quoteStale,
-            marketClosed: !marketState.regularMarketOpen,
+            marketClosed: marketState.session === "CLOSED",
+            state: selectedQuoteHealth.state,
+            currentForSession: selectedQuoteHealth.currentForSession,
+            futureSkew: selectedQuoteHealth.futureSkew,
             observationTimeSource:
               quoteObservedAtMs == null ? "unavailable" : "provider",
           },
+          previousClose: {
+            status: previousCloseStatus,
+            expectedSession: expectedPreviousSession,
+            actualSession: previousCloseEvidence?.session ?? null,
+            provider: previousCloseEvidence?.provider ?? null,
+            value: previousCloseEvidence?.value ?? null,
+            fetchedAt: iso(previousCloseEvidence?.fetchedAtMs),
+            dateVerified: Boolean(previousCloseEvidence?.dateVerified),
+            usedInForecast: Boolean(verifiedPreviousClose),
+            detail: verifiedPreviousClose
+              ? `Verified close for the expected prior Nasdaq session ${expectedPreviousSession}`
+              : previousCloseEvidence?.session
+                ? `Latest dated close is ${previousCloseEvidence.session}; expected ${expectedPreviousSession}. Candidate is diagnostic only and is not used in the forecast.`
+                : previousCloseEvidence
+                  ? `Provider returned an undated previous-close value; expected ${expectedPreviousSession}. Candidate is diagnostic only and is not used in the forecast.`
+                  : `No previous-close candidate was available for expected session ${expectedPreviousSession}.`,
+          },
           history: {
-            provider: alpacaDaily ? "alpaca_sip_daily+yahoo_minute" : "yahoo",
-            fetchedAt: new Date(history.fetchedAt).toISOString(),
-            dailyProvider: alpacaDaily ? "alpaca_sip" : "yahoo",
-            dailyFetchedAt: alpacaDaily ? new Date(alpacaDaily.fetchedAt).toISOString() : new Date(history.fetchedAt).toISOString(),
-            minuteProvider: "yahoo",
+            provider: alpacaDaily
+              ? minuteChart ? "alpaca_sip_daily+yahoo_minute" : "alpaca_sip_daily"
+              : minuteChart ? "yahoo" : dailyChart ? "yahoo_daily" : "unavailable",
+            fetchedAt: iso(history.minute.fetchedAt ?? history.daily.fetchedAt),
+            dailyProvider: alpacaDaily ? "alpaca_sip" : dailyChart ? "yahoo" : "unavailable",
+            dailyFetchedAt: alpacaDaily ? iso(alpacaDaily.fetchedAt) : iso(history.daily.fetchedAt),
+            minuteProvider: minuteChart ? "yahoo" : "unavailable",
+            minuteFetchedAt: iso(history.minute.fetchedAt),
+            dailyStatus,
+            minuteStatus,
+            dailyError: history.daily.error,
+            minuteError: history.minute.error,
             latestMinuteObservedAt: iso(historyObservedAtMs),
             latestDailyObservedAt: iso(dailyObservedAtMs),
             historyWindowStartObservedAt: iso(historyWindowStartObservedAtMs),
-            cacheHit: history.cacheHit,
+            cacheHit: history.daily.cacheHit || history.minute.cacheHit,
+            dailyCacheHit: history.daily.cacheHit,
+            minuteCacheHit: history.minute.cacheHit,
             cacheAgeMs: historyCacheAgeMs,
             cacheTtlMs: HISTORY_CACHE_MS,
-            stale: historyCacheAgeMs > HISTORY_STALE_MS,
+            stale: minuteHistoryStale,
           },
           derived: {
             calculatedAt: new Date(endpointCompletedAtMs).toISOString(),
@@ -816,6 +1031,26 @@ export async function GET() {
           },
         },
         sources: [
+          {
+            id: "previous_close",
+            role: "forecast_previous_close",
+            status: previousCloseStatus === "verified"
+              ? "ok"
+              : previousCloseStatus === "degraded"
+                ? "stale"
+                : "error",
+            observedAt: null,
+            fetchedAt: iso(previousCloseEvidence?.fetchedAtMs),
+            coverage:
+              "Forecast-critical prior close; accepted only when its session date matches the expected prior Nasdaq trading session.",
+            detail: verifiedPreviousClose
+              ? `${verifiedPreviousClose.provider} verified ${expectedPreviousSession}`
+              : previousCloseEvidence?.session
+                ? `${previousCloseEvidence.provider} supplied ${previousCloseEvidence.session}; expected ${expectedPreviousSession}; excluded from forecast inputs`
+                : previousCloseEvidence
+                  ? `${previousCloseEvidence.provider} supplied no verifiable session date; expected ${expectedPreviousSession}; excluded from forecast inputs`
+                  : `No candidate returned for expected session ${expectedPreviousSession}`,
+          },
           {
             id: "alpaca_iex",
             role: "preferred_reference_quote",
@@ -841,7 +1076,7 @@ export async function GET() {
             role: "fallback_reference_quote",
             status: finnhubStatus,
             observedAt: liveQuote?.t ? new Date(liveQuote.t * 1000).toISOString() : null,
-            fetchedAt: liveQuote ? iso(quoteFetchedAtMs) : null,
+            fetchedAt: liveQuote ? iso(finnhubFetchedAtMs) : null,
             coverage:
               "NVDA quote snapshot; exchange coverage and latency depend on the Finnhub plan; not an order book.",
             detail: finnhubDetail,
@@ -849,14 +1084,12 @@ export async function GET() {
           {
             id: "yahoo",
             role: alpacaDaily ? "minute_history_and_daily_fallback" : "minute_and_daily_history",
-            status: historyCacheAgeMs > HISTORY_STALE_MS ? "stale" : "ok",
+            status: yahooStatus,
             observedAt: iso(historyObservedAtMs),
-            fetchedAt: new Date(history.fetchedAt).toISOString(),
+            fetchedAt: iso(history.minute.fetchedAt ?? history.daily.fetchedAt),
             coverage:
               "NVDA public chart history with pre/post-market bars where available; may be delayed and is not guaranteed consolidated market data.",
-            detail: history.cacheHit
-              ? "Served from the app's one-minute history cache"
-              : "Fresh history request completed",
+            detail: `Daily: ${yahooDailyStatus}${history.daily.error ? ` (${history.daily.error})` : ""}; minute: ${minuteStatus}${history.minute.error ? ` (${history.minute.error})` : ""}`,
           },
         ],
         bars: displayBars,
@@ -865,29 +1098,29 @@ export async function GET() {
         firstMinuteHistory,
         day: {
           open:
-            quoteDay && valid(alpacaLive?.dailyBar?.o)
+            quoteDay && alpacaCurrent && valid(alpacaLive?.dailyBar?.o)
               ? alpacaLive!.dailyBar!.o!
-              : quoteDay && valid(liveQuote?.o)
+              : quoteDay && finnhubCurrent && valid(liveQuote?.o)
               ? liveQuote!.o!
               : (regular.at(0)?.open ?? null),
           high:
-            quoteDay && valid(alpacaLive?.dailyBar?.h)
+            quoteDay && alpacaCurrent && valid(alpacaLive?.dailyBar?.h)
               ? alpacaLive!.dailyBar!.h!
-              : quoteDay && valid(liveQuote?.h)
+              : quoteDay && finnhubCurrent && valid(liveQuote?.h)
               ? liveQuote!.h!
               : regular.length
                 ? Math.max(...regular.map((bar) => bar.high))
                 : null,
           low:
-            quoteDay && valid(alpacaLive?.dailyBar?.l)
+            quoteDay && alpacaCurrent && valid(alpacaLive?.dailyBar?.l)
               ? alpacaLive!.dailyBar!.l!
-              : quoteDay && valid(liveQuote?.l)
+              : quoteDay && finnhubCurrent && valid(liveQuote?.l)
               ? liveQuote!.l!
               : regular.length
                 ? Math.min(...regular.map((bar) => bar.low))
                 : null,
           volume:
-            quoteDay && valid(alpacaLive?.dailyBar?.v)
+            quoteDay && alpacaCurrent && valid(alpacaLive?.dailyBar?.v)
               ? alpacaLive!.dailyBar!.v!
               : regular.reduce((sum, bar) => sum + bar.volume, 0),
         },
@@ -901,7 +1134,7 @@ export async function GET() {
           current:
             targetDate === todayKey &&
             marketState.session === "PREMARKET" &&
-            (alpacaLive || liveQuote)
+            selectedQuoteHealth.currentForSession
               ? price
               : (premarket.at(-1)?.close ?? null),
           volume: premarket.reduce((sum, bar) => sum + bar.volume, 0),

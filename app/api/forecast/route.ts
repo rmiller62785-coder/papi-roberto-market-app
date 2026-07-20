@@ -1,6 +1,8 @@
 import { env } from "cloudflare:workers";
 import { pullPolymarketEvidence, type PolymarketEvidence } from "../../polymarket";
 import { aggregateForecastContributions } from "../../forecast-adjustment";
+import { asNonActionableResearchForecast } from "../../forecast-contract";
+import { ensureForecastSnapshotOutcomeColumns } from "../../d1-schema";
 import { classifyMarketEvent, earningsImpactSession } from "../../event-classification";
 import {
   isNasdaqSessionDate,
@@ -220,7 +222,7 @@ const schema = [
   `CREATE TABLE IF NOT EXISTS forecast_weights (key TEXT PRIMARY KEY NOT NULL,label TEXT NOT NULL,category TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,direction_weight REAL NOT NULL DEFAULT 0,range_weight REAL NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS market_events (id TEXT PRIMARY KEY NOT NULL,source TEXT NOT NULL,category TEXT NOT NULL,headline TEXT NOT NULL,summary TEXT NOT NULL,url TEXT NOT NULL,event_time INTEGER NOT NULL,severity REAL NOT NULL,created_at INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS market_events_time_idx ON market_events (event_time DESC)`,
-  `CREATE TABLE IF NOT EXISTS forecast_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,target_date TEXT NOT NULL,captured_at INTEGER NOT NULL,interval_label TEXT NOT NULL,base_median REAL NOT NULL,adjusted_median REAL NOT NULL,adjusted_low REAL NOT NULL,adjusted_high REAL NOT NULL,factors_json TEXT NOT NULL,actual_open REAL,median_error REAL)`,
+  `CREATE TABLE IF NOT EXISTS forecast_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,target_date TEXT NOT NULL,captured_at INTEGER NOT NULL,interval_label TEXT NOT NULL,base_median REAL NOT NULL,adjusted_median REAL NOT NULL,adjusted_low REAL NOT NULL,adjusted_high REAL NOT NULL,factors_json TEXT NOT NULL,actual_open REAL,median_error REAL,first_minute_close REAL,first_minute_error REAL,outcome_captured_at INTEGER)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS forecast_snapshots_target_interval_idx ON forecast_snapshots (target_date,interval_label)`,
   `CREATE TABLE IF NOT EXISTS forecast_preopen_freezes (target_date TEXT PRIMARY KEY NOT NULL,frozen_at INTEGER NOT NULL,actionable_cutoff_at INTEGER,payload_json TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS automation_capture_health (id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),last_attempt_at INTEGER NOT NULL,last_success_at INTEGER,last_preopen_at INTEGER,last_outcome_at INTEGER,scheduled_at INTEGER NOT NULL,phase TEXT NOT NULL,status TEXT NOT NULL,target_date TEXT,detail TEXT)`,
@@ -260,6 +262,7 @@ async function ensure() {
   const d = db();
   const now = Date.now();
   await d.batch(schema.map((statement) => d.prepare(statement)));
+  await ensureForecastSnapshotOutcomeColumns(d);
   await d.batch(
     defaults.map((item) =>
       d
@@ -1063,6 +1066,7 @@ export async function GET(request: Request) {
       marketContext: intelligence.market,
       overnightContext: intelligence.overnight,
     };
+    const researchForecast = asNonActionableResearchForecast(liveForecastBlock);
     let servedForecastBlock: typeof liveForecastBlock = liveForecastBlock;
     const freezeWindow = forecastFreezePhase(targetDate, signalEvaluatedAt);
     let frozenAt: number | null = null;
@@ -1154,7 +1158,7 @@ export async function GET(request: Request) {
     }
     const [snapshots, automation] = await Promise.all([
       d.prepare(
-        `SELECT id,target_date AS targetDate,captured_at AS capturedAt,interval_label AS intervalLabel,base_median AS baseMedian,adjusted_median AS adjustedMedian,adjusted_low AS adjustedLow,adjusted_high AS adjustedHigh,actual_open AS actualOpen,median_error AS medianError FROM forecast_snapshots ORDER BY captured_at DESC LIMIT 100`,
+        `SELECT id,target_date AS targetDate,captured_at AS capturedAt,interval_label AS intervalLabel,base_median AS baseMedian,adjusted_median AS adjustedMedian,adjusted_low AS adjustedLow,adjusted_high AS adjustedHigh,actual_open AS actualOpen,median_error AS medianError,first_minute_close AS firstMinuteClose,first_minute_error AS firstMinuteError,outcome_captured_at AS outcomeCapturedAt FROM forecast_snapshots ORDER BY captured_at DESC LIMIT 100`,
       ).all(),
       d.prepare(
         `SELECT last_attempt_at AS lastAttemptAt,last_success_at AS lastSuccessAt,last_preopen_at AS lastPreopenAt,last_outcome_at AS lastOutcomeAt,scheduled_at AS scheduledAt,phase,status,target_date AS targetDate,detail FROM automation_capture_health WHERE id=1`,
@@ -1172,6 +1176,7 @@ export async function GET(request: Request) {
       adjustment: servedForecastBlock.adjustment,
       methodology: servedForecastBlock.methodology,
       computedAt: servedForecastBlock.computedAt,
+      researchForecast,
       freeze: {
         phase: freezeWindow.phase,
         premarketStartAt: freezeWindow.premarketStartAt,
@@ -1277,7 +1282,7 @@ export async function POST(request: Request) {
     const d = db();
     await d
       .prepare(
-        `INSERT INTO forecast_snapshots (target_date,captured_at,interval_label,base_median,adjusted_median,adjusted_low,adjusted_high,factors_json,actual_open,median_error) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(target_date,interval_label) DO NOTHING`,
+        `INSERT INTO forecast_snapshots (target_date,captured_at,interval_label,base_median,adjusted_median,adjusted_low,adjusted_high,factors_json,actual_open,median_error,outcome_captured_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(target_date,interval_label) DO NOTHING`,
       )
       .bind(
         body.targetDate,
@@ -1296,12 +1301,13 @@ export async function POST(request: Request) {
         }),
         actual,
         error,
+        actual == null ? null : Date.now(),
       )
       .run();
     if (actual != null) {
       await d
-        .prepare(`UPDATE forecast_snapshots SET actual_open=COALESCE(actual_open,?),median_error=COALESCE(median_error,ABS(?-adjusted_median)) WHERE target_date=?`)
-        .bind(actual, actual, body.targetDate)
+        .prepare(`UPDATE forecast_snapshots SET actual_open=COALESCE(actual_open,?),median_error=COALESCE(median_error,ABS(?-adjusted_median)),outcome_captured_at=COALESCE(outcome_captured_at,?) WHERE target_date=?`)
+        .bind(actual, actual, Date.now(), body.targetDate)
         .run();
     }
     return json({ ok: true });

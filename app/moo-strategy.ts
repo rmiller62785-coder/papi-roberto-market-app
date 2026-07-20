@@ -37,14 +37,44 @@ export type MooStrategyConfiguration = {
   maximumSourceAgeMs?: Partial<Record<MooSourceHealth["id"], number>>;
 };
 
+/**
+ * Complete point-in-time decision state persisted at the actionable cutoff.
+ * Outcome-only fields (official open and broker fills) intentionally remain
+ * outside this context so they can be attached later without rewriting the
+ * forecast.
+ */
+export type MooFrozenDecisionContext = {
+  schemaVersion: "moo-phase1-v1";
+  snapshotId: string;
+  targetSession: string;
+  frozenAt: number;
+  prediction: MooPredictionInput;
+  dataQualityScore: number | null;
+  sources: MooSourceHealth[];
+  requiredSourceIds: MooSourceHealth["id"][];
+  previousHighCents: number | null;
+  previousLowCents: number | null;
+  premarketHighCents: number | null;
+  premarketLowCents: number | null;
+  shortability: MooTicket["shortability"];
+  longTicket?: MooTicketConfiguration;
+  shortTicket?: MooTicketConfiguration;
+  config?: MooStrategyConfiguration;
+};
+
 export type BuildMooDecisionInput = {
   nowMs: number;
   targetSession: string;
   currentSession?: string | null;
   snapshotId?: string;
   prediction?: MooPredictionInput | null;
+  frozenContext?: MooFrozenDecisionContext | null;
+  /** @deprecated Persist and pass frozenContext after the cutoff. */
   frozenPrediction?: MooPredictionInput | null;
+  /** @deprecated Persist and pass frozenContext after the cutoff. */
   frozenAt?: number | null;
+  /** @deprecated Persist and pass frozenContext after the cutoff. */
+  frozenSources?: MooSourceHealth[];
   dataQualityScore?: number | null;
   sources?: MooSourceHealth[];
   requiredSourceIds?: MooSourceHealth["id"][];
@@ -253,37 +283,81 @@ function ticket(
 }
 
 export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecisionSnapshot {
-  const config = input.config ?? {};
   const schedule = nasdaqSessionSchedule(input.targetSession);
   const lifecycle = mooLifecycleAt(input.targetSession, input.nowMs);
-  const afterFreeze = input.nowMs >= schedule.decisionFreezeAt;
+  // The cutoff instant itself is inclusive. Any later evaluation must use an
+  // explicitly persisted frozen prediction and its matching source snapshot;
+  // a merely backdated current prediction is not proof of point-in-time state.
+  const afterFreeze = input.nowMs > schedule.decisionFreezeAt;
   const warnings: string[] = [];
-  const frozenCandidate = input.frozenPrediction ??
-    (input.prediction && input.prediction.generatedAt <= schedule.decisionFreezeAt ? input.prediction : null);
-  let prediction = afterFreeze ? frozenCandidate : (input.prediction ?? null);
+  const frozenContext = input.frozenContext ?? null;
+  const frozenIdentityValid = frozenContext != null &&
+    frozenContext.schemaVersion === "moo-phase1-v1" &&
+    frozenContext.targetSession === input.targetSession &&
+    typeof frozenContext.snapshotId === "string" &&
+    frozenContext.snapshotId.trim().length > 0;
+  const activeFrozenContext = afterFreeze && frozenIdentityValid ? frozenContext : null;
+  if (afterFreeze && frozenContext && frozenContext.targetSession !== input.targetSession) {
+    warnings.push(`Frozen context targets ${frozenContext.targetSession}; it cannot be replayed for ${input.targetSession}.`);
+  } else if (afterFreeze && frozenContext && !frozenIdentityValid) {
+    warnings.push("Frozen context schema or snapshot identity is invalid.");
+  }
+  const unavailableDecisionInputs = {
+    dataQualityScore: null,
+    sources: [] as MooSourceHealth[],
+    requiredSourceIds: ["US"] as MooSourceHealth["id"][],
+    previousHighCents: null,
+    previousLowCents: null,
+    premarketHighCents: null,
+    premarketLowCents: null,
+    shortability: "UNCONFIRMED" as const,
+    longTicket: undefined,
+    shortTicket: undefined,
+  };
+  const frozenAt = safeNonnegativeInteger(activeFrozenContext?.frozenAt)
+    ? activeFrozenContext.frozenAt
+    : null;
+  const config = afterFreeze
+    ? (activeFrozenContext?.config ?? {})
+    : (input.config ?? {});
+  const decisionInputs = afterFreeze ? (activeFrozenContext ?? unavailableDecisionInputs) : input;
+  let prediction = afterFreeze ? (activeFrozenContext?.prediction ?? null) : (input.prediction ?? null);
   if (afterFreeze && !prediction) warnings.push("No valid prediction was frozen by the actionable cutoff.");
-  if (prediction && afterFreeze && prediction.generatedAt > schedule.decisionFreezeAt) {
-    warnings.push("Prediction was generated after the actionable cutoff and was rejected.");
+  if (afterFreeze && !frozenContext && (input.frozenPrediction || input.frozenSources?.length || input.frozenAt != null)) {
+    warnings.push("Legacy partial freeze fields were rejected; a complete frozen decision context is required.");
+  }
+  if (
+    prediction &&
+    afterFreeze &&
+    (
+      prediction.generatedAt > schedule.decisionFreezeAt ||
+      frozenAt! > schedule.decisionFreezeAt ||
+      prediction.generatedAt > frozenAt!
+    )
+  ) {
+    warnings.push("The persisted prediction or freeze timestamp is outside the actionable cutoff and was rejected.");
     prediction = null;
   }
   const evaluationTime = afterFreeze && prediction
-    ? Math.min(input.frozenAt ?? prediction.generatedAt, schedule.decisionFreezeAt)
+    ? frozenAt!
     : input.nowMs;
   if (prediction && prediction.generatedAt > evaluationTime + (config.maximumClockSkewMs ?? 1_000)) {
     warnings.push("Prediction timestamp is in the future and was rejected.");
     prediction = null;
   }
-
   const thirds = calculateMooThirds({
-    previousHighCents: input.previousHighCents,
-    previousLowCents: input.previousLowCents,
-    premarketHighCents: input.premarketHighCents,
-    premarketLowCents: input.premarketLowCents,
+    previousHighCents: decisionInputs.previousHighCents,
+    previousLowCents: decisionInputs.previousLowCents,
+    premarketHighCents: decisionInputs.premarketHighCents,
+    premarketLowCents: decisionInputs.premarketLowCents,
     thirdPercentBasisPoints: config.thirdPercentBasisPoints,
     addOneTick: config.addOneTick,
   });
-  const sources = input.sources ?? [];
-  const requiredSourceIds = input.requiredSourceIds ?? ["US"];
+  const sources = decisionInputs.sources ?? [];
+  if (afterFreeze && prediction && !activeFrozenContext?.sources.length) {
+    warnings.push("The frozen prediction has no persisted source-health snapshot.");
+  }
+  const requiredSourceIds = decisionInputs.requiredSourceIds ?? ["US"];
   let blockReason: MooBlockReason = "NONE";
   if (lifecycle === "MARKET_CLOSED" || (input.currentSession != null && input.currentSession !== input.targetSession)) {
     blockReason = "MARKET_CLOSED";
@@ -295,7 +369,7 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
     blockReason = sourceGate(sources, requiredSourceIds, evaluationTime, config, warnings) ?? "NONE";
   }
   if (blockReason === "NONE" && prediction && !prediction.trained) blockReason = "MODEL_NOT_TRAINED";
-  const quality = safePercent(input.dataQualityScore) ? input.dataQualityScore : null;
+  const quality = safePercent(decisionInputs.dataQualityScore) ? decisionInputs.dataQualityScore : null;
   if (blockReason === "NONE" && quality == null) blockReason = "DATA_PENDING";
   if (blockReason === "NONE" && quality! < (config.minimumDataQualityScore ?? 80)) blockReason = "LOW_DATA_QUALITY";
   const confidence = prediction && safePercent(prediction.confidencePct) ? prediction.confidencePct : null;
@@ -304,7 +378,7 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
     (prediction?.decision === "NO_TRADE" || confidence == null || confidence < (config.minimumConfidencePct ?? 60))
   ) blockReason = "LOW_CONFIDENCE";
   if (blockReason === "NONE" && (thirds.majorThirdCents == null || thirds.minorThirdCents == null)) blockReason = "DATA_PENDING";
-  const shortability = input.shortability ?? "UNCONFIRMED";
+  const shortability = decisionInputs.shortability ?? "UNCONFIRMED";
   if (blockReason === "NONE" && shortability !== "AVAILABLE") blockReason = "SHORTABILITY_UNCONFIRMED";
 
   const decision = blockReason === "NONE" && prediction ? prediction.decision : "NO_TRADE";
@@ -330,20 +404,20 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
   const longTicket = ticket(
     "LONG", decision, predictedOpenCents, input.longFillCents,
     thirds.majorThirdCents, thirds.minorThirdCents, cushionCents,
-    actionable, shortability, input.longTicket,
+    actionable, shortability, decisionInputs.longTicket,
   );
   const shortTicket = ticket(
     "SHORT", decision, predictedOpenCents, input.shortFillCents,
     thirds.majorThirdCents, thirds.minorThirdCents, cushionCents,
-    actionable, shortability, input.shortTicket,
+    actionable, shortability, decisionInputs.shortTicket,
   );
 
   return {
     schemaVersion: "moo-phase1-v1",
-    snapshotId: input.snapshotId ?? `moo-${input.targetSession}-${prediction?.generatedAt ?? input.nowMs}`,
+    snapshotId: activeFrozenContext?.snapshotId ?? input.snapshotId ?? `moo-${input.targetSession}-${prediction?.generatedAt ?? input.nowMs}`,
     targetSession: input.targetSession,
     generatedAt: input.nowMs,
-    frozenAt: afterFreeze && prediction ? (input.frozenAt ?? prediction.generatedAt) : null,
+    frozenAt: afterFreeze && prediction ? frozenAt : null,
     lifecycle,
     decision,
     blockReason,

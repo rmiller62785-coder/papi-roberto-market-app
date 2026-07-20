@@ -16,8 +16,9 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(page, /Transparent forecast bridge/);
   assert.match(page, /SessionChart/);
   assert.match(page, /research-alert/);
-  assert.match(page, /Alpaca IEX trade observed/);
-  assert.match(page, /checkedAt:string/);
+  assert.match(page, /ALPACA IEX/);
+  assert.match(page, /Provider observation/);
+  assert.match(page, /checkedAt:\s*string/);
   assert.match(page, /setLastRefreshAt\(/);
   assert.match(page, /function ApiStamp/);
   assert.match(page, /Market API pulled/);
@@ -31,12 +32,25 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(page, /History API pulled/);
   assert.match(page, /Full Dashboard/);
   assert.match(page, /setWorkflow\("confirmation"\)/);
-  assert.match(page, /useState<"moo"\|"confirmation">\("confirmation"\)/);
+  assert.match(page, /useState<(?:Workflow|"moo"\s*\|\s*"confirmation")>\("confirmation"\)/);
   assert.match(page, /Sessions/);
   assert.match(page, /Evidence/);
   assert.match(page, /Model Lab/);
-  assert.match(page, /Data Health/);
-  assert.match(page, /workflow==="moo"\?<><MooDecisionSurface/);
+  assert.match(page, /API & Strict MOO Health/);
+  assert.match(mooSurface, /Strict MOO execution entitlements/);
+  assert.match(page, /researchForecast/);
+  assert.match(page, /NON-ACTIONABLE RESEARCH/);
+  assert.match(page, /openingPlan\?\.plan\.status\s*===\s*"CONFIRMED"/);
+  assert.match(page, /aggregateForecastContributions/);
+  assert.match(page, /DRAFT PREVIEW · NOT SAVED/);
+  assert.match(page, /displaySession/);
+  assert.match(page, /Latest 120 available bars/);
+  assert.match(page, /Latest minute bar observed/);
+  assert.match(page, /Market API checked/);
+  assert.match(page, /marketPollRef\.current\.controller/);
+  assert.match(page, /role="tablist"/);
+  assert.match(page, /aria-selected=/);
+  assert.match(page, /workflow\s*===\s*"moo"\s*\?\s*<>\s*<MooDecisionSurface/);
   assert.match(page, /buildMooDecisionSnapshot/);
   assert.match(mooSurface, /Predicted Official Open/);
   assert.match(mooSurface, /NO TRADE/);
@@ -52,13 +66,13 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(styles, /@media\(max-width:390px\)/);
   assert.doesNotMatch(mooSurface, />\$0\.00</);
   assert.match(page, /Source \/ Knowledge/);
-  assert.match(page, /type ContributionSource=/);
+  assert.match(page, /type\s+ContributionSource\s*=/);
   assert.match(page, /source\.knowledgeBase\.path/);
   assert.match(page, /source\.apiBacked/);
   assert.match(page, /API checked/);
   assert.match(page, /No external API required/);
-  assert.match(page, /firstMinute:\{close:number\|null;high:number\|null;low:number\|null;volume:number;complete:boolean;observedAt\?:string\|null\}/);
-  assert.match(page, /firstMinuteComplete:manualMode\?false:data\.firstMinute\.complete/);
+  assert.match(page, /firstMinute:\s*\{[^}]*complete:\s*boolean;[^}]*observedAt\?:\s*string\s*\|\s*null/);
+  assert.match(page, /firstMinuteComplete:\s*manualMode\s*\?\s*false\s*:\s*data\.firstMinute\.complete/);
   assert.match(page, /FORMING_931/);
   assert.match(page, /FORMING BAR — WAIT FOR 9:31 CLOSE/);
   assert.match(page, /INSUFFICIENT_TARGET_SESSION/);
@@ -134,13 +148,14 @@ test("pairs free event, calendar, filing, and cross-market sources", async () =>
   assert.match(market, /alpaca_sip_history/);
   assert.match(market, /completed_daily_history/);
   assert.match(market, /url\.searchParams\.set\("feed", "sip"\)/);
-  const previousCloseBlock = market.slice(
-    market.indexOf("previousClose:"),
-    market.indexOf("// Backward-compatible aliases"),
-  );
-  assert.ok(
-    previousCloseBlock.indexOf("daily.at(-1)?.close") < previousCloseBlock.indexOf("alpacaLive?.prevDailyBar?.c"),
-    "latest completed session close must outrank Alpaca's previous-daily snapshot field",
+  assert.match(market, /previousCloseExpectedSession/);
+  assert.match(market, /previousCloseStatus/);
+  assert.match(market, /usedInForecast: Boolean\(verifiedPreviousClose\)/);
+  assert.match(market, /Never substitute an older or undated/);
+  assert.doesNotMatch(
+    market.slice(market.indexOf("const previousClose ="), market.indexOf("const price =")),
+    /daily\.at\(-1\)|liveQuote\?\.pc|chartPreviousClose/,
+    "forecast-critical previousClose must only use date-verified evidence",
   );
   assert.match(library, /Freeze the original forecast\/plan/);
   assert.match(library, /export async function PATCH/);

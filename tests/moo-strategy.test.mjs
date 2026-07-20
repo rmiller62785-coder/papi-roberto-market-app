@@ -49,6 +49,28 @@ function validInput(overrides = {}) {
   };
 }
 
+function persistedContext(overrides = {}) {
+  const base = validInput();
+  const frozenAt = Date.parse("2026-07-20T13:24:20Z");
+  return {
+    schemaVersion: "moo-phase1-v1",
+    snapshotId: "frozen-2026-07-20-t5",
+    targetSession: "2026-07-20",
+    frozenAt,
+    prediction: { ...base.prediction, generatedAt: frozenAt },
+    dataQualityScore: base.dataQualityScore,
+    sources: [liveUs(frozenAt - 1_000)],
+    requiredSourceIds: ["US"],
+    previousHighCents: base.previousHighCents,
+    previousLowCents: base.previousLowCents,
+    premarketHighCents: base.premarketHighCents,
+    premarketLowCents: base.premarketLowCents,
+    shortability: base.shortability,
+    config: {},
+    ...overrides,
+  };
+}
+
 test("literal 0.33, half-up rounding, and one tick reproduce handwritten thirds", () => {
   assert.equal(effectiveThirdCents(361), 120);
   assert.equal(effectiveThirdCents(182), 61);
@@ -152,19 +174,113 @@ test("post-cutoff inputs cannot replace the frozen prediction", () => {
   };
   const snapshot = buildMooDecisionSnapshot(validInput({
     nowMs,
-    frozenAt,
-    frozenPrediction,
+    frozenContext: persistedContext({ prediction: frozenPrediction }),
     prediction: {
       ...frozenPrediction,
       predictedOfficialOpenCents: 99_999,
       generatedAt: Date.parse("2026-07-20T13:25:30Z"),
     },
-    sources: [liveUs(frozenAt - 1_000)],
+    // Current monitoring data is newer than the immutable decision. It remains
+    // visible to the caller but cannot replace the frozen source snapshot.
+    sources: [liveUs(nowMs)],
     lateOrderAcknowledged: false,
   }));
   assert.equal(snapshot.predictedOfficialOpenCents, 20_265);
   assert.equal(snapshot.lifecycle, "LATE_LOCKED");
   assert.equal(snapshot.longTicket.actionable, false);
+  assert.equal(snapshot.sources[0].observedAt, frozenAt - 1_000);
   assert.match(snapshot.warnings.join(" "), /acknowledgement/i);
 });
 
+test("all post-cutoff decision math and gates come from the complete frozen context", () => {
+  const nowMs = Date.parse("2026-07-20T13:26:00Z");
+  const context = persistedContext({
+    longTicket: { quantity: 2, stopOffsetCents: 25 },
+    shortTicket: { quantity: 3, stopOffsetCents: 30 },
+  });
+  const baseline = buildMooDecisionSnapshot(validInput({
+    nowMs,
+    frozenContext: context,
+    lateOrderAcknowledged: true,
+  }));
+  const mutatedLiveInputs = buildMooDecisionSnapshot(validInput({
+    nowMs,
+    frozenContext: context,
+    prediction: {
+      ...validInput().prediction,
+      predictedOfficialOpenCents: 99_999,
+      decision: "LONG_FAVORED",
+      generatedAt: nowMs,
+    },
+    sources: [{ ...liveUs(nowMs), entitlement: "DELAYED", state: "DELAYED" }],
+    requiredSourceIds: ["US", "NVD", "FX", "FUTURES", "NOII"],
+    dataQualityScore: 0,
+    previousHighCents: 90_000,
+    previousLowCents: 10,
+    premarketHighCents: 80_000,
+    premarketLowCents: 20,
+    shortability: "UNAVAILABLE",
+    config: {
+      thirdPercentBasisPoints: 3333,
+      addOneTick: false,
+      takeProfitCushionCents: 999,
+      minimumConfidencePct: 99,
+      minimumDataQualityScore: 99,
+    },
+    longTicket: { quantity: 999, stopOffsetCents: 999 },
+    shortTicket: { quantity: 999, stopOffsetCents: 999 },
+    lateOrderAcknowledged: true,
+  }));
+
+  for (const field of [
+    "decision", "blockReason", "predictedOfficialOpenCents", "dataQualityScore",
+    "previousRangeCents", "premarketRangeCents", "majorThirdCents", "minorThirdCents",
+    "thirdPercentBasisPoints", "takeProfitCushionCents",
+  ]) {
+    assert.equal(mutatedLiveInputs[field], baseline[field], field);
+  }
+  assert.deepEqual(mutatedLiveInputs.sources, baseline.sources);
+  assert.deepEqual(mutatedLiveInputs.longTicket, baseline.longTicket);
+  assert.deepEqual(mutatedLiveInputs.shortTicket, baseline.shortTicket);
+  assert.equal(mutatedLiveInputs.blockReason, "NONE");
+});
+
+test("a backdated current prediction is not accepted as a persisted freeze", () => {
+  const nowMs = Date.parse("2026-07-20T13:26:00Z");
+  const snapshot = buildMooDecisionSnapshot(validInput({
+    nowMs,
+    prediction: {
+      ...validInput().prediction,
+      generatedAt: Date.parse("2026-07-20T13:24:20Z"),
+    },
+    frozenPrediction: null,
+    frozenAt: null,
+    sources: [liveUs(nowMs)],
+  }));
+
+  assert.equal(snapshot.decision, "NO_TRADE");
+  assert.equal(snapshot.blockReason, "DATA_PENDING");
+  assert.equal(snapshot.predictedOfficialOpenCents, null);
+  assert.match(snapshot.warnings.join(" "), /no valid prediction was frozen/i);
+});
+
+test("a persisted context cannot be replayed into another target session", () => {
+  const nowMs = Date.parse("2026-07-20T13:26:00Z");
+  const snapshot = buildMooDecisionSnapshot(validInput({
+    nowMs,
+    frozenContext: persistedContext({
+      targetSession: "2026-07-21",
+      snapshotId: "frozen-2026-07-21-t5",
+    }),
+    lateOrderAcknowledged: true,
+  }));
+
+  assert.equal(snapshot.targetSession, "2026-07-20");
+  assert.equal(snapshot.snapshotId, "fixture");
+  assert.equal(snapshot.decision, "NO_TRADE");
+  assert.equal(snapshot.blockReason, "DATA_PENDING");
+  assert.equal(snapshot.predictedOfficialOpenCents, null);
+  assert.equal(snapshot.majorThirdCents, null);
+  assert.equal(snapshot.sources.length, 0);
+  assert.match(snapshot.warnings.join(" "), /cannot be replayed/i);
+});

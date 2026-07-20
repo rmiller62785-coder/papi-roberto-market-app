@@ -1,5 +1,6 @@
 import { applyForecastAdjustment } from "./forecast-adjustment.ts";
 import { computeOpeningAnalysis } from "./opening-analysis.ts";
+import { ensureForecastSnapshotOutcomeColumns } from "./d1-schema.ts";
 import {
   isNasdaqSessionDate,
   nasdaqSessionSchedule,
@@ -451,7 +452,10 @@ const createSnapshotTableSql = `CREATE TABLE IF NOT EXISTS forecast_snapshots (
   adjusted_high REAL NOT NULL,
   factors_json TEXT NOT NULL,
   actual_open REAL,
-  median_error REAL
+  median_error REAL,
+  first_minute_close REAL,
+  first_minute_error REAL,
+  outcome_captured_at INTEGER
 )`;
 
 const createAutomationHealthTableSql = `CREATE TABLE IF NOT EXISTS automation_capture_health (
@@ -468,13 +472,16 @@ const createAutomationHealthTableSql = `CREATE TABLE IF NOT EXISTS automation_ca
 )`;
 
 export function createD1ScheduledCaptureStore(database: D1Database): ScheduledCaptureStore {
-  const ensure = () => database.batch([
-    database.prepare(createLibraryTableSql),
-    database.prepare("CREATE INDEX IF NOT EXISTS library_plans_date_idx ON library_plans (date DESC)"),
-    database.prepare(createSnapshotTableSql),
-    database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS forecast_snapshots_target_interval_idx ON forecast_snapshots (target_date, interval_label)"),
-    database.prepare(createAutomationHealthTableSql),
-  ]);
+  const ensure = async () => {
+    await database.batch([
+      database.prepare(createLibraryTableSql),
+      database.prepare("CREATE INDEX IF NOT EXISTS library_plans_date_idx ON library_plans (date DESC)"),
+      database.prepare(createSnapshotTableSql),
+      database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS forecast_snapshots_target_interval_idx ON forecast_snapshots (target_date, interval_label)"),
+      database.prepare(createAutomationHealthTableSql),
+    ]);
+    await ensureForecastSnapshotOutcomeColumns(database);
+  };
   return {
     async savePreopen(plan, snapshot) {
       await ensure();
@@ -529,17 +536,48 @@ export function createD1ScheduledCaptureStore(database: D1Database): ScheduledCa
             actual_open=COALESCE(actual_open,?),
             first_minute_close=COALESCE(first_minute_close,?),
             updated_at=?
-          WHERE date=?`)
-          .bind(actualOpen, firstMinuteClose, capturedAt, targetDate),
-      ];
-      if (actualOpen != null) {
-        statements.push(database
+          WHERE date=? AND (
+            (? IS NOT NULL AND actual_open IS NULL) OR
+            (? IS NOT NULL AND first_minute_close IS NULL)
+          )`)
+          .bind(
+            actualOpen,
+            firstMinuteClose,
+            capturedAt,
+            targetDate,
+            actualOpen,
+            firstMinuteClose,
+          ),
+        database
           .prepare(`UPDATE forecast_snapshots SET
             actual_open=COALESCE(actual_open,?),
-            median_error=COALESCE(median_error,ABS(?-adjusted_median))
-          WHERE target_date=?`)
-          .bind(actualOpen, actualOpen, targetDate));
-      }
+            median_error=COALESCE(
+              median_error,
+              CASE WHEN ? IS NULL THEN NULL ELSE ABS(?-adjusted_median) END
+            ),
+            first_minute_close=COALESCE(first_minute_close,?),
+            first_minute_error=COALESCE(
+              first_minute_error,
+              CASE WHEN ? IS NULL THEN NULL ELSE ABS(?-adjusted_median) END
+            ),
+            outcome_captured_at=COALESCE(outcome_captured_at,?)
+          WHERE target_date=? AND (
+            (? IS NOT NULL AND actual_open IS NULL) OR
+            (? IS NOT NULL AND first_minute_close IS NULL)
+          )`)
+          .bind(
+            actualOpen,
+            actualOpen,
+            actualOpen,
+            firstMinuteClose,
+            firstMinuteClose,
+            firstMinuteClose,
+            capturedAt,
+            targetDate,
+            actualOpen,
+            firstMinuteClose,
+          ),
+      ];
       const results = await database.batch(statements);
       return results.reduce((sum, result) => sum + Number(result.meta?.changes ?? 0), 0);
     },

@@ -25,6 +25,7 @@ const alignedLongInput = {
   ema9Slope: 0.5,
   historicalFirstMinuteRanges: [1, 1.2, 1.4, 1.1],
   historicalFirstMinuteVolumes: [100, 110, 120, 105],
+  targetSessionEvidence: true,
 };
 
 test("a forming 9:30 candle cannot confirm or reject the setup", () => {
@@ -79,7 +80,7 @@ test("a defensible historical overnight-gap sample widens the expected-open band
   });
   const fallback = computeOpeningAnalysis({
     ...alignedLongInput,
-    daily: datedGapHistory.map(({ date: _date, open: _open, ...day }) => day),
+    daily: datedGapHistory.map(({ high, low, close }) => ({ high, low, close })),
     premarketHigh: null,
     premarketLow: null,
   });
@@ -139,6 +140,16 @@ test("prior-session structure cannot create a target-session order", () => {
   assert.equal(result.plan.status, "INSUFFICIENT_TARGET_SESSION");
   assert.equal(result.plan.entry, null);
   assert.match(result.plan.evidence.join(" "), /position is forced to WAIT/i);
+});
+
+test("omitting target-session evidence fails closed", () => {
+  const input = { ...alignedLongInput };
+  delete input.targetSessionEvidence;
+  const result = computeOpeningAnalysis(input);
+
+  assert.equal(result.plan.side, "WAIT");
+  assert.equal(result.plan.status, "INSUFFICIENT_TARGET_SESSION");
+  assert.equal(result.plan.entry, null);
 });
 
 test("missing weekday sessions are not treated as overnight pairs", () => {

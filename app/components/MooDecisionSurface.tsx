@@ -289,14 +289,14 @@ export function MooDecisionSurface({ snapshot, lang }: { snapshot: MooDecisionSn
 
 export function MooDataHealthPanel({ snapshot, lang }: { snapshot: MooDecisionSnapshot; lang: Language }) {
   return (
-    <section className="moo-data-health-view">
+    <section className="moo-data-health-view" aria-labelledby="strict-moo-health-title">
       <div className="library-hero">
         <div>
-          <span className="moo-overline">{copy(lang, "OPERATING STATE", "ESTADO OPERATIVO")}</span>
-          <h2>{copy(lang, "Data Health", "Estado de Datos")}</h2>
-          <p>{copy(lang, "Provider, venue, entitlement, freshness, and failure state for every MOO input.", "Proveedor, mercado, autorización, vigencia y fallas de cada dato MOO.")}</p>
+          <span className="moo-overline">{copy(lang, "STRICT EXECUTION GATE", "CONTROL DE EJECUCIÓN ESTRICTO")}</span>
+          <h2 id="strict-moo-health-title">{copy(lang, "Strict MOO execution entitlements", "Autorizaciones de ejecución MOO estrictas")}</h2>
+          <p>{copy(lang, "These institutional requirements are separate from the working Full Dashboard research APIs above. A blocked source here does not mean the research dashboard is offline.", "Estos requisitos institucionales son independientes de las APIs de investigación activas del Panel Completo. Una fuente bloqueada aquí no significa que el panel de investigación esté fuera de servicio.")}</p>
         </div>
-        <div className="moo-health-summary"><strong>{snapshot.sources.filter((source) => source.state === "LIVE").length}/{snapshot.sources.length}</strong><span>{copy(lang, "sources live", "fuentes en vivo")}</span></div>
+        <div className="moo-health-summary"><strong>{snapshot.sources.filter((source) => source.state === "LIVE").length}/{snapshot.sources.length}</strong><span>{copy(lang, "execution feeds ready", "fuentes de ejecución listas")}</span></div>
       </div>
       <article className="panel moo-health-panel">
         <div className="moo-health-status"><strong>{decisionLabel(snapshot, lang)}</strong><span>{blockReason(snapshot, lang)}</span><time>{copy(lang, "Snapshot generated", "Captura generada")}: {etDateTime(snapshot.generatedAt, lang)}</time></div>

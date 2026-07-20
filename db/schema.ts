@@ -45,6 +45,8 @@ export const forecastSnapshots = sqliteTable("forecast_snapshots", {
   baseMedian: real("base_median").notNull(), adjustedMedian: real("adjusted_median").notNull(),
   adjustedLow: real("adjusted_low").notNull(), adjustedHigh: real("adjusted_high").notNull(),
   factorsJson: text("factors_json").notNull(), actualOpen: real("actual_open"), medianError: real("median_error"),
+  firstMinuteClose: real("first_minute_close"), firstMinuteError: real("first_minute_error"),
+  outcomeCapturedAt: integer("outcome_captured_at"),
 });
 
 export const forecastPreopenFreezes = sqliteTable("forecast_preopen_freezes", {
