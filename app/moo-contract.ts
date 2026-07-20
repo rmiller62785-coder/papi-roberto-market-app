@@ -4,6 +4,7 @@ export type MooThirdRole = "MAJOR" | "MINOR";
 export type MooValueState = "AVAILABLE" | "PENDING" | "UNAVAILABLE" | "INSUFFICIENT_BARS";
 export type MooLifecycle =
   | "MARKET_CLOSED"
+  | "FUTURE_SESSION"
   | "PREPARING"
   | "READY"
   | "FROZEN"
@@ -13,6 +14,7 @@ export type MooLifecycle =
 
 export type MooBlockReason =
   | "MARKET_CLOSED"
+  | "TARGET_SESSION_NOT_STARTED"
   | "DATA_PENDING"
   | "STALE_US_QUOTE"
   | "FEED_NOT_ENTITLED"

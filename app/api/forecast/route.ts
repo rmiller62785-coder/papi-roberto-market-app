@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { pullGermanMarketEvidence, type GermanMarketEvidence } from "../../german-market";
 import { pullPolymarketEvidence, type PolymarketEvidence } from "../../polymarket";
 import { aggregateForecastContributions } from "../../forecast-adjustment";
 import { asNonActionableResearchForecast } from "../../forecast-contract";
@@ -85,6 +86,7 @@ type PullResult = {
   market: MarketContext;
   overnight: OvernightContext;
   polymarket: PolymarketEvidence;
+  germanMarket: GermanMarketEvidence;
   updatedAt: number;
 };
 
@@ -97,6 +99,7 @@ const defaults = [
   { key: "market_confirmation", label: "QQQ + semiconductor confirmation", category: "Cross-market", directionWeight: 30, rangeWeight: 0.05 },
   { key: "cross_market_volatility", label: "Cross-market volatility", category: "Cross-market", directionWeight: 0, rangeWeight: 0.15 },
   { key: "overnight_futures", label: "Nasdaq + S&P overnight futures", category: "Cross-market", directionWeight: 45, rangeWeight: 0.15 },
+  { key: "german_price_discovery", label: "German NVD price discovery (uncalibrated)", category: "Cross-market", directionWeight: 0, rangeWeight: 0.1 },
   { key: "prediction_market_repricing", label: "Polymarket event repricing", category: "Event market", directionWeight: 0, rangeWeight: 0.1 },
   { key: "monday", label: "Monday effect (experimental)", category: "Calendar", directionWeight: 0, rangeWeight: 0 },
   { key: "pay_period", label: "Pay-period proximity (experimental)", category: "Calendar", directionWeight: 0, rangeWeight: 0 },
@@ -185,6 +188,16 @@ const factorSourceDefinitions: Record<
       path: "app/api/forecast/route.ts",
     },
     feedIds: ["overnight_futures"],
+  },
+  german_price_discovery: {
+    kind: "api",
+    apiBacked: true,
+    provider: "Tradegate BSX public page + Yahoo Finance FX/history",
+    knowledgeBase: {
+      label: "Timestamped NVD/EUR quote, EUR/USD conversion, exact prior U.S. session close, and research-only freshness gates",
+      path: "app/german-market.ts",
+    },
+    feedIds: ["german_market"],
   },
   prediction_market_repricing: {
     kind: "api",
@@ -366,7 +379,7 @@ export type ForecastFreezePhase =
   | "CROSS_COMPLETE";
 
 /**
- * The forecast route may update the actionable MOO snapshot only during the
+ * The forecast route may update the non-actionable pre-open research snapshot only during the
  * target session's 04:00-09:24:30 ET window. Evidence after that boundary is
  * monitoring-only and cannot rewrite the frozen decision.
  */
@@ -626,7 +639,10 @@ async function pullIntelligence(targetDate: string): Promise<PullResult> {
   gdeltUrl.searchParams.set("format", "json");
   gdeltUrl.searchParams.set("timespan", "72h");
   gdeltUrl.searchParams.set("sort", "HybridRel");
-  const [gdelt, sec, bls, nq, es, predictionMarkets] = await Promise.allSettled([
+  const previousSession = previousMarketSession(targetDate);
+  const previousSessionClose = priorSessionCloseMs(targetDate);
+  const targetOpen = newYorkWallTime(targetDate.replace(/-/g, ""), "0930");
+  const [gdelt, sec, bls, nq, es, predictionMarkets, germanMarketResult] = await Promise.allSettled([
     fetchJson(gdeltUrl.toString()),
     fetchJson("https://data.sec.gov/submissions/CIK0001045810.json", {
       "User-Agent": "NVDA Opening Intelligence personal research contact@example.com",
@@ -641,13 +657,56 @@ async function pullIntelligence(targetDate: string): Promise<PullResult> {
     }),
     yahooFuturesQuote("NQ=F"),
     yahooFuturesQuote("ES=F"),
-    pullPolymarketEvidence({ priorCloseCutoffMs: priorSessionCloseMs(targetDate) }),
+    pullPolymarketEvidence({ priorCloseCutoffMs: previousSessionClose }),
+    pullGermanMarketEvidence({
+      targetDate,
+      expectedPreviousSession: previousSession,
+      priorSessionCloseMs: previousSessionClose,
+      targetOpenMs: targetOpen,
+      now: checkedAt,
+    }),
   ]);
+
+  const germanMarket: GermanMarketEvidence = germanMarketResult.status === "fulfilled"
+    ? germanMarketResult.value
+    : {
+        provider: "Tradegate BSX public page + Yahoo Finance FX/history",
+        venue: "Tradegate BSX (XGAT)",
+        symbol: "NVD",
+        isin: "US67066G1040",
+        currency: "EUR",
+        status: "offline",
+        signalState: "unavailable",
+        reason: "German research-source orchestration failed.",
+        checkedAt,
+        providerObservedAt: null,
+        fxObservedAt: null,
+        previousUsCloseObservedAt: null,
+        quote: null,
+        eurUsd: null,
+        impliedUsd: null,
+        previousUsCloseUsd: null,
+        impliedGapPct: null,
+        signal: 0,
+        rangeSignal: 0,
+        nvdaDirection: null,
+        calibrationStatus: "UNCALIBRATED",
+        effectMode: "RANGE_ONLY",
+        strictEligible: false,
+        sourceUrl: "https://www.tradegatebsx.com/orderbuch.php?isin=US67066G1040&lang=en",
+      };
+  feeds.push({
+    id: "german_market",
+    label: "German NVD · Tradegate BSX + EUR/USD",
+    status: germanMarket.status,
+    detail: germanMarket.reason,
+    lastChecked: germanMarket.checkedAt,
+    lastObserved: germanMarket.providerObservedAt,
+  });
 
   if (nq.status === "fulfilled" && es.status === "fulfilled") {
     const oldestObservation = Math.min(nq.value.observedAt, es.value.observedAt);
-    const priorClose = priorSessionCloseMs(targetDate);
-    const targetOpen = newYorkWallTime(targetDate.replace(/-/g, ""), "0930");
+    const priorClose = previousSessionClose;
     const outsideTargetWindow = oldestObservation < priorClose || oldestObservation > targetOpen || checkedAt >= targetOpen;
     const stale = checkedAt - oldestObservation > 20 * 60_000 || oldestObservation > checkedAt + 60_000;
     const unavailable = stale || outsideTargetWindow;
@@ -797,7 +856,7 @@ async function pullIntelligence(targetDate: string): Promise<PullResult> {
       return (b.severity * 1e13 + b.eventTime) - (a.severity * 1e13 + a.eventTime);
     })
     .slice(0, 100);
-  const value = { rows: clustered, feeds, market, overnight, polymarket, updatedAt: checkedAt };
+  const value = { rows: clustered, feeds, market, overnight, polymarket, germanMarket, updatedAt: checkedAt };
   intelligenceCache = { targetDate, expires: checkedAt + 60_000, value };
   return value;
 }
@@ -808,6 +867,7 @@ function signals(
   market: MarketContext,
   overnight: OvernightContext,
   polymarket: PolymarketEvidence,
+  germanMarket: GermanMarketEvidence,
 ) {
   const now = Date.now();
   const targetOpen = newYorkWallTime(targetDate.replace(/-/g, ""), "0930");
@@ -848,6 +908,7 @@ function signals(
     market_confirmation: preOpen && market.available ? market.signal : 0,
     cross_market_volatility: preOpen ? volatility : 0,
     overnight_futures: overnight.available ? overnight.signal : 0,
+    german_price_discovery: germanMarket.signalState === "active" ? germanMarket.rangeSignal : 0,
     prediction_market_repricing: polymarket.signalState === "active" ? polymarket.rangeSignal : 0,
     monday: weekday === 1 ? 1 : 0,
     pay_period: day <= 3 || Math.abs(day - 15) <= 2 ? 1 : 0,
@@ -869,7 +930,8 @@ function buildFlag(signal: ReturnType<typeof signals>, events: EventRow[], targe
         signal.sec_filing * 15 +
         Math.abs(signal.market_confirmation) * 15 +
         signal.cross_market_volatility * 15 +
-        Math.abs(signal.overnight_futures) * 10,
+        Math.abs(signal.overnight_futures) * 10 +
+        signal.german_price_discovery * 10,
       0,
       100,
     ),
@@ -889,6 +951,7 @@ function buildFlag(signal: ReturnType<typeof signals>, events: EventRow[], targe
   if (Math.abs(signal.market_confirmation) >= 0.12) reasons.push(signal.market_confirmation > 0 ? "QQQ/SOXX confirming higher" : "QQQ/SOXX confirming lower");
   if (signal.cross_market_volatility >= 0.3) reasons.push("Elevated cross-market range");
   if (Math.abs(signal.overnight_futures) >= 0.12) reasons.push(signal.overnight_futures > 0 ? "Nasdaq/S&P futures confirming higher" : "Nasdaq/S&P futures confirming lower");
+  if (signal.german_price_discovery >= 0.05) reasons.push("German NVD price discovery (uncalibrated range only)");
   if (signal.prediction_market_repricing >= 0.02) reasons.push("Prediction-market event repricing");
   const next = events
     .filter((event) => event.eventTime >= Date.now() - 15 * 60_000 && etDate(event.eventTime) <= targetDate)
@@ -931,6 +994,8 @@ function contributionMethod(
       ? "This source is an unsigned severity/proximity signal. Its manual direction weight is ignored until a signed mapping is validated."
       : weight.key === "prediction_market_repricing"
       ? "Polymarket repricing widens event uncertainty but is not assumed to predict NVDA direction before calibration."
+      : weight.key === "german_price_discovery"
+      ? "The FX-converted German midpoint is provisional, uncalibrated research. It may widen uncertainty but cannot move the central estimate or satisfy the strict MOO gate."
       : "Event severity expands uncertainty; no validated directional coefficient is configured.",
     dedupeGroup,
   };
@@ -968,6 +1033,7 @@ export async function GET(request: Request) {
       intelligence.market,
       intelligence.overnight,
       intelligence.polymarket,
+      intelligence.germanMarket,
     );
     const signalEvaluatedAt = Date.now();
     const rawContributions = configuredWeights.map((weight) => {
@@ -997,10 +1063,14 @@ export async function GET(request: Request) {
       }
     }
     const dedupedContributions = rawContributions.map((item) => {
-      const appliedRangePct = rangeWinnerByGroup.get(item.dedupeGroup) === item.key ? item.rangePct : 0;
+      const rangeDedupeWinnerKey = rangeWinnerByGroup.get(item.dedupeGroup) ?? null;
+      const appliedRangePct = rangeDedupeWinnerKey === item.key ? item.rangePct : 0;
       const deduped = Math.abs(item.rangePct) >= 0.0001 && appliedRangePct === 0;
       return {
         ...item,
+        rawRangePct: item.rangePct,
+        rangeDedupeWinnerKey,
+        rangeDedupeApplied: Math.abs(item.rangePct) < 0.0001 || rangeDedupeWinnerKey === item.key,
         appliedDirectionBps: item.directionBps,
         appliedRangePct,
         applied: Math.abs(item.directionBps) >= 0.0001 || Math.abs(appliedRangePct) >= 0.0001,
@@ -1039,6 +1109,8 @@ export async function GET(request: Request) {
     const liveMethodology = {
       version: "open-research-v2",
       state: "RESEARCH_NOT_CALIBRATED",
+      actionable: false as const,
+      decisionUse: "NON_ACTIONABLE_RESEARCH" as const,
       readiness: activeDirectionalFactors
         ? "DIRECTION_EVIDENCE_ACTIVE"
         : activeRangeFactors
@@ -1055,7 +1127,7 @@ export async function GET(request: Request) {
       ...weight,
       source: factorSource(weight.key, intelligence.feeds, signalEvaluatedAt),
     }));
-    const liveForecastBlock = {
+    const liveForecastBlock = asNonActionableResearchForecast({
       computedAt: signalEvaluatedAt,
       weights: liveWeights,
       contributions,
@@ -1063,16 +1135,17 @@ export async function GET(request: Request) {
       methodology: liveMethodology,
       flag: buildFlag(currentSignals, intelligence.rows, targetDate, intelligence.updatedAt, directionBps),
       polymarket: intelligence.polymarket,
+      germanMarket: intelligence.germanMarket,
       marketContext: intelligence.market,
       overnightContext: intelligence.overnight,
-    };
-    const researchForecast = asNonActionableResearchForecast(liveForecastBlock);
+    });
+    const researchForecast = liveForecastBlock;
     let servedForecastBlock: typeof liveForecastBlock = liveForecastBlock;
     const freezeWindow = forecastFreezePhase(targetDate, signalEvaluatedAt);
     let frozenAt: number | null = null;
     if (freezeWindow.phase === "ACTIONABLE_WINDOW") {
-      // The last successful target-session request at or before 09:24:30 ET
-      // wins. Later NOII/news/price evidence is monitoring-only.
+      // The last successful non-actionable research request at or before
+      // 09:24:30 ET wins. Later evidence is monitoring-only.
       await d.prepare(
         `INSERT INTO forecast_preopen_freezes (target_date,frozen_at,actionable_cutoff_at,payload_json) VALUES (?,?,?,?)
          ON CONFLICT(target_date) DO UPDATE SET
@@ -1098,7 +1171,7 @@ export async function GET(request: Request) {
       if (frozen?.payloadJson) {
         frozenAt = frozen.frozenAt;
         const parsed = JSON.parse(frozen.payloadJson) as typeof liveForecastBlock;
-        servedForecastBlock = {
+        servedForecastBlock = asNonActionableResearchForecast({
           ...parsed,
           computedAt: frozen.frozenAt,
           methodology: {
@@ -1106,9 +1179,9 @@ export async function GET(request: Request) {
             state: freezeWindow.phase === "MONITORING_LOCKED"
               ? "MOO_LOCKED_MONITORING"
               : "PREOPEN_FROZEN_RESEARCH",
-            summary: `${parsed.methodology.summary} Served from the last actionable snapshot at or before 09:24:30 ET; later monitoring evidence cannot rewrite the MOO decision.`,
+            summary: `${parsed.methodology.summary} Served from the last non-actionable research snapshot at or before 09:24:30 ET; later monitoring evidence cannot rewrite it.`,
           },
-        };
+        });
       } else {
         servedForecastBlock = {
           ...liveForecastBlock,
@@ -1133,17 +1206,17 @@ export async function GET(request: Request) {
             activeRangeFactors: 0,
           },
           methodology: {
-            ...liveMethodology,
+            ...liveForecastBlock.methodology,
             state: "NO_PREOPEN_FREEZE",
             readiness: "NO_QUALIFYING_SIGNAL",
             summary: freezeWindow.phase === "BEFORE_TARGET_PREMARKET"
-              ? "The target premarket session has not begun. No actionable freeze exists and current evidence cannot be promoted to a target-session forecast."
-              : "No valid target-session snapshot was captured by 09:24:30 ET. Later evidence is monitoring-only and cannot backfill an actionable MOO decision.",
+              ? "The target premarket session has not begun. No pre-open research freeze exists and current evidence cannot be promoted to a target-session snapshot."
+              : "No valid target-session research snapshot was captured by 09:24:30 ET. Later evidence is monitoring-only and cannot backfill it.",
           },
           flag: {
             ...liveForecastBlock.flag,
             direction: "DIRECTION UNCONFIRMED",
-            headline: "No actionable MOO freeze was captured",
+            headline: "No pre-open research freeze was captured",
             reasons: ["Evidence outside the 04:00-09:24:30 ET window is excluded"],
           },
           polymarket: {
@@ -1152,6 +1225,13 @@ export async function GET(request: Request) {
             signedRiskOffShock: 0,
             rangeSignal: 0,
             reason: "Current Polymarket evidence remains visible as research but is excluded from the actionable MOO snapshot.",
+          },
+          germanMarket: {
+            ...intelligence.germanMarket,
+            signalState: "neutral",
+            signal: 0,
+            rangeSignal: 0,
+            reason: "Current German-market evidence remains visible as research but is excluded from the actionable MOO snapshot.",
           },
         };
       }
@@ -1165,12 +1245,14 @@ export async function GET(request: Request) {
       ).first(),
     ]);
     return json({
+      targetDate,
       weights: servedForecastBlock.weights,
       events: intelligence.rows.slice(0, 40),
       feeds: intelligence.feeds,
       marketContext: servedForecastBlock.marketContext,
       overnightContext: servedForecastBlock.overnightContext,
       polymarket: servedForecastBlock.polymarket,
+      germanMarket: servedForecastBlock.germanMarket,
       flag: servedForecastBlock.flag,
       contributions: servedForecastBlock.contributions,
       adjustment: servedForecastBlock.adjustment,

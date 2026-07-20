@@ -195,7 +195,12 @@ export function nasdaqSessionSchedule(dateKey: string, options: FreezeOptions = 
 export function mooLifecycleAt(targetSession: string, nowMs: number): MooLifecycle {
   const schedule = nasdaqSessionSchedule(targetSession);
   const currentDate = newYorkDateKey(nowMs);
-  if (!schedule.isTradingSession || currentDate !== targetSession || !isNasdaqSessionDate(currentDate)) return "MARKET_CLOSED";
+  if (!schedule.isTradingSession) return "MARKET_CLOSED";
+  // A selected upcoming session is not a closed target session. Keep it
+  // explicitly non-actionable while allowing the UI to show its dated plan,
+  // schedule, and research-only preview before target-session feeds exist.
+  if (targetSession > currentDate) return "FUTURE_SESSION";
+  if (currentDate !== targetSession || !isNasdaqSessionDate(currentDate)) return "MARKET_CLOSED";
   if (nowMs < schedule.premarketOpenAt) return "PREPARING";
   if (nowMs < schedule.decisionFreezeAt) return "READY";
   if (nowMs < schedule.modifyCancelAt) return "FROZEN";

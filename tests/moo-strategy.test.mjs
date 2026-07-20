@@ -30,6 +30,8 @@ function validInput(overrides = {}) {
     targetSession: "2026-07-20",
     snapshotId: "fixture",
     prediction: {
+      targetSession: "2026-07-20",
+      featureSnapshotId: "feature-snapshot-2026-07-20-t5",
       predictedOfficialOpenCents: 20_265,
       decision: "SHORT_FAVORED",
       confidencePct: 68,
@@ -149,9 +151,11 @@ test("an untrained transparent baseline remains visible but forces NO_TRADE and 
 
 test("closed, unentitled, stale, low-quality, low-confidence, and missing-borrow gates fail safe", () => {
   const cases = [
-    [validInput({ nowMs: Date.parse("2026-07-19T13:24:00Z") }), "MARKET_CLOSED"],
+    [validInput({ nowMs: Date.parse("2026-07-21T13:24:00Z") }), "MARKET_CLOSED"],
+    [validInput({ sources: [] }), "FEED_NOT_ENTITLED"],
     [validInput({ sources: [{ ...liveUs(), entitlement: "DELAYED", state: "DELAYED" }] }), "FEED_NOT_ENTITLED"],
     [validInput({ sources: [liveUs(readyAt - 10_000)] }), "STALE_US_QUOTE"],
+    [validInput({ sources: [liveUs(readyAt + 5_000)] }), "STALE_US_QUOTE"],
     [validInput({ dataQualityScore: 79 }), "LOW_DATA_QUALITY"],
     [validInput({ prediction: { ...validInput().prediction, confidencePct: 59 } }), "LOW_CONFIDENCE"],
     [validInput({ shortability: "UNCONFIRMED" }), "SHORTABILITY_UNCONFIRMED"],
@@ -162,6 +166,136 @@ test("closed, unentitled, stale, low-quality, low-confidence, and missing-borrow
     assert.equal(snapshot.blockReason, reason);
     assert.equal(snapshot.confidencePct, null);
   }
+});
+
+test("required-source policy cannot be empty or contain duplicates", () => {
+  for (const requiredSourceIds of [[], ["US", "US"]]) {
+    const snapshot = buildMooDecisionSnapshot(validInput({ requiredSourceIds }));
+    assert.equal(snapshot.decision, "NO_TRADE");
+    assert.equal(snapshot.blockReason, "FEED_NOT_ENTITLED");
+    assert.match(snapshot.warnings.join(" "), /at least one unique source/i);
+  }
+});
+
+test("a live prediction cannot be replayed into another target session", () => {
+  const snapshot = buildMooDecisionSnapshot(validInput({
+    prediction: { ...validInput().prediction, targetSession: "2026-07-21" },
+  }));
+  assert.equal(snapshot.decision, "NO_TRADE");
+  assert.equal(snapshot.blockReason, "DATA_PENDING");
+  assert.equal(snapshot.predictedOfficialOpenCents, null);
+  assert.match(snapshot.warnings.join(" "), /different session|runtime identity/i);
+});
+
+test("a trained prediction requires an immutable feature snapshot identity", () => {
+  const snapshot = buildMooDecisionSnapshot(validInput({
+    prediction: { ...validInput().prediction, featureSnapshotId: null },
+  }));
+  assert.equal(snapshot.decision, "NO_TRADE");
+  assert.equal(snapshot.blockReason, "DATA_PENDING");
+  assert.match(snapshot.warnings.join(" "), /runtime identity/i);
+});
+
+test("a source check cannot materially predate its observation", () => {
+  const observedAt = readyAt - 500;
+  const snapshot = buildMooDecisionSnapshot(validInput({
+    sources: [{ ...liveUs(observedAt), checkedAt: observedAt - 2_000 }],
+  }));
+  assert.equal(snapshot.decision, "NO_TRADE");
+  assert.equal(snapshot.blockReason, "STALE_US_QUOTE");
+  assert.match(snapshot.warnings.join(" "), /predates its observation/i);
+});
+
+test("required source timestamps and age must be finite and auditable", () => {
+  const cases = [
+    { checkedAt: null },
+    { checkedAt: Number.NaN },
+    { observedAt: Number.NaN },
+    { ageMs: Number.NaN },
+  ];
+  for (const override of cases) {
+    const snapshot = buildMooDecisionSnapshot(validInput({ sources: [{ ...liveUs(), ...override }] }));
+    assert.equal(snapshot.decision, "NO_TRADE");
+    assert.equal(snapshot.blockReason, "STALE_US_QUOTE");
+  }
+});
+
+test("duplicate required source records fail closed regardless of order", () => {
+  for (const sources of [
+    [liveUs(), { ...liveUs(), state: "DELAYED" }],
+    [{ ...liveUs(), state: "DELAYED" }, liveUs()],
+  ]) {
+    const snapshot = buildMooDecisionSnapshot(validInput({ sources }));
+    assert.equal(snapshot.decision, "NO_TRADE");
+    assert.equal(snapshot.blockReason, "FEED_NOT_ENTITLED");
+    assert.match(snapshot.warnings.join(" "), /duplicate source-health/i);
+  }
+});
+
+test("trained prediction identity requires model, schema, feature snapshot, and finite generation time", () => {
+  const cases = [
+    { modelVersion: null },
+    { modelVersion: "" },
+    { featureSchemaVersion: null },
+    { featureSchemaVersion: "" },
+    { featureSnapshotId: null },
+    { generatedAt: Number.NaN },
+  ];
+  for (const override of cases) {
+    const snapshot = buildMooDecisionSnapshot(validInput({ prediction: { ...validInput().prediction, ...override } }));
+    assert.equal(snapshot.decision, "NO_TRADE");
+    assert.equal(snapshot.blockReason, "DATA_PENDING");
+    assert.match(snapshot.warnings.join(" "), /runtime identity/i);
+  }
+});
+
+test("an invalid frozen timestamp cannot activate a persisted decision context", () => {
+  const nowMs = Date.parse("2026-07-20T13:26:00Z");
+  for (const frozenAt of [Number.NaN, 0, Date.parse("2026-07-20T13:24:31Z")]) {
+    const snapshot = buildMooDecisionSnapshot(validInput({
+      nowMs,
+      frozenContext: persistedContext({
+        frozenAt,
+        prediction: { ...validInput().prediction, generatedAt: 0 },
+      }),
+      lateOrderAcknowledged: true,
+    }));
+    assert.equal(snapshot.decision, "NO_TRADE");
+    assert.equal(snapshot.blockReason, "DATA_PENDING");
+    assert.equal(snapshot.frozenAt, null);
+    assert.equal(snapshot.sources.length, 0);
+  }
+});
+
+test("a selected future session is visible but cannot become actionable", () => {
+  const nowMs = Date.parse("2026-07-19T16:00:00Z");
+  const snapshot = buildMooDecisionSnapshot(validInput({
+    nowMs,
+    prediction: {
+      ...validInput().prediction,
+      generatedAt: nowMs,
+    },
+  }));
+
+  assert.equal(snapshot.lifecycle, "FUTURE_SESSION");
+  assert.equal(snapshot.blockReason, "TARGET_SESSION_NOT_STARTED");
+  assert.equal(snapshot.decision, "NO_TRADE");
+  assert.equal(snapshot.predictedOfficialOpenCents, 20_265);
+  assert.equal(snapshot.predictedOpenState, "AVAILABLE");
+  assert.equal(snapshot.longTicket.actionable, false);
+  assert.equal(snapshot.shortTicket.actionable, false);
+  assert.match(snapshot.warnings.join(" "), /target session has not started/i);
+});
+
+test("a future session with missing prediction remains pending rather than claiming an available trade", () => {
+  const nowMs = Date.parse("2026-07-19T16:00:00Z");
+  const snapshot = buildMooDecisionSnapshot(validInput({ nowMs, prediction: null }));
+
+  assert.equal(snapshot.lifecycle, "FUTURE_SESSION");
+  assert.equal(snapshot.blockReason, "TARGET_SESSION_NOT_STARTED");
+  assert.equal(snapshot.predictedOfficialOpenCents, null);
+  assert.equal(snapshot.predictedOpenState, "PENDING");
+  assert.equal(snapshot.decision, "NO_TRADE");
 });
 
 test("post-cutoff inputs cannot replace the frozen prediction", () => {

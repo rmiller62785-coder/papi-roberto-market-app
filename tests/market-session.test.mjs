@@ -51,7 +51,15 @@ test("MOO lifecycle has separate freeze, modify/cancel, entry, and Cross states"
   assert.equal(mooLifecycleAt("2026-07-20", at("13:25:00")), "LATE_LOCKED");
   assert.equal(mooLifecycleAt("2026-07-20", at("13:28:00")), "ENTRY_CLOSED");
   assert.equal(mooLifecycleAt("2026-07-20", at("13:30:00")), "CROSS_COMPLETE");
-  assert.equal(mooLifecycleAt("2026-07-20", Date.parse("2026-07-19T22:00:00Z")), "MARKET_CLOSED");
+  assert.equal(mooLifecycleAt("2026-07-20", Date.parse("2026-07-19T22:00:00Z")), "FUTURE_SESSION");
+});
+
+test("a valid selected future session is distinguished from a closed or historical session", () => {
+  const sunday = Date.parse("2026-07-19T22:00:00Z");
+  assert.equal(mooLifecycleAt("2026-07-20", sunday), "FUTURE_SESSION");
+  assert.equal(mooLifecycleAt("2026-07-21", sunday), "FUTURE_SESSION");
+  assert.equal(mooLifecycleAt("2026-07-17", sunday), "MARKET_CLOSED");
+  assert.equal(mooLifecycleAt("2026-07-18", sunday), "MARKET_CLOSED");
 });
 
 test("deadline objects preserve exact Nasdaq timing", () => {
@@ -65,4 +73,3 @@ test("deadline objects preserve exact Nasdaq timing", () => {
   assert.equal(deadlines[1].remainingMs, 15_000);
   assert.equal(deadlines[2].remainingMs, 195_000);
 });
-

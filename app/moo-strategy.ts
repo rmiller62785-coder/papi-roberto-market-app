@@ -9,6 +9,8 @@ import type {
 import { mooDeadlines, mooLifecycleAt, nasdaqSessionSchedule } from "./market-session.ts";
 
 export type MooPredictionInput = {
+  targetSession?: string;
+  featureSnapshotId?: string | null;
   predictedOfficialOpenCents: number | null;
   decision: MooDecision;
   confidencePct: number | null;
@@ -118,6 +120,24 @@ function safePercent(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100;
 }
 
+function nonemptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function predictionRuntimeIdentityValid(prediction: MooPredictionInput, targetSession: string) {
+  const basic = prediction.targetSession === targetSession &&
+    safeNonnegativeInteger(prediction.generatedAt) &&
+    (prediction.predictedOfficialOpenCents == null || safeNonnegativeInteger(prediction.predictedOfficialOpenCents)) &&
+    (prediction.confidencePct == null || safePercent(prediction.confidencePct)) &&
+    ["LONG_FAVORED", "SHORT_FAVORED", "NO_TRADE"].includes(prediction.decision) &&
+    typeof prediction.trained === "boolean";
+  if (!basic) return false;
+  if (!prediction.trained) return true;
+  return nonemptyString(prediction.modelVersion) &&
+    nonemptyString(prediction.featureSchemaVersion) &&
+    nonemptyString(prediction.featureSnapshotId);
+}
+
 function roundPositiveRatioHalfUp(numerator: number, denominator: number) {
   if (!Number.isSafeInteger(numerator) || !Number.isSafeInteger(denominator) || numerator < 0 || denominator <= 0) {
     throw new RangeError("fixed-point ratio exceeds safe integer precision");
@@ -207,18 +227,23 @@ function sourceGate(
   config: MooStrategyConfiguration,
   warnings: string[],
 ): MooBlockReason | null {
-  const maxSkew = config.maximumClockSkewMs ?? 1_000;
+  const maxSkew = safeNonnegativeInteger(config.maximumClockSkewMs) ? config.maximumClockSkewMs : 1_000;
   for (const id of requiredIds) {
-    const source = sources.find((candidate) => candidate.id === id);
-    if (!source) {
+    const matchingSources = sources.filter((candidate) => candidate.id === id);
+    if (matchingSources.length === 0) {
       warnings.push(`${id} source is unavailable.`);
       return "FEED_NOT_ENTITLED";
     }
+    if (matchingSources.length !== 1) {
+      warnings.push(`${id} has duplicate source-health records; the snapshot is ambiguous.`);
+      return "FEED_NOT_ENTITLED";
+    }
+    const source = matchingSources[0];
     if (source.entitlement !== "REALTIME") {
       warnings.push(`${source.label} is ${source.entitlement.toLowerCase().replaceAll("_", " ")}; real-time entitlement is required.`);
       return "FEED_NOT_ENTITLED";
     }
-    if (source.state === "UNAVAILABLE" || source.state === "CLOSED" || source.observedAt == null) {
+    if (source.state === "UNAVAILABLE" || source.state === "CLOSED") {
       warnings.push(`${source.label} has no actionable observation.`);
       return "DATA_PENDING";
     }
@@ -226,13 +251,26 @@ function sourceGate(
       warnings.push(`${source.label} is ${source.state.toLowerCase()}.`);
       return id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
     }
-    if (source.observedAt > evaluatedAt + maxSkew || (source.checkedAt != null && source.checkedAt > evaluatedAt + maxSkew)) {
+    if (!safeNonnegativeInteger(source.observedAt) || !safeNonnegativeInteger(source.checkedAt)) {
+      warnings.push(`${source.label} requires finite observation and API-check timestamps.`);
+      return id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
+    }
+    if (source.observedAt > evaluatedAt + maxSkew || source.checkedAt > evaluatedAt + maxSkew) {
       warnings.push(`${source.label} has a future or clock-skewed timestamp.`);
       return id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
     }
+    if (source.checkedAt < source.observedAt - maxSkew) {
+      warnings.push(`${source.label} has an API check time that predates its observation.`);
+      return id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
+    }
     const derivedAge = Math.max(0, evaluatedAt - source.observedAt);
+    if (source.ageMs != null && !safeNonnegativeInteger(source.ageMs)) {
+      warnings.push(`${source.label} has an invalid source-age value.`);
+      return id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
+    }
     const age = source.ageMs == null ? derivedAge : Math.max(source.ageMs, derivedAge);
-    const maximumAge = config.maximumSourceAgeMs?.[id] ?? DEFAULT_SOURCE_AGE_MS[id];
+    const configuredMaximumAge = config.maximumSourceAgeMs?.[id];
+    const maximumAge = safeNonnegativeInteger(configuredMaximumAge) ? configuredMaximumAge : DEFAULT_SOURCE_AGE_MS[id];
     if (age > maximumAge) {
       warnings.push(`${source.label} is stale by ${age} ms; limit is ${maximumAge} ms.`);
       return id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
@@ -294,8 +332,13 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
   const frozenIdentityValid = frozenContext != null &&
     frozenContext.schemaVersion === "moo-phase1-v1" &&
     frozenContext.targetSession === input.targetSession &&
-    typeof frozenContext.snapshotId === "string" &&
-    frozenContext.snapshotId.trim().length > 0;
+    nonemptyString(frozenContext.snapshotId) &&
+    safeNonnegativeInteger(frozenContext.frozenAt) &&
+    frozenContext.frozenAt >= schedule.premarketOpenAt &&
+    frozenContext.frozenAt <= schedule.decisionFreezeAt &&
+    predictionRuntimeIdentityValid(frozenContext.prediction, input.targetSession) &&
+    frozenContext.prediction.generatedAt >= schedule.premarketOpenAt &&
+    frozenContext.prediction.generatedAt <= frozenContext.frozenAt;
   const activeFrozenContext = afterFreeze && frozenIdentityValid ? frozenContext : null;
   if (afterFreeze && frozenContext && frozenContext.targetSession !== input.targetSession) {
     warnings.push(`Frozen context targets ${frozenContext.targetSession}; it cannot be replayed for ${input.targetSession}.`);
@@ -338,10 +381,15 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
     warnings.push("The persisted prediction or freeze timestamp is outside the actionable cutoff and was rejected.");
     prediction = null;
   }
+  if (prediction && !predictionRuntimeIdentityValid(prediction, input.targetSession)) {
+    warnings.push("Prediction runtime identity is incomplete or targets a different session; it was rejected.");
+    prediction = null;
+  }
   const evaluationTime = afterFreeze && prediction
     ? frozenAt!
     : input.nowMs;
-  if (prediction && prediction.generatedAt > evaluationTime + (config.maximumClockSkewMs ?? 1_000)) {
+  const maximumClockSkewMs = safeNonnegativeInteger(config.maximumClockSkewMs) ? config.maximumClockSkewMs : 1_000;
+  if (prediction && prediction.generatedAt > evaluationTime + maximumClockSkewMs) {
     warnings.push("Prediction timestamp is in the future and was rejected.");
     prediction = null;
   }
@@ -358,8 +406,15 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
     warnings.push("The frozen prediction has no persisted source-health snapshot.");
   }
   const requiredSourceIds = decisionInputs.requiredSourceIds ?? ["US"];
+  const requiredSourcePolicyValid = requiredSourceIds.length > 0 && new Set(requiredSourceIds).size === requiredSourceIds.length;
   let blockReason: MooBlockReason = "NONE";
-  if (lifecycle === "MARKET_CLOSED" || (input.currentSession != null && input.currentSession !== input.targetSession)) {
+  if (!requiredSourcePolicyValid) {
+    blockReason = "FEED_NOT_ENTITLED";
+    warnings.push("Required-source policy must contain at least one unique source identifier.");
+  } else if (lifecycle === "FUTURE_SESSION") {
+    blockReason = "TARGET_SESSION_NOT_STARTED";
+    warnings.push("The selected target session has not started; execution remains blocked until that session's premarket window.");
+  } else if (lifecycle === "MARKET_CLOSED" || (input.currentSession != null && input.currentSession !== input.targetSession)) {
     blockReason = "MARKET_CLOSED";
   } else if (lifecycle === "PREPARING") {
     blockReason = "DATA_PENDING";
@@ -386,7 +441,7 @@ export function buildMooDecisionSnapshot(input: BuildMooDecisionInput): MooDecis
   const predictedOpenCents = !prediction || sourceBlocked ? null : prediction.predictedOfficialOpenCents;
   const predictedOpenState = predictedOpenCents != null
     ? "AVAILABLE"
-    : blockReason === "DATA_PENDING" || blockReason === "STALE_US_QUOTE"
+    : blockReason === "DATA_PENDING" || blockReason === "STALE_US_QUOTE" || blockReason === "TARGET_SESSION_NOT_STARTED"
       ? "PENDING"
       : "UNAVAILABLE";
   const lifecycleActionable = lifecycle === "READY" || lifecycle === "FROZEN" || (lifecycle === "LATE_LOCKED" && input.lateOrderAcknowledged === true);

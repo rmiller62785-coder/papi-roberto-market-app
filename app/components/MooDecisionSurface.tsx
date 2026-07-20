@@ -12,10 +12,36 @@ import type {
 
 type Language = "en" | "es";
 
+export type MooPlanningSource = {
+  id: string;
+  label: string;
+  provider: string;
+  status: "LIVE" | "LIMITED" | "PENDING" | "CLOSED" | "API_REQUIRED" | "UNAVAILABLE";
+  detail: string;
+  observedAt: number | null;
+  checkedAt: number | null;
+};
+
+export type MooResearchPreview = {
+  low: number | null;
+  median: number | null;
+  high: number | null;
+  lean: "LONG_LEAN" | "SHORT_LEAN" | "NO_EDGE" | "UNAVAILABLE";
+  directionBps: number | null;
+  computedAt: number | null;
+  reason: string;
+};
+
+export type MooPlanningSourceList = MooPlanningSource[] & { researchPreview?: MooResearchPreview };
+
 const copy = (lang: Language, en: string, es: string) => (lang === "es" ? es : en);
 
 function cents(value: number | null) {
   return value == null || !Number.isFinite(value) ? null : `$${(value / 100).toFixed(2)}`;
+}
+
+function money(value: number | null) {
+  return value == null || !Number.isFinite(value) ? "—" : `$${value.toFixed(2)}`;
 }
 
 function etDateTime(value: number | null, lang: Language) {
@@ -54,8 +80,9 @@ function valueState(state: MooValueState, lang: Language) {
 }
 
 function blockReason(snapshot: MooDecisionSnapshot, lang: Language) {
-  const values: Record<MooDecisionSnapshot["blockReason"], [string, string]> = {
+  const values: Partial<Record<MooDecisionSnapshot["blockReason"], [string, string]>> = {
     MARKET_CLOSED: ["Market closed", "Mercado cerrado"],
+    TARGET_SESSION_NOT_STARTED: ["Selected session has not started", "La sesión seleccionada todavía no ha comenzado"],
     DATA_PENDING: ["Critical data pending", "Datos críticos pendientes"],
     STALE_US_QUOTE: ["U.S. quote is stale", "La cotización de EE. UU. está vencida"],
     FEED_NOT_ENTITLED: ["Required feed not entitled", "Fuente requerida sin autorización"],
@@ -65,12 +92,15 @@ function blockReason(snapshot: MooDecisionSnapshot, lang: Language) {
     SHORTABILITY_UNCONFIRMED: ["Shortability is unconfirmed", "Disponibilidad para corto sin confirmar"],
     NONE: ["All decision gates passed", "Todos los controles aprobados"],
   };
-  return copy(lang, ...values[snapshot.blockReason]);
+  return values[snapshot.blockReason]
+    ? copy(lang, ...values[snapshot.blockReason]!)
+    : snapshot.blockReason.replaceAll("_", " ");
 }
 
 function lifecycleLabel(snapshot: MooDecisionSnapshot, lang: Language) {
-  const values: Record<MooDecisionSnapshot["lifecycle"], [string, string]> = {
+  const values: Partial<Record<MooDecisionSnapshot["lifecycle"], [string, string]>> = {
     MARKET_CLOSED: ["MARKET CLOSED", "MERCADO CERRADO"],
+    FUTURE_SESSION: ["FUTURE SESSION · PLANNING", "SESIÓN FUTURA · PLANIFICACIÓN"],
     PREPARING: ["PREPARING", "PREPARANDO"],
     READY: ["LOCKABLE", "LISTO PARA BLOQUEAR"],
     FROZEN: ["MOO LOCKED · MONITORING ONLY", "MOO BLOQUEADA · SOLO MONITOREO"],
@@ -78,7 +108,9 @@ function lifecycleLabel(snapshot: MooDecisionSnapshot, lang: Language) {
     ENTRY_CLOSED: ["MOO ENTRY CLOSED", "ENTRADA MOO CERRADA"],
     CROSS_COMPLETE: ["OPENING CROSS COMPLETE", "CRUCE DE APERTURA COMPLETO"],
   };
-  return copy(lang, ...values[snapshot.lifecycle]);
+  return values[snapshot.lifecycle]
+    ? copy(lang, ...values[snapshot.lifecycle]!)
+    : snapshot.lifecycle.replaceAll("_", " ");
 }
 
 function decisionLabel(snapshot: MooDecisionSnapshot, lang: Language) {
@@ -187,10 +219,37 @@ function entitlementLabel(source: MooSourceHealth, lang: Language) {
     REALTIME: ["Real-time entitled", "Tiempo real autorizado"],
     DELAYED: ["Delayed entitlement", "Autorización retrasada"],
     LIMITED: ["Limited coverage", "Cobertura limitada"],
-    NOT_ENTITLED: ["Not entitled", "Sin autorización"],
+    NOT_ENTITLED: ["API REQUIRED · execution entitlement", "API REQUERIDA · autorización de ejecución"],
     UNAVAILABLE: ["Unavailable", "No disponible"],
   };
   return copy(lang, ...labels[source.entitlement]);
+}
+
+function planningStatusLabel(status: MooPlanningSource["status"], lang: Language) {
+  const values: Record<MooPlanningSource["status"], [string, string]> = {
+    LIVE: ["LIVE", "EN VIVO"],
+    LIMITED: ["LIMITED", "LIMITADA"],
+    PENDING: ["PENDING", "PENDIENTE"],
+    CLOSED: ["CLOSED", "CERRADO"],
+    API_REQUIRED: ["API REQUIRED", "API REQUERIDA"],
+    UNAVAILABLE: ["UNAVAILABLE", "NO DISPONIBLE"],
+  };
+  return copy(lang, ...values[status]);
+}
+
+function MooPlanningSourceStrip({ sources, lang }: { sources: MooPlanningSource[]; lang: Language }) {
+  return (
+    <div className="moo-planning-sources">
+      {sources.map((source) => (
+        <article className={`moo-planning-source ${source.status.toLowerCase()}`} key={source.id}>
+          <div className="moo-source-head"><i aria-hidden="true"/><strong>{source.label}</strong><span>{planningStatusLabel(source.status, lang)}</span></div>
+          <p>{source.provider}</p>
+          <small>{source.detail}</small>
+          <div className="moo-source-times"><time>{copy(lang, "Observed", "Observado")}: {etDateTime(source.observedAt, lang)}</time><time>{copy(lang, "Checked", "Consultado")}: {etDateTime(source.checkedAt, lang)}</time></div>
+        </article>
+      ))}
+    </div>
+  );
 }
 
 export function MooSourceStrip({ sources, lang, expanded = false }: { sources: MooSourceHealth[]; lang: Language; expanded?: boolean }) {
@@ -208,7 +267,7 @@ export function MooSourceStrip({ sources, lang, expanded = false }: { sources: M
   );
 }
 
-export function MooDecisionSurface({ snapshot, lang }: { snapshot: MooDecisionSnapshot; lang: Language }) {
+export function MooDecisionSurface({ snapshot, planningSources, lang }: { snapshot: MooDecisionSnapshot; planningSources: MooPlanningSourceList; lang: Language }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -217,6 +276,15 @@ export function MooDecisionSurface({ snapshot, lang }: { snapshot: MooDecisionSn
   const deadlines = useMemo(() => snapshot.deadlines.slice().sort((a, b) => a.at - b.at), [snapshot.deadlines]);
   const predicted = cents(snapshot.predictedOfficialOpenCents) ?? valueState(snapshot.predictedOpenState, lang);
   const decisionTone = snapshot.decision === "LONG_FAVORED" ? "long" : snapshot.decision === "SHORT_FAVORED" ? "short" : "no-trade";
+  const researchPreview = planningSources.researchPreview ?? {
+    low: null,
+    median: null,
+    high: null,
+    lean: "UNAVAILABLE" as const,
+    directionBps: null,
+    computedAt: null,
+    reason: copy(lang, "Selected-session research is loading.", "La investigación de la sesión seleccionada está cargando."),
+  };
 
   return (
     <section className={`moo-decision-surface panel ${decisionTone}`} aria-labelledby="moo-decision-title">
@@ -232,6 +300,19 @@ export function MooDecisionSurface({ snapshot, lang }: { snapshot: MooDecisionSn
           <time>{copy(lang, "Generated", "Generada")} {etDateTime(snapshot.generatedAt, lang)}</time>
         </div>
       </header>
+
+      <section className={`moo-research-preview ${researchPreview.lean.toLowerCase()}`} aria-label={copy(lang, "Selected-session research preview", "Vista previa de investigación de la sesión seleccionada")}>
+        <div className="moo-preview-heading">
+          <span>{copy(lang, "SELECTED-SESSION RESEARCH PREVIEW · NON-ACTIONABLE", "VISTA PREVIA DE INVESTIGACIÓN · NO OPERABLE")}</span>
+          <time>{copy(lang, "Computed", "Calculada")}: {etDateTime(researchPreview.computedAt, lang)}</time>
+        </div>
+        <div className="moo-preview-grid">
+          <div className="moo-preview-range"><span>{copy(lang, "Expected opening range", "Rango de apertura esperado")}</span><strong>{money(researchPreview.low)}–{money(researchPreview.high)}</strong></div>
+          <div className="moo-preview-central"><span>{copy(lang, "Central estimate", "Estimación central")}</span><strong>{money(researchPreview.median)}</strong></div>
+          <div className="moo-preview-lean"><span>{copy(lang, "Research lean", "Sesgo de investigación")}</span><strong>{researchPreview.lean === "LONG_LEAN" ? copy(lang, "LONG LEAN", "SESGO LARGO") : researchPreview.lean === "SHORT_LEAN" ? copy(lang, "SHORT LEAN", "SESGO CORTO") : researchPreview.lean === "NO_EDGE" ? copy(lang, "NO EDGE", "SIN VENTAJA") : copy(lang, "PENDING", "PENDIENTE")}</strong><small>{researchPreview.directionBps == null ? copy(lang, "No validated signed shift", "Sin cambio firmado validado") : `${researchPreview.directionBps >= 0 ? "+" : ""}${researchPreview.directionBps.toFixed(1)} ${copy(lang, "bp signed shift", "pb de cambio con signo")}`}</small></div>
+        </div>
+        <p>{researchPreview.reason}</p>
+      </section>
 
       <div className="moo-primary-grid">
         <div className="moo-open-price">
@@ -264,6 +345,14 @@ export function MooDecisionSurface({ snapshot, lang }: { snapshot: MooDecisionSn
         <span><b>{copy(lang, "TP cushion", "Margen de objetivo")}</b>{cents(snapshot.takeProfitCushionCents)}</span>
       </div>
 
+      <section className="moo-planning-band" aria-labelledby="moo-planning-title">
+        <div className="moo-health-head">
+          <div><span className="moo-overline">{copy(lang, "PLANNING / RESEARCH SOURCES", "FUENTES DE PLANIFICACIÓN / INVESTIGACIÓN")}</span><strong id="moo-planning-title">{copy(lang, "Available context for the selected session", "Contexto disponible para la sesión seleccionada")}</strong></div>
+          <p>{copy(lang, "These rows may inform a non-actionable preview. They do not satisfy strict execution entitlements.", "Estas filas pueden informar una vista previa no operable. No cumplen las autorizaciones estrictas de ejecución.")}</p>
+        </div>
+        <MooPlanningSourceStrip sources={planningSources} lang={lang}/>
+      </section>
+
       {snapshot.lifecycle === "CROSS_COMPLETE" ? (
         <div className="moo-cross-result">
           <div><span>{copy(lang, "Frozen prediction", "Predicción congelada")}</span><strong>{predicted}</strong></div>
@@ -279,7 +368,7 @@ export function MooDecisionSurface({ snapshot, lang }: { snapshot: MooDecisionSn
 
       <div className="moo-health-head">
         <div><span className="moo-overline">{copy(lang, "SOURCE ENTITLEMENTS", "AUTORIZACIONES DE FUENTE")}</span><strong>{copy(lang, "Critical feeds gate every ticket", "Las fuentes críticas controlan cada orden")}</strong></div>
-        <p>{copy(lang, "Observation time and API check time are different facts.", "La hora de observación y la hora de consulta de API son datos distintos.")}</p>
+        <p>{copy(lang, "API REQUIRED means an execution-grade entitlement is still missing. Observation time and API check time are different facts.", "API REQUERIDA significa que todavía falta una autorización apta para ejecución. La hora de observación y la hora de consulta son datos distintos.")}</p>
       </div>
       <MooSourceStrip sources={snapshot.sources} lang={lang}/>
       {snapshot.warnings.length ? <div className="moo-warnings">{snapshot.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}

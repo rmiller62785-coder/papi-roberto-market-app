@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { pullPolymarketEvidence, roundRobinUnique } from "../app/polymarket.ts";
+import {
+  __resetPolymarketCacheForTests,
+  POLYMARKET_MAX_BASELINE_AGE_MS,
+  pullPolymarketEvidence,
+  roundRobinUnique,
+} from "../app/polymarket.ts";
 
 const now = Date.parse("2026-07-18T16:00:00Z");
 const cutoff = Date.parse("2026-07-17T20:00:00Z");
 const yesToken = "yes-token";
+
+test.beforeEach(() => __resetPolymarketCacheForTests());
 
 test("bounded discovery reserves detail slots across registry queries", () => {
   assert.deepEqual(
@@ -97,6 +104,41 @@ test("only a fixed-registry relevant market can produce a probability shock", as
   assert.equal(irrelevant.rangeSignal, 0);
 });
 
+test("public discovery, book, and history reads send no authentication secrets", async () => {
+  const seen = [];
+  const base = mockFetcher();
+  const result = await pullPolymarketEvidence({
+    priorCloseCutoffMs: cutoff,
+    now,
+    fetcher: async (input, init = {}) => {
+      seen.push(new Headers(init.headers));
+      return base(input, init);
+    },
+  });
+  assert.equal(result.status, "live");
+  for (const headers of seen) {
+    assert.equal(headers.has("authorization"), false);
+    assert.equal(headers.has("poly-api-key"), false);
+    assert.equal(headers.has("poly-signature"), false);
+  }
+});
+
+test("a transient public API failure exposes last-known-good evidence but applies zero", async () => {
+  const first = await pullPolymarketEvidence({ priorCloseCutoffMs: cutoff, now, fetcher: mockFetcher() });
+  assert.equal(first.signalState, "active");
+  const failed = await pullPolymarketEvidence({
+    priorCloseCutoffMs: cutoff,
+    now: now + 60_000,
+    fetcher: async () => json({ error: "rate limited" }, 429),
+  });
+  assert.equal(failed.status, "limited");
+  assert.equal(failed.signalState, "neutral");
+  assert.equal(failed.rangeSignal, 0);
+  assert.equal(failed.primaryMarketId, null);
+  assert.equal(failed.markets.length, first.markets.length);
+  assert.match(failed.reason, /display-only and contributes zero/i);
+});
+
 test("a wider-than-ten-point order book is neutral and excluded", async () => {
   const result = await pullPolymarketEvidence({
     priorCloseCutoffMs: cutoff,
@@ -142,6 +184,34 @@ test("history points after the prior-close cutoff are rejected", async () => {
   assert.equal(result.markets[0].baselineObservedAt, cutoff - 60_000);
   assert.ok(Math.abs(result.signedRiskOffShock - 0.21) < 1e-9);
   assert.ok(Math.abs(result.rangeSignal - 0.21) < 1e-9);
+});
+
+test("a baseline just inside the prior-close age bound can activate", async () => {
+  const observedAt = cutoff - POLYMARKET_MAX_BASELINE_AGE_MS + 1;
+  const result = await pullPolymarketEvidence({
+    priorCloseCutoffMs: cutoff,
+    now,
+    fetcher: mockFetcher({ history: [{ t: observedAt / 1000, p: 0.25 }] }),
+  });
+  assert.equal(result.status, "live");
+  assert.equal(result.signalState, "active");
+  assert.equal(result.markets[0].baselineObservedAt, observedAt);
+});
+
+test("a baseline just outside the prior-close age bound is display-only and applies zero", async () => {
+  const observedAt = cutoff - POLYMARKET_MAX_BASELINE_AGE_MS - 1;
+  const result = await pullPolymarketEvidence({
+    priorCloseCutoffMs: cutoff,
+    now,
+    fetcher: mockFetcher({ history: [{ t: observedAt / 1000, p: 0.25 }] }),
+  });
+  assert.equal(result.status, "limited");
+  assert.equal(result.signalState, "neutral");
+  assert.equal(result.rangeSignal, 0);
+  assert.equal(result.primaryMarketId, null);
+  assert.equal(result.markets.length, 1);
+  assert.equal(result.markets[0].baselineObservedAt, null);
+  assert.match(result.reason, /within two hours|display-only/i);
 });
 
 for (const [label, timestamp] of [

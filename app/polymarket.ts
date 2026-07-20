@@ -66,10 +66,20 @@ const MIN_VOLUME_24H = 5_000;
 const MAX_SPREAD = 0.1;
 const ACTIVE_SHOCK_THRESHOLD = 0.02;
 const HISTORY_LOOKBACK_SECONDS = 7 * 24 * 60 * 60;
+// A prediction-market comparison must represent the probability around the
+// U.S. close, not merely the last observation from an arbitrarily old market.
+// Polymarket history is requested at 10-minute fidelity, so two hours leaves
+// room for sparse contracts while rejecting stale weekend/illiquid baselines.
+export const POLYMARKET_MAX_BASELINE_AGE_MS = 2 * 60 * 60_000;
 const MAX_BOOK_AGE_MS = 15 * 60_000;
 const MAX_CLOCK_SKEW_MS = 60_000;
 const MAX_EVENTS_PER_QUERY = 6;
 const MAX_EVENT_DETAILS = 16;
+const lastGoodByCutoff = new Map<number, PolymarketEvidence>();
+
+export function __resetPolymarketCacheForTests() {
+  lastGoodByCutoff.clear();
+}
 
 // Every rule fixes both relevance and outcome polarity before any observation
 // is consumed. Candidate wording that does not match a registered rule is
@@ -262,6 +272,22 @@ function unavailable(
   };
 }
 
+function staleIfError(priorCloseCutoffAt: number, checkedAt: number, reason: string) {
+  const prior = lastGoodByCutoff.get(priorCloseCutoffAt);
+  if (!prior) return unavailable(priorCloseCutoffAt, checkedAt, reason, "offline");
+  return {
+    ...prior,
+    status: "limited" as const,
+    signalState: "neutral" as const,
+    reason: `${reason} Last known-good evidence is display-only and contributes zero.`,
+    checkedAt,
+    signedRiskOffShock: 0,
+    rangeSignal: 0,
+    nvdaDirection: null,
+    primaryMarketId: null,
+  };
+}
+
 export async function pullPolymarketEvidence({
   priorCloseCutoffMs,
   fetcher = globalThis.fetch,
@@ -295,7 +321,7 @@ export async function pullPolymarketEvidence({
   );
   const successfulSearches = searches.filter((result) => result.status === "fulfilled");
   if (!successfulSearches.length) {
-    return unavailable(priorCloseCutoffMs, checkedAt, "Polymarket discovery is unavailable.", "offline");
+    return staleIfError(priorCloseCutoffMs, checkedAt, "Polymarket discovery is unavailable.");
   }
 
   const rulesByEvent = new Map<string, RegistryRule[]>();
@@ -355,7 +381,7 @@ export async function pullPolymarketEvidence({
     });
     books = records(payload) as Book[];
   } catch {
-    return unavailable(priorCloseCutoffMs, checkedAt, "Polymarket order books are unavailable.", "offline");
+    return staleIfError(priorCloseCutoffMs, checkedAt, "Polymarket order books are unavailable.");
   }
 
   const qualified: Array<Candidate & { bestBid: number; bestAsk: number; spread: number; currentProbability: number; bookSnapshotAt: number }> = [];
@@ -424,6 +450,7 @@ export async function pullPolymarketEvidence({
         .filter(
           (point): point is { observedAt: number; probability: number } =>
             point.observedAt != null &&
+            point.observedAt >= priorCloseCutoffMs - POLYMARKET_MAX_BASELINE_AGE_MS &&
             point.observedAt <= priorCloseCutoffMs &&
             point.probability != null &&
             point.probability >= 0 &&
@@ -472,7 +499,7 @@ export async function pullPolymarketEvidence({
     return unavailable(
       priorCloseCutoffMs,
       checkedAt,
-      "Qualified markets had no point-in-time observation at or before the prior close; signal held neutral.",
+      "Qualified markets had no point-in-time observation within two hours before the prior close; stale baseline is display-only and the signal is held neutral.",
       "limited",
       displayMarkets,
     );
@@ -492,7 +519,7 @@ export async function pullPolymarketEvidence({
   const providerTimes = displayMarkets
     .map((market) => market.bookSnapshotAt)
     .filter((value): value is number => value != null);
-  return {
+  const result: PolymarketEvidence = {
     provider: "Polymarket Gamma + CLOB",
     selectorVersion: POLYMARKET_SELECTOR_VERSION,
     status: "live",
@@ -509,4 +536,7 @@ export async function pullPolymarketEvidence({
     primaryMarketId: primary.id,
     markets: displayMarkets,
   };
+  lastGoodByCutoff.set(priorCloseCutoffMs, result);
+  if (lastGoodByCutoff.size > 8) lastGoodByCutoff.delete(lastGoodByCutoff.keys().next().value!);
+  return result;
 }
