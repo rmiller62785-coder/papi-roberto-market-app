@@ -16,6 +16,7 @@ import type { MooSourceHealth } from "./moo-contract";
 import { deriveResearchLean } from "./research-lean";
 import { defaultTargetSession, enumerateNearbyTargetSessions } from "./target-session";
 import { previousNasdaqSession } from "./market-session";
+import { BUILD_VERSION } from "./build-version";
 
 type Bar = { time: number; open: number; high: number; low: number; close: number; volume: number };
 type Daily = { date: string; dateKey?: string; open?: number; high: number; low: number; close: number };
@@ -116,6 +117,7 @@ export default function Home() {
   useEffect(() => { const first = window.setTimeout(() => void refresh(), 0), id = window.setInterval(() => void refresh(), 2000); return () => { clearTimeout(first); clearInterval(id); marketPollRef.current.controller?.abort(); marketPollRef.current = { sequence: marketPollRef.current.sequence + 1, controller: null } } }, [refresh]);
   useEffect(() => { const id = window.setTimeout(() => { const saved = localStorage.getItem("nvda-language"); if(saved === "es" || saved === "en") setLang(saved) }, 0); return () => clearTimeout(id) }, []);
   useEffect(() => { localStorage.setItem("nvda-language", lang); document.documentElement.lang = lang }, [lang]);
+  useEffect(() => { let cancelled = false; const checkVersion = async () => { try { const response = await fetch(`/api/version?t=${Date.now()}`, { cache: "no-store" }); if(!response.ok) return; const payload = await response.json() as { version?: string }; if(!cancelled && payload.version && payload.version !== BUILD_VERSION) window.location.reload() } catch { /* The market refresh path reports operational failures. */ } }; const first = window.setTimeout(() => void checkVersion(), 5_000), id = window.setInterval(() => void checkVersion(), 60_000); return () => { cancelled = true; clearTimeout(first); clearInterval(id) } }, []);
   useEffect(() => { if(tab !== "library") return; let cancelled = false; const id = window.setTimeout(() => { setLibraryError(""); fetch("/api/library", { cache: "no-store" }).then(async r => { if(!r.ok) throw new Error(tx("The Library is temporarily unavailable.", "La Biblioteca no está disponible temporalmente.")); return r.json() }).then(x => { if(!cancelled) setLibrary(x.plans ?? []) }).catch(e => { if(!cancelled) setLibraryError(e instanceof Error ? e.message : tx("The Library is temporarily unavailable.", "La Biblioteca no está disponible temporalmente.")) }) }, 0); return () => { cancelled = true; clearTimeout(id) } }, [tab, tx]);
   const forecastTargetDate = data?.targetDate;
   const refreshForecast = useCallback(async () => { if(!forecastTargetDate) return; forecastPollRef.current.controller?.abort(); const controller = new AbortController(), sequence = forecastPollRef.current.sequence + 1; forecastPollRef.current = { sequence, controller, targetDate: forecastTargetDate }; try { const r = await fetch(`/api/forecast?targetDate=${forecastTargetDate}`, { cache: "no-store", signal: controller.signal }); if(!r.ok) throw new Error(); const payload = await r.json() as ForecastPayload; if(sequence !== forecastPollRef.current.sequence || forecastPollRef.current.targetDate !== forecastTargetDate) return; if(payload.targetDate !== forecastTargetDate) throw new Error("Forecast target mismatch"); const live = payload.researchForecast ?? payload, editor = reconcileForecastWeightEditor(weightEditorRef.current, forecastTargetDate, live.weights); weightEditorRef.current = editor; setWeightEditor(editor); setForecastState({ ...payload, ...live, researchForecast: payload.researchForecast, weights: editor.weights }); setForecastError("") } catch(reason) { if(reason instanceof DOMException && reason.name === "AbortError") return; if(sequence === forecastPollRef.current.sequence) setForecastError(tx("Forecast intelligence is temporarily unavailable.", "La inteligencia de pronóstico no está disponible temporalmente.")) } finally { if(sequence === forecastPollRef.current.sequence) forecastPollRef.current = { sequence, controller: null, targetDate: forecastTargetDate } } }, [forecastTargetDate, tx]);
@@ -197,12 +199,17 @@ export default function Home() {
   const mooPlanningPrevious = data?.daily.find(row => (row.dateKey ?? row.date) === mooPlanningPreviousSession);
   const mooPlanningInput = {
     estimatedOpenCents: priceCents(strictResearchPreview.median),
+    priorOfficialCloseCents: priceCents(data?.previousClose),
     previousHighCents: priceCents(mooPlanningPrevious?.high),
     previousLowCents: priceCents(mooPlanningPrevious?.low),
+    premarketCurrentCents: selectedMarketMatches ? priceCents(data?.premarket.current) : null,
     premarketHighCents: selectedMarketMatches ? priceCents(data?.premarket.high) : null,
     premarketLowCents: selectedMarketMatches ? priceCents(data?.premarket.low) : null,
     computedAt: strictResearchPreview.computedAt,
     marketCheckedAt: parsedTime(data?.checkedAt),
+    quoteObservedAt: parsedTime(data?.asOf),
+    quoteSource: data?.source ?? null,
+    quoteFreshness: data?.freshness?.quote?.state ?? null,
     targetSession: mooSnapshot.targetSession,
   };
   const normalizedMarketSources = (data?.sources ?? []).map(source => ({ ...source, uiStatus: source.status === "ok" ? "live" : source.status === "stale" ? "limited" : "offline" as "live" | "limited" | "offline" })), dashboardHealthItems = [...normalizedMarketSources.map(source => ({ id: `market-${source.id}`, label: source.id.replaceAll("_", " ").toUpperCase(), status: source.uiStatus, detail: source.detail, observedAt: source.observedAt, checkedAt: source.fetchedAt })), ...(forecast?.feeds ?? []).map(source => ({ id: `forecast-${source.id}`, label: source.label, status: source.status, detail: source.detail, observedAt: null, checkedAt: source.lastChecked }))], dashboardLiveCount = dashboardHealthItems.filter(item => item.status === "live").length;
@@ -293,6 +300,6 @@ activeResearchContributions
         <section className="section-block"><div className="section-heading"><div><div className="panel-kicker">{tx("Exact source data", "Datos fuente exactos")}</div><h2>{tx("Recent official sessions", "Sesiones oficiales recientes")}</h2></div><div className="section-note">{tx("No model forecasts · no probability claims", "Sin pronósticos de modelo · sin afirmaciones de probabilidad")}</div></div><article className="panel table-panel"><table><thead><tr><th>{tx("Date", "Fecha")}</th><th>{tx("High", "Máximo")}</th><th>{tx("Low", "Mínimo")}</th><th>{tx("Close", "Cierre")}</th><th>{tx("Daily pivot", "Pivote diario")}</th></tr></thead><tbody>{analysis?.d.map(d => <tr key={d.date}><td>{d.date}</td><td>{money(d.high)}</td><td>{money(d.low)}</td><td>{money(d.close)}</td><td>{money((d.high + d.low + d.close) / 3)}</td></tr>)}</tbody></table></article></section>
       </>}
     </div>
-    <footer><strong>{tx("NVDA ONLY", "SOLO NVDA")}</strong> · {tx("Opening values are transparent estimates, not guarantees or personalized investment advice. Verify prices and order details with your broker.", "Los valores de apertura son estimaciones transparentes, no garantías ni asesoramiento de inversión personalizado. Verifique los precios y los detalles de la orden con su corredor.")}<p>{ticks.toLocaleString(lang === "es" ? "es-US" : "en-US")} {tx("successful refreshes this session.", "actualizaciones correctas en esta sesión.")}</p></footer>
+    <footer><strong>{tx("NVDA ONLY", "SOLO NVDA")}</strong> · {tx("Opening values are transparent estimates, not guarantees or personalized investment advice. Verify prices and order details with your broker.", "Los valores de apertura son estimaciones transparentes, no garantías ni asesoramiento de inversión personalizado. Verifique los precios y los detalles de la orden con su corredor.")}<p>{ticks.toLocaleString(lang === "es" ? "es-US" : "en-US")} {tx("successful refreshes this session.", "actualizaciones correctas en esta sesión.")} · Build {BUILD_VERSION}</p></footer>
   </main>
 }

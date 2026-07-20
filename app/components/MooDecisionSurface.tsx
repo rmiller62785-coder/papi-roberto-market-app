@@ -48,12 +48,17 @@ export type MooPlanningSourceList = MooPlanningSource[] & {
 
 export type MooPlanningInput = {
   estimatedOpenCents: number | null;
+  priorOfficialCloseCents?: number | null;
   previousHighCents: number | null;
   previousLowCents: number | null;
+  premarketCurrentCents?: number | null;
   premarketHighCents: number | null;
   premarketLowCents: number | null;
   computedAt: number | null;
   marketCheckedAt: number | null;
+  quoteObservedAt?: number | null;
+  quoteSource?: string | null;
+  quoteFreshness?: string | null;
   targetSession: string;
 };
 
@@ -90,25 +95,25 @@ type BrokerStatusPayload = {
   locateGuaranteed: boolean;
 };
 
-const emptySideConfig = (accountLabel: string): PaperSideConfig => ({
+const defaultSideConfig = (accountLabel: string): PaperSideConfig => ({
   quantityMode: "AUTO_RISK",
-  stopOffset: "",
-  riskBudget: "",
-  slippageAllowance: "",
-  maxShares: "",
+  stopOffset: "1.00",
+  riskBudget: "100.00",
+  slippageAllowance: "0.10",
+  maxShares: "25",
   manualQuantity: "",
   accountLabel,
-  reserve: "",
-  timeStop: "",
+  reserve: "0.00",
+  timeStop: "10:00 ET",
 });
 
 const emptyPaperConfig = (): PaperPlanningConfig => ({
   preference: "RESEARCH",
-  long: emptySideConfig("Long paper"),
-  short: emptySideConfig("Short paper"),
+  long: defaultSideConfig("Long paper"),
+  short: defaultSideConfig("Short paper"),
 });
 
-const PAPER_PROFILE_STORAGE_KEY = "aperture-moo-paper-risk-profile:v1";
+const PAPER_PROFILE_STORAGE_KEY = "aperture-moo-paper-risk-profile:v2";
 
 const copy = (lang: Language, en: string, es: string) => (lang === "es" ? es : en);
 
@@ -606,12 +611,21 @@ function PaperPlanningPanel({
   return (
     <section className="moo-paper-planner" aria-labelledby="moo-paper-planner-title">
       <header className="moo-paper-planner-head">
-        <div><span className="moo-overline">{copy(lang, "PAPER PLANNING TICKETS · BROWSER-LOCAL", "ÓRDENES DE PLANIFICACIÓN DE PRUEBA · LOCALES")}</span><h3 id="moo-paper-planner-title">{copy(lang, "Configure and explain both MOO scenarios", "Configure y explique ambos escenarios MOO")}</h3><p>{copy(lang, "This calculator fills research and risk fields without changing the frozen Strict MOO decision. It cannot submit an order.", "Esta calculadora completa campos de investigación y riesgo sin cambiar la decisión MOO Estricta congelada. No puede enviar una orden.")}</p></div>
+        <div><span className="moo-overline">{copy(lang, "DEFAULT PAPER-RISK PROFILE · BROWSER-LOCAL", "PERFIL PREDETERMINADO DE RIESGO DE PRUEBA · LOCAL")}</span><h3 id="moo-paper-planner-title">{copy(lang, "Editable defaults for both paper scenarios", "Valores predeterminados editables para ambos escenarios de prueba")}</h3><p>{copy(lang, "Illustrative paper-only defaults initialize both scenarios and persist in this browser. Edit them to match your own simulation policy. This calculator cannot submit an order.", "Los valores ilustrativos solo de prueba inicializan ambos escenarios y se guardan en este navegador. Edítelos según su propia política de simulación. Esta calculadora no puede enviar una orden.")}</p></div>
         <div className="moo-paper-only-badge"><strong>{copy(lang, "PAPER ONLY", "SOLO PRUEBA")}</strong><span>{copy(lang, "Never actionable", "Nunca operable")}</span></div>
       </header>
 
       <div className="moo-paper-gates" aria-label={copy(lang, "Planning and execution gate checklist", "Lista de controles de planificación y ejecución")}>
         {gates.map((gate) => <div className={gate.ready ? "ready" : "blocked"} key={gate.label}><i aria-hidden="true"/><span><b>{gate.label}</b><small>{gate.detail}</small></span><strong>{gate.ready ? copy(lang, "READY", "LISTO") : copy(lang, "BLOCKED", "BLOQUEADO")}</strong></div>)}
+      </div>
+
+      <div className="moo-paper-formula-grid moo-live-input-grid" aria-label={copy(lang, "Live inputs used by the paper planner", "Entradas en vivo usadas por el planificador de prueba")}>
+        <div><span>{copy(lang, "Prior official close", "Cierre oficial anterior")}</span><strong>{cents(planning?.priorOfficialCloseCents ?? null) ?? copy(lang, "Missing: prior close", "Falta: cierre anterior")}</strong><small>{copy(lang, "Previous completed Nasdaq session", "Sesión Nasdaq completada anterior")}</small></div>
+        <div><span>{copy(lang, "Current premarket price", "Precio actual de preapertura")}</span><strong>{cents(planning?.premarketCurrentCents ?? null) ?? copy(lang, "Missing: premarket current", "Falta: precio actual de preapertura")}</strong><small>{etDateTime(planning?.quoteObservedAt ?? null, lang)}</small></div>
+        <div><span>{copy(lang, "Premarket high / low", "Máximo / mínimo de preapertura")}</span><strong>{cents(planning?.premarketHighCents ?? null) ?? copy(lang, "Missing high", "Falta máximo")} / {cents(planning?.premarketLowCents ?? null) ?? copy(lang, "Missing low", "Falta mínimo")}</strong><small>{copy(lang, "Selected trading date only", "Solo la fecha de negociación seleccionada")}</small></div>
+        <div><span>{copy(lang, "Premarket range", "Rango de preapertura")}</span><strong>{cents(paperSnapshot.premarketRangeCents.value) ?? copy(lang, "Incomplete high/low", "Máximo/mínimo incompleto")}</strong><small>{planningStateLabel(paperSnapshot.premarketRangeCents.state, lang)}</small></div>
+        <div><span>{copy(lang, "Major / minor thirds", "Tercios mayor / menor")}</span><strong>{cents(paperSnapshot.majorThirdCents.value) ?? "—"} / {cents(paperSnapshot.minorThirdCents.value) ?? "—"}</strong><small>0.33 · ROUND_HALF_UP · +$0.01</small></div>
+        <div><span>{copy(lang, "Quote source / freshness", "Fuente / vigencia de cotización")}</span><strong>{planning?.quoteSource ?? copy(lang, "Missing source", "Falta fuente")}</strong><small>{planning?.quoteFreshness ?? copy(lang, "Unavailable", "No disponible")} · {etDateTime(planning?.marketCheckedAt ?? null, lang)}</small></div>
       </div>
 
       <div className="moo-paper-preference">
