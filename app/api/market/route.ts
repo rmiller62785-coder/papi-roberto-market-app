@@ -67,6 +67,12 @@ type AlpacaSnapshot = {
   prevDailyBar?: AlpacaBar;
 };
 
+type AlpacaBarsResponse = {
+  bars?: AlpacaBar[];
+  next_page_token?: string | null;
+  symbol?: string;
+};
+
 type HistoryCache = {
   expires: number;
   fetchedAt: number;
@@ -86,6 +92,12 @@ type AlpacaSnapshotCache = {
   expires: number;
 };
 
+type AlpacaDailyCache = {
+  bars: AlpacaBar[];
+  fetchedAt: number;
+  expires: number;
+};
+
 type Session = "CLOSED" | "PREMARKET" | "MARKET OPEN" | "AFTER-HOURS";
 type SourceStatus = "ok" | "stale" | "error" | "standby" | "not_configured";
 
@@ -100,6 +112,7 @@ const FINNHUB_QUOTE_CACHE_MS = 10_000;
 // The browser polls every two seconds. This cache limits upstream traffic to
 // one Alpaca snapshot per worker instance during that interval.
 const ALPACA_SNAPSHOT_CACHE_MS = 1_500;
+const ALPACA_DAILY_CACHE_MS = 5 * 60_000;
 const headers = {
   "User-Agent": "Mozilla/5.0 NVDA-Live-Structure/4.0",
   Accept: "application/json",
@@ -136,6 +149,7 @@ async function yahoo(interval: string, range: string, prepost = true) {
 let historyCache: HistoryCache | null = null;
 let finnhubQuoteCache: FinnhubQuoteCache | null = null;
 let alpacaSnapshotCache: AlpacaSnapshotCache | null = null;
+let alpacaDailyCache: AlpacaDailyCache | null = null;
 
 /**
  * Yahoo history is deliberately cached for one minute. A request to this route
@@ -407,6 +421,49 @@ async function alpacaSnapshot(credentials: { keyId: string; secretKey: string })
   return { ...alpacaSnapshotCache, cacheHit: false };
 }
 
+async function alpacaDailyHistory(credentials: { keyId: string; secretKey: string }) {
+  const now = Date.now();
+  if (alpacaDailyCache && alpacaDailyCache.expires > now) {
+    return { ...alpacaDailyCache, cacheHit: true };
+  }
+  const url = new URL("https://data.alpaca.markets/v2/stocks/NVDA/bars");
+  url.searchParams.set("timeframe", "1Day");
+  url.searchParams.set("start", new Date(now - 70 * 24 * 60 * 60_000).toISOString());
+  // Basic accounts may receive SIP data with a delay. Completed daily sessions
+  // are unaffected, and the current target session is filtered out below.
+  url.searchParams.set("end", new Date(now - 16 * 60_000).toISOString());
+  url.searchParams.set("limit", "100");
+  url.searchParams.set("adjustment", "raw");
+  url.searchParams.set("feed", "sip");
+  url.searchParams.set("sort", "asc");
+  const response = await fetch(url, {
+    headers: {
+      "APCA-API-KEY-ID": credentials.keyId,
+      "APCA-API-SECRET-KEY": credentials.secretKey,
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`Alpaca SIP daily history failed (${response.status})`);
+  const payload = (await response.json()) as AlpacaBarsResponse;
+  const bars = (payload.bars ?? []).filter(
+    (bar) =>
+      valid(bar.o) &&
+      valid(bar.h) &&
+      valid(bar.l) &&
+      valid(bar.c) &&
+      typeof bar.t === "string",
+  );
+  if (!bars.length) throw new Error("Alpaca returned no NVDA daily history");
+  const fetchedAt = Date.now();
+  alpacaDailyCache = {
+    bars,
+    fetchedAt,
+    expires: fetchedAt + ALPACA_DAILY_CACHE_MS,
+  };
+  return { ...alpacaDailyCache, cacheHit: false };
+}
+
 const iso = (value: number | null | undefined) =>
   valid(value) ? new Date(value).toISOString() : null;
 
@@ -421,6 +478,20 @@ export async function GET() {
     const todayKey = etDate(new Date(endpointCheckedAtMs));
     const marketState = sessionState(endpointCheckedAtMs);
     const history = await marketHistory();
+    let alpacaDaily: Awaited<ReturnType<typeof alpacaDailyHistory>> | null = null;
+    let alpacaDailyDetail = alpaca
+      ? "Alpaca SIP daily-history request did not complete"
+      : "Alpaca credentials are not configured";
+    if (alpaca) {
+      try {
+        alpacaDaily = await alpacaDailyHistory(alpaca);
+        alpacaDailyDetail = `${alpacaDaily.cacheHit ? "Cached" : "Fresh"} consolidated daily history returned`;
+      } catch (error) {
+        alpacaDailyDetail = error instanceof Error
+          ? error.message
+          : "Alpaca SIP daily-history request failed";
+      }
+    }
     const nowParts = ny(endpointCheckedAtMs / 1000);
     const nowMinute = Number(nowParts.hour) * 60 + Number(nowParts.minute);
     const fetchedParts = ny(history.fetchedAt / 1000);
@@ -431,7 +502,7 @@ export async function GET() {
     const dailyChart = history.daily;
     const minuteChart = history.minute;
     const dailyQuote = dailyChart.indicators?.quote?.[0];
-    const daily = (dailyChart.timestamp ?? [])
+    const yahooDailyRows = (dailyChart.timestamp ?? [])
       .map((timestamp, index) => ({
         date: displayDate(new Date(timestamp * 1000)),
         dateKey: etDate(new Date(timestamp * 1000)),
@@ -439,7 +510,23 @@ export async function GET() {
         high: dailyQuote?.high?.[index],
         low: dailyQuote?.low?.[index],
         close: dailyQuote?.close?.[index],
-      }))
+        timestampMs: timestamp * 1000,
+      }));
+    const alpacaDailyRows = (alpacaDaily?.bars ?? []).flatMap((bar) => {
+      const timestampMs = Date.parse(bar.t ?? "");
+      if (!Number.isFinite(timestampMs)) return [];
+      return [{
+        date: displayDate(new Date(timestampMs)),
+        dateKey: etDate(new Date(timestampMs)),
+        open: bar.o,
+        high: bar.h,
+        low: bar.l,
+        close: bar.c,
+        timestampMs,
+      }];
+    });
+    const selectedDailyRows = alpacaDailyRows.length ? alpacaDailyRows : yahooDailyRows;
+    const daily = selectedDailyRows
       .filter(
         (row): row is {
            date: string;
@@ -448,9 +535,11 @@ export async function GET() {
            high: number;
            low: number;
            close: number;
+           timestampMs: number;
         } =>
            row.dateKey < targetDate &&
            (row.dateKey < todayKey || todaySessionFinalized) &&
+           Number.isFinite(row.timestampMs) &&
            valid(row.open) &&
            valid(row.high) &&
           valid(row.low) &&
@@ -632,15 +721,16 @@ export async function GET() {
         quoteAgeMs <= OPEN_QUOTE_STALE_MS,
     );
 
-    const latestDailyTimestamp = dailyChart.timestamp?.at(-1);
-    const earliestDailyTimestamp = dailyChart.timestamp?.at(0);
-    const dailyObservedAtMs = valid(latestDailyTimestamp)
-      ? latestDailyTimestamp * 1000
-      : null;
+    const completedDailyTimestamps = selectedDailyRows
+      .filter((row) => daily.some((item) => item.dateKey === row.dateKey))
+      .map((row) => row.timestampMs)
+      .filter(valid);
+    const dailyObservedAtMs = completedDailyTimestamps.at(-1) ?? null;
+    const earliestDailyObservedAtMs = completedDailyTimestamps.at(0) ?? null;
     const historyObservedAtMs = latestHistoryBar?.time ?? null;
     const historyWindowStartObservedAtMs = Math.min(
       ...[
-        valid(earliestDailyTimestamp) ? earliestDailyTimestamp * 1000 : null,
+        earliestDailyObservedAtMs,
         historicalBars.at(0)?.time ?? null,
       ].filter(valid),
     );
@@ -663,8 +753,9 @@ export async function GET() {
         targetDate,
         price,
         previousClose:
-          alpacaLive?.prevDailyBar?.c ??
           daily.at(-1)?.close ??
+          alpacaLive?.dailyBar?.c ??
+          alpacaLive?.prevDailyBar?.c ??
           liveQuote?.pc ??
           minuteChart.meta?.chartPreviousClose ??
           minuteChart.meta?.previousClose ??
@@ -704,8 +795,11 @@ export async function GET() {
               quoteObservedAtMs == null ? "unavailable" : "provider",
           },
           history: {
-            provider: "yahoo",
+            provider: alpacaDaily ? "alpaca_sip_daily+yahoo_minute" : "yahoo",
             fetchedAt: new Date(history.fetchedAt).toISOString(),
+            dailyProvider: alpacaDaily ? "alpaca_sip" : "yahoo",
+            dailyFetchedAt: alpacaDaily ? new Date(alpacaDaily.fetchedAt).toISOString() : new Date(history.fetchedAt).toISOString(),
+            minuteProvider: "yahoo",
             latestMinuteObservedAt: iso(historyObservedAtMs),
             latestDailyObservedAt: iso(dailyObservedAtMs),
             historyWindowStartObservedAt: iso(historyWindowStartObservedAtMs),
@@ -733,6 +827,16 @@ export async function GET() {
             detail: alpacaDetail,
           },
           {
+            id: "alpaca_sip_history",
+            role: "completed_daily_history",
+            status: alpacaDaily ? "ok" : alpaca ? "error" : "not_configured",
+            observedAt: iso(dailyObservedAtMs),
+            fetchedAt: alpacaDaily ? new Date(alpacaDaily.fetchedAt).toISOString() : null,
+            coverage:
+              "Consolidated SIP daily OHLCV bars from Alpaca; only completed sessions enter the historical model inputs.",
+            detail: alpacaDailyDetail,
+          },
+          {
             id: "finnhub",
             role: "fallback_reference_quote",
             status: finnhubStatus,
@@ -744,7 +848,7 @@ export async function GET() {
           },
           {
             id: "yahoo",
-            role: "minute_and_daily_history",
+            role: alpacaDaily ? "minute_history_and_daily_fallback" : "minute_and_daily_history",
             status: historyCacheAgeMs > HISTORY_STALE_MS ? "stale" : "ok",
             observedAt: iso(historyObservedAtMs),
             fetchedAt: new Date(history.fetchedAt).toISOString(),

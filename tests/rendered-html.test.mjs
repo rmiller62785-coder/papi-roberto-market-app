@@ -26,12 +26,15 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(page, /Evidence/);
   assert.match(page, /Model Lab/);
   assert.match(page, /MOO Planner/);
+  assert.match(page, /RecentSessionsTable/);
+  assert.match(page, /Past opens, highs, lows and closes/);
+  assert.match(page, /History API pulled/);
   assert.match(page, /9:31 Confirmation/);
   assert.match(page, /Sessions/);
   assert.match(page, /Evidence/);
   assert.match(page, /Model Lab/);
   assert.match(page, /Data Health/);
-  assert.match(page, /workflow==="moo"\?<MooDecisionSurface/);
+  assert.match(page, /workflow==="moo"\?<><MooDecisionSurface/);
   assert.match(page, /buildMooDecisionSnapshot/);
   assert.match(mooSurface, /Predicted Official Open/);
   assert.match(mooSurface, /NO TRADE/);
@@ -74,6 +77,7 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(styles, /\.source-cell/);
   assert.match(styles, /\.estimate-state\.forming/);
   assert.doesNotMatch(page, /SkeletonPreview/);
+  assert.doesNotMatch(page, /APCA_API_SECRET_KEY/);
   assert.doesNotMatch(layout, /codex-preview|Starter Project/);
 });
 
@@ -125,6 +129,17 @@ test("pairs free event, calendar, filing, and cross-market sources", async () =>
   assert.match(market, /APCA-API-KEY-ID/);
   assert.match(market, /APCA-API-SECRET-KEY/);
   assert.match(market, /preferred_reference_quote/);
+  assert.match(market, /alpaca_sip_history/);
+  assert.match(market, /completed_daily_history/);
+  assert.match(market, /url\.searchParams\.set\("feed", "sip"\)/);
+  const previousCloseBlock = market.slice(
+    market.indexOf("previousClose:"),
+    market.indexOf("// Backward-compatible aliases"),
+  );
+  assert.ok(
+    previousCloseBlock.indexOf("daily.at(-1)?.close") < previousCloseBlock.indexOf("alpacaLive?.prevDailyBar?.c"),
+    "latest completed session close must outrank Alpaca's previous-daily snapshot field",
+  );
   assert.match(library, /Freeze the original forecast\/plan/);
   assert.match(library, /export async function PATCH/);
   assert.match(library, /libraryWriteError/);
