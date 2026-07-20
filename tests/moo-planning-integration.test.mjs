@@ -13,7 +13,9 @@ test("Strict MOO uses the served forecast block and an exact prior session", asy
   assert.match(page, /Generic research snapshots never populate that field/);
   assert.match(page, /previousNasdaqSession\(mooSnapshot\.targetSession\)/);
   assert.match(page, /=== mooPlanningPreviousSession/);
-  assert.match(page, /planningSources\.planningInput = \{/);
+  assert.match(page, /const mooPlanningInput = \{/);
+  assert.match(page, /planning=\{mooPlanningInput\}/);
+  assert.doesNotMatch(page, /planningSources\.planningInput = \{/);
 });
 
 test("paper planner consumes the flat public-safe broker status contract", async () => {
