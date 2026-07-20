@@ -193,7 +193,7 @@ export default function Home() {
     };
   })();
   planningSources.researchPreview = strictResearchPreview;
-  const mooPlanningPreviousSession = previousNasdaqSession(mooSnapshot.targetSession);
+  const mooPlanningPreviousSession = previousNasdaqSession(mooSnapshot.targetSession, { inclusive: false });
   const mooPlanningPrevious = data?.daily.find(row => (row.dateKey ?? row.date) === mooPlanningPreviousSession);
   const mooPlanningInput = {
     estimatedOpenCents: priceCents(strictResearchPreview.median),
