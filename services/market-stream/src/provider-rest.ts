@@ -21,7 +21,10 @@ export class AlpacaRestRecoveryClient implements ProviderRestRecovery {
   readonly #maximumPages: number;
   constructor(input: { feed: AlpacaFeed; keyId: string; secretKey: string; fetcher?: typeof fetch; now?: () => number; maximumPages?: number }) {
     this.#feed = input.feed; this.#keyId = input.keyId; this.#secretKey = input.secretKey;
-    this.#fetcher = input.fetcher ?? fetch; this.#now = input.now ?? Date.now;
+    // Do not retain Cloudflare's native fetch as a method value: calling that
+    // value through a private field supplies the client as `this`, which the
+    // Workers runtime rejects as an illegal invocation.
+    this.#fetcher = input.fetcher ?? ((request, init) => fetch(request, init)); this.#now = input.now ?? Date.now;
     this.#maximumPages = Math.max(1, Math.min(20, Math.trunc(input.maximumPages ?? DEFAULT_MAXIMUM_PAGES)));
   }
 

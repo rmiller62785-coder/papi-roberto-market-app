@@ -87,3 +87,21 @@ test("dense SIP recovery adaptively bisects a page-capped window and advances a 
   assert.equal(segment.events.every((event) => event.coverage.executionEligible === false), true);
   assert.ok(new Set(requestedEnds).size > 1, "the capped 15-minute window was bisected");
 });
+
+test("default recovery calls the platform fetch without rebinding it", async () => {
+  const originalFetch = globalThis.fetch;
+  const receivers = [];
+  globalThis.fetch = async function (url) {
+    receivers.push(this);
+    const path = new URL(url).pathname;
+    const key = path.endsWith("/trades") ? "trades" : path.endsWith("/quotes") ? "quotes" : "bars";
+    return Response.json({ [key]: [], next_page_token: null });
+  };
+  try {
+    const client = new AlpacaRestRecoveryClient({ feed: "sip", keyId: "key", secretKey: "secret", now: () => base + 100 });
+    await client.fetchEvents({ symbol: "NVDA", feed: "sip", atOrAfterProviderAt: base, beforeOrAt: base });
+    assert.deepEqual(receivers, [undefined, undefined, undefined]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

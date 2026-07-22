@@ -187,7 +187,11 @@ export class SignedSitesIngestionClient {
     this.#secret = input.secret;
     this.#audience = input.audience;
     this.#sitesAccessBypassToken = input.sitesAccessBypassToken;
-    this.#fetcher = input.fetcher ?? fetch;
+    // Cloudflare's native fetch is brand-checked. Storing it directly and
+    // invoking the private field as a method rebinds `this` to this client and
+    // fails at runtime with "Illegal invocation". Keep injected test fetchers
+    // unchanged, but call the platform function as a bare global operation.
+    this.#fetcher = input.fetcher ?? ((request, init) => fetch(request, init));
   }
   async send(batch: IngestionBatch, now = Date.now()): Promise<IngestionAck> {
     if (batch.schemaVersion !== MARKET_STREAM_SCHEMA || !batch.emissions.length) throw new Error("INGESTION_BATCH_INVALID");
