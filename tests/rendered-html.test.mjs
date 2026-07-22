@@ -127,6 +127,8 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(styles, /\.estimate-state\.forming/);
   assert.match(styles, /\.central-estimate/);
   assert.match(styles, /\.moo-session-picker/);
+  assert.match(page, /isUnavailableDecisionFreezeResponse/);
+  assert.match(page, /No point-in-time freeze archive exists for this session/);
   assert.match(styles, /\.external-effect-grid/);
   assert.doesNotMatch(page, /SkeletonPreview/);
   assert.doesNotMatch(page, /APCA_API_SECRET_KEY/);

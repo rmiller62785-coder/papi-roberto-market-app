@@ -17,7 +17,7 @@ import { deriveResearchLean } from "./research-lean";
 import { defaultTargetSession, enumerateNearbyTargetSessions } from "./target-session";
 import { previousNasdaqSession } from "./market-session";
 import { BUILD_VERSION } from "./build-version";
-import { isSelectedMarketPayload, selectedSessionOpeningEstimate, type SelectedMarketPayload } from "./selected-market-research";
+import { isSelectedMarketPayload, isUnavailableDecisionFreezeResponse, selectedSessionOpeningEstimate, type SelectedMarketPayload } from "./selected-market-research";
 import { isMooSystemStatus } from "./moo-status-guard";
 import {
   canReuseMainForecast,
@@ -165,8 +165,20 @@ export default function Home() {
     strictMarketPollRef.current = { sequence, controller, targetDate: mooTargetDate };
     try {
       const response = await fetch(`/api/market?symbol=NVDA&targetDate=${encodeURIComponent(mooTargetDate)}&view=STRICT`, { cache: "no-store", signal: controller.signal });
-      if (!response.ok) throw new Error();
       const candidate: unknown = await response.json();
+      if (!response.ok) {
+        if (response.status === 503 && isUnavailableDecisionFreezeResponse(candidate, mooTargetDate)) {
+          if (sequence !== strictMarketPollRef.current.sequence || strictMarketPollRef.current.targetDate !== mooTargetDate) return;
+          setStrictMarket(null);
+          setStrictMarketTarget(mooTargetDate);
+          setStrictMarketError(tx(
+            "No point-in-time freeze archive exists for this session. It cannot be reconstructed after the cutoff.",
+            "No existe un archivo de congelación de punto en el tiempo para esta sesión. No puede reconstruirse después del corte.",
+          ));
+          return;
+        }
+        throw new Error();
+      }
       if (!isSelectedMarketPayload(candidate, mooTargetDate)) throw new Error("Strict market payload invalid");
       const payload = candidate;
       if (sequence !== strictMarketPollRef.current.sequence || strictMarketPollRef.current.targetDate !== mooTargetDate) return;

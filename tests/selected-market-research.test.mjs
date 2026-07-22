@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { marketValue, unavailableMarketValue } from "../app/market-contract.ts";
 import { nasdaqSessionSchedule } from "../app/market-session.ts";
-import { isSelectedMarketPayload, selectedSessionOpeningEstimate } from "../app/selected-market-research.ts";
+import { isSelectedMarketPayload, isUnavailableDecisionFreezeResponse, selectedSessionOpeningEstimate } from "../app/selected-market-research.ts";
 
 const at = Date.parse("2026-07-21T13:20:00Z");
 
@@ -96,6 +96,44 @@ function selectedPayload() {
 
 test("selected-market runtime guard accepts a coherent exact-session response", () => {
   assert.equal(isSelectedMarketPayload(selectedPayload(), "2026-07-21"), true);
+});
+
+function unavailableFreezeResponse() {
+  const marketContract = selectedPayload().marketContract;
+  const schedule = nasdaqSessionSchedule("2026-07-21");
+  const missing = () => unavailableMarketValue({
+    availability: "MISSING",
+    freshness: "FROZEN",
+    reasonCode: "DECISION_FREEZE_ARCHIVE_UNAVAILABLE",
+  });
+  marketContract.view = "DECISION_FREEZE";
+  marketContract.requestedAt = schedule.decisionFreezeAt + 60_000;
+  marketContract.effectiveAsOf = schedule.decisionFreezeAt;
+  marketContract.archive = { status: "UNAVAILABLE", latestPersistedAt: null, latestCompletedBarAt: null };
+  marketContract.quote = missing();
+  for (const key of ["open", "high", "low", "close", "volume"]) marketContract.previousSession[key] = missing();
+  for (const key of ["high", "low", "current", "volume"]) marketContract.targetSession.premarket[key] = missing();
+  for (const key of ["open", "high", "low", "close", "volume"]) marketContract.targetSession.regular[key] = missing();
+  for (const key of ["high", "low", "close", "volume"]) marketContract.targetSession.firstMinute[key] = missing();
+  marketContract.targetSession.firstMinute.complete = false;
+  return { error: "DECISION_FREEZE_ARCHIVE_UNAVAILABLE", targetDate: "2026-07-21", marketContract };
+}
+
+test("freeze-unavailable guard accepts only a complete fail-closed cutoff envelope", () => {
+  const valid = unavailableFreezeResponse();
+  assert.equal(isUnavailableDecisionFreezeResponse(valid, "2026-07-21"), true);
+
+  const wrongTarget = structuredClone(valid);
+  wrongTarget.targetDate = "2026-07-22";
+  assert.equal(isUnavailableDecisionFreezeResponse(wrongTarget, "2026-07-21"), false);
+
+  const leakedValue = structuredClone(valid);
+  leakedValue.marketContract.quote = value(101);
+  assert.equal(isUnavailableDecisionFreezeResponse(leakedValue, "2026-07-21"), false);
+
+  const wrongArchiveState = structuredClone(valid);
+  wrongArchiveState.marketContract.archive.status = "EMPTY";
+  assert.equal(isUnavailableDecisionFreezeResponse(wrongArchiveState, "2026-07-21"), false);
 });
 
 test("selected-market runtime guard rejects malformed rows and unfinished or cross-session bars", () => {

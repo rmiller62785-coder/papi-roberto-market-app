@@ -50,6 +50,12 @@ export type SelectedMarketPayload = {
   firstMinuteHistory?: Array<{ range: number; volume: number }>;
 };
 
+export type UnavailableDecisionFreezeResponse = {
+  error: "DECISION_FREEZE_ARCHIVE_UNAVAILABLE";
+  targetDate: string;
+  marketContract: TargetMarketEnvelope;
+};
+
 type JsonObject = Record<string, unknown>;
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const AVAILABILITY = ["AVAILABLE", "NOT_STARTED", "MISSING", "NOT_ENTITLED", "SOURCE_ERROR"] as const;
@@ -225,6 +231,35 @@ export function isSelectedMarketPayload(value: unknown, targetDate: string): val
     objectValue(row) && typeof row.date === "string" && DATE_KEY.test(row.date) && row.date < targetDate &&
     finite(row.range) && row.range >= 0 && finite(row.volume) && row.volume >= 0 && finite(row.close) && row.close >= 0))) return false;
   return true;
+}
+
+/** Recognizes the intentional fail-closed response for a cutoff that was never archived. */
+export function isUnavailableDecisionFreezeResponse(
+  value: unknown,
+  targetDate: string,
+): value is UnavailableDecisionFreezeResponse {
+  if (!objectValue(value) || value.error !== "DECISION_FREEZE_ARCHIVE_UNAVAILABLE" || value.targetDate !== targetDate ||
+    !marketEnvelopePayload(value.marketContract, targetDate)) return false;
+  const contract = value.marketContract;
+  const unavailableValues = [
+    contract.quote,
+    contract.previousSession.open, contract.previousSession.high, contract.previousSession.low,
+    contract.previousSession.close, contract.previousSession.volume,
+    contract.targetSession.premarket.high, contract.targetSession.premarket.low,
+    contract.targetSession.premarket.current, contract.targetSession.premarket.volume,
+    contract.targetSession.regular.open, contract.targetSession.regular.high,
+    contract.targetSession.regular.low, contract.targetSession.regular.close,
+    contract.targetSession.regular.volume,
+    contract.targetSession.firstMinute.high, contract.targetSession.firstMinute.low,
+    contract.targetSession.firstMinute.close, contract.targetSession.firstMinute.volume,
+  ];
+  return contract.view === "DECISION_FREEZE" &&
+    contract.archive.status === "UNAVAILABLE" &&
+    contract.archive.latestPersistedAt == null &&
+    contract.archive.latestCompletedBarAt == null &&
+    contract.effectiveAsOf === nasdaqSessionSchedule(targetDate).decisionFreezeAt &&
+    unavailableValues.every((item) => item.value == null && item.availability === "MISSING" &&
+      item.freshness === "FROZEN" && item.reasonCode === "DECISION_FREEZE_ARCHIVE_UNAVAILABLE" && item.provenance == null);
 }
 
 function ema(values: number[], period: number) {
