@@ -46,7 +46,10 @@ export class AlpacaRestRecoveryClient implements ProviderRestRecovery {
         receivedAt,
         processedAt: this.#now(),
         transport: "REST_RECOVERY",
-        providerEntitlementConfirmed: true,
+        // A successful historical SIP request proves API access, not a live
+        // execution quote. Recovery evidence is never promoted into the
+        // Strict gate; only acknowledged WebSocket observations may qualify.
+        providerEntitlementConfirmed: false,
       }));
     }
     const unique = new Map(events

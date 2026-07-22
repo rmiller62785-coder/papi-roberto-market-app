@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { parseIngestionBatch } from "../../../app/market-stream-receiver.ts";
 import { normalizeAlpacaMessages } from "../src/ingestor.ts";
-import { advanceMarketWatermark, initialMarketStreamState, reduceProviderEvent } from "../src/reducer.ts";
+import { advanceMarketWatermark, initialMarketStreamState, reduceProviderEvent, setProviderConnectionState } from "../src/reducer.ts";
 
 const at = Date.parse("2026-07-20T13:20:01Z");
 const frame = JSON.stringify([{ T: "t", S: "NVDA", i: 7, x: "Q", p: 200, s: 1, c: ["@"], t: "2026-07-20T13:20:00.000000001Z", z: "C" }]);
@@ -35,6 +35,29 @@ test("Sites receiver rejects incoherent SIP execution promotion", () => {
   assert.throws(() => parseIngestionBatch(value), /INGESTION_EMISSION_INVALID/);
 });
 
+test("Sites receiver rejects REST recovery events carrying execution-eligible coverage", () => {
+  const value = structuredClone(batch(true));
+  value.emissions[0].sourceEvent.transport = "REST_RECOVERY";
+  assert.throws(() => parseIngestionBatch(value), /INGESTION_EMISSION_INVALID/);
+});
+
+test("live SIP state retains research-only coverage on REST recovery emissions", () => {
+  const live = setProviderConnectionState(initialMarketStreamState("sip", "stream-1"), "LIVE", at - 10);
+  const [recovery] = normalizeAlpacaMessages(frame, {
+    feed: "sip", receivedAt: at, processedAt: at + 1,
+    transport: "REST_RECOVERY", providerEntitlementConfirmed: false,
+  });
+  const recovered = reduceProviderEvent(live.state, recovery);
+  assert.equal(recovered.state.coverage.executionEligible, true, "live stream state remains provider-confirmed");
+  assert.equal(recovered.emissions[0].coverage.executionEligible, false, "REST event keeps its own provenance");
+  const parsed = parseIngestionBatch({
+    schemaVersion: "aperture-market-stream-v2", streamId: "stream-1", fromSequence: 1, toSequence: 2,
+    emissions: [...live.emissions, ...recovered.emissions],
+  });
+  assert.equal(parsed.emissions[1].sourceEvent.transport, "REST_RECOVERY");
+  assert.equal(parsed.emissions[1].coverage.executionEligible, false);
+});
+
 test("Sites receiver accepts pending, finalized, and corrected immutable minute revisions", () => {
   const [bar] = normalizeAlpacaMessages(JSON.stringify([{ T: "b", S: "NVDA", o: 200, h: 201, l: 199, c: 200.5, v: 1000, n: 20, vw: 200.2, t: "2026-07-20T13:20:00Z" }]),
     { feed: "iex", receivedAt: Date.parse("2026-07-20T13:21:01Z"), processedAt: Date.parse("2026-07-20T13:21:01.001Z") });
@@ -48,6 +71,26 @@ test("Sites receiver accepts pending, finalized, and corrected immutable minute 
   assert.deepEqual(parsed.emissions.map((emission) => emission.minute?.revision), [1, 2, 3]);
   assert.deepEqual(parsed.emissions.map((emission) => emission.type), ["EVENT", "MINUTE_COMPLETED", "MINUTE_CORRECTED"]);
   assert.deepEqual(parsed.emissions.map((emission) => emission.minute?.sourceTransport), ["WEBSOCKET", "WEBSOCKET", "WEBSOCKET"]);
+});
+
+test("Sites receiver rejects a completed minute whose provider bar arrived before minute end", () => {
+  const [bar] = normalizeAlpacaMessages(JSON.stringify([{ T: "b", S: "NVDA", o: 200, h: 201, l: 199, c: 200.5, v: 1000, n: 20, vw: 200.2, t: "2026-07-20T13:20:00Z" }]),
+    { feed: "iex", receivedAt: Date.parse("2026-07-20T13:20:30Z"), processedAt: Date.parse("2026-07-20T13:20:30.001Z") });
+  const pending = reduceProviderEvent(initialMarketStreamState("iex", "early-bar-stream"), bar);
+  const forged = structuredClone(pending.emissions[0]);
+  forged.type = "MINUTE_COMPLETED";
+  forged.sourceEvent = null;
+  forged.processedAt = Date.parse("2026-07-20T13:21:35Z");
+  forged.availableAt = forged.processedAt;
+  forged.minute.status = "FINAL";
+  forged.minute.revision += 1;
+  forged.minute.finalizedAt = forged.processedAt;
+  forged.minute.processedAt = forged.processedAt;
+  forged.minute.availableAt = forged.availableAt;
+  assert.throws(() => parseIngestionBatch({
+    schemaVersion: "aperture-market-stream-v2", streamId: "early-bar-stream",
+    fromSequence: 1, toSequence: 1, emissions: [forged],
+  }), /INGESTION_EMISSION_INVALID/);
 });
 
 test("Sites receiver accepts the explicit LIVE delta emitted by the first websocket event after recovery", () => {

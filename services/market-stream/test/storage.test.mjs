@@ -3,6 +3,7 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 
 import { normalizeAlpacaMessages } from "../src/ingestor.ts";
+import { NvdaMarketStream } from "../src/index.ts";
 import { advanceMarketWatermark, initialMarketStreamState, reduceProviderEvent } from "../src/reducer.ts";
 import { DurableSqlNonceStore, MarketStreamRepository } from "../src/storage.ts";
 
@@ -25,7 +26,10 @@ function memoryStorage() {
       try { const value = callback(); database.exec("COMMIT"); return value; }
       catch (error) { database.exec("ROLLBACK"); throw error; }
     },
-    async setAlarm() {},
+    alarmSetCount: 0,
+    alarmDeleteCount: 0,
+    async setAlarm() { this.alarmSetCount += 1; },
+    async deleteAlarm() { this.alarmDeleteCount += 1; },
   };
 }
 
@@ -138,4 +142,44 @@ test("durable nonce insertion is atomic and expiry aware", async () => {
   assert.equal(await nonces.rememberOnce("audience:nonce", 200), false);
   now = 201;
   assert.equal(await nonces.rememberOnce("audience:nonce", 300), true);
+});
+
+test("a legacy IEX Durable Object retires under SIP configuration and cannot rearm", async () => {
+  const storage = memoryStorage();
+  const repository = new MarketStreamRepository(storage);
+  repository.initializeSchema();
+  repository.saveInitialState(initialMarketStreamState("iex", "legacy-iex-stream"));
+  const ctx = {
+    storage,
+    blockConcurrencyWhile(callback) { return callback(); },
+    acceptWebSocket() {},
+    getWebSockets() { return []; },
+  };
+  const env = {
+    MARKET_STREAM: {},
+    APCA_API_KEY_ID: "key",
+    APCA_API_SECRET_KEY: "secret",
+    ALPACA_FEED: "sip",
+    SIP_ENTITLED: "true",
+    SITES_INGESTION_URL: "https://aperture-nvda-plan.rmiller62785.chatgpt.site/api/internal/market-stream",
+    SITES_INGESTION_SECRET: "ingestion-secret-32-bytes-minimum-value",
+    SITES_INGESTION_AUDIENCE: "aperture-sites-market-ingestion",
+    SITES_ACCESS_BYPASS_TOKEN: "sites-access-token",
+    STREAM_CONTROL_SECRET: "control-secret-32-bytes-minimum-value",
+    BROWSER_ACCESS_SECRET: "browser-secret-32-bytes-minimum-value",
+    BROWSER_ALLOWED_ORIGINS: "https://aperture-nvda-plan.rmiller62785.chatgpt.site",
+  };
+  const stream = new NvdaMarketStream(ctx, env);
+
+  await stream.alarm();
+  assert.equal(storage.alarmDeleteCount, 2, "constructor and wake both clear the legacy alarm");
+  assert.equal(storage.alarmSetCount, 0, "retired object never rearms itself");
+  assert.equal(repository.loadState().feed, "iex", "legacy evidence is not rewritten as SIP");
+
+  const response = await stream.fetch(new Request("https://market-stream.internal/internal/tick", {
+    headers: { "x-stream-control": env.STREAM_CONTROL_SECRET },
+  }));
+  assert.equal(response.status, 410);
+  assert.deepEqual(await response.json(), { error: "STREAM_INSTANCE_RETIRED" });
+  assert.equal(storage.alarmSetCount, 0);
 });

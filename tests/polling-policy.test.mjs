@@ -10,6 +10,8 @@ import {
   forecastPollingIntervalMs,
   marketPollingIntervalMs,
   mooStatusPollingIntervalMs,
+  remainingStatusValidityMs,
+  statusExpiryDelayMs,
 } from "../app/polling-policy.ts";
 
 const context = (overrides = {}) => ({
@@ -53,9 +55,34 @@ test("request watchdogs are explicit and endpoint-specific", () => {
 });
 
 test("visible Strict status refreshes inside its 45-second validity window", () => {
-  assert.equal(mooStatusPollingIntervalMs(context({ workflow: "moo" })), 30_000);
+  assert.equal(mooStatusPollingIntervalMs(context({ workflow: "moo" })), 1_000);
+  assert.equal(mooStatusPollingIntervalMs(context({ session: "PREMARKET", workflow: "moo" })), 1_000);
+  assert.equal(mooStatusPollingIntervalMs(context({ session: "AFTER-HOURS", workflow: "moo" })), 1_000);
+  assert.equal(mooStatusPollingIntervalMs(context({ session: undefined, workflow: "moo" })), 1_000);
   assert.equal(mooStatusPollingIntervalMs(context({ visibilityState: "hidden" })), 120_000);
   assert.equal(mooStatusPollingIntervalMs(context({ online: false })), 300_000);
+  assert.equal(mooStatusPollingIntervalMs(context({
+    session: "CLOSED",
+    workflow: "confirmation",
+    statusSurfaceVisible: true,
+  })), 1_000);
+});
+
+test("strict status lifetime deducts the complete request round trip", () => {
+  assert.equal(remainingStatusValidityMs(12_000, 10_000, 750), 1_250);
+  assert.equal(remainingStatusValidityMs(12_000, 10_000, 2_000), 0);
+  assert.equal(remainingStatusValidityMs(12_000, 10_000, 2_500), 0);
+  assert.equal(remainingStatusValidityMs(12_000, 10_000, -100), 2_000);
+  assert.equal(remainingStatusValidityMs(Number.NaN, 10_000, 100), 0);
+});
+
+test("strict status expiry schedules the exact remaining monotonic lifetime", () => {
+  assert.equal(statusExpiryDelayMs(1_000, 250, 1_000), 250);
+  assert.equal(statusExpiryDelayMs(1_000, 250, 1_249), 1);
+  assert.equal(statusExpiryDelayMs(1_000, 250, 1_250), 0);
+  assert.equal(statusExpiryDelayMs(1_000, 250, 1_500), 0);
+  assert.equal(statusExpiryDelayMs(1_000, 250, 900), 250);
+  assert.equal(statusExpiryDelayMs(Number.NaN, 250, 1_000), 0);
 });
 
 test("the strict forecast reuses the main response only for the same target", () => {

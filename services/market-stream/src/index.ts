@@ -98,6 +98,7 @@ export class NvdaMarketStream {
   #providerRecoveryPromise: Promise<void> | null = null;
   #lastError: string | null = null;
   #lastErrorAt: number | null = null;
+  #retired = false;
   readonly #ready: Promise<void>;
 
   constructor(ctx: DurableObjectStateLike, env: MarketStreamEnv) {
@@ -109,6 +110,7 @@ export class NvdaMarketStream {
       url: env.SITES_INGESTION_URL,
       secret: env.SITES_INGESTION_SECRET,
       audience: env.SITES_INGESTION_AUDIENCE,
+      sitesAccessBypassToken: env.SITES_ACCESS_BYPASS_TOKEN,
     });
     this.#providerRecovery = new AlpacaRestRecoveryClient({
       feed: this.#config.feed,
@@ -118,7 +120,17 @@ export class NvdaMarketStream {
     this.#ready = ctx.blockConcurrencyWhile(async () => {
       this.#repository.initializeSchema();
       const stored = this.#repository.loadState();
-      if (stored?.schemaVersion === MARKET_STREAM_SCHEMA && stored.feed === this.#config.feed) {
+      if (stored?.schemaVersion === MARKET_STREAM_SCHEMA && stored.feed !== this.#config.feed) {
+        // A feed switch changes the Durable Object instance name, but an alarm
+        // already stored by the previous instance may still wake it. Preserve
+        // its durable evidence and permanently retire it instead of silently
+        // converting the old IEX object into a second SIP supervisor.
+        this.#market = stored;
+        this.#retired = true;
+        await this.ctx.storage.deleteAlarm();
+        return;
+      }
+      if (stored?.schemaVersion === MARKET_STREAM_SCHEMA) {
         this.#market = {
           ...stored,
           barIntegrity: stored.barIntegrity ?? { state: "CLEAR", reason: null, affectedMinuteStarts: [], detectedAt: null },
@@ -136,6 +148,7 @@ export class NvdaMarketStream {
 
   async fetch(request: Request) {
     await this.#ready;
+    if (this.#retired) return json({ error: "STREAM_INSTANCE_RETIRED" }, 410);
     const url = new URL(request.url);
     if (url.pathname === "/internal/tick") {
       if (!controlAuthorized(request, this.env.STREAM_CONTROL_SECRET)) return json({ error: "UNAUTHORIZED" }, 401);
@@ -195,6 +208,10 @@ export class NvdaMarketStream {
 
   async alarm() {
     await this.#ready;
+    if (this.#retired) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
     await this.#tick();
   }
 
@@ -218,6 +235,10 @@ export class NvdaMarketStream {
   }
 
   async #tick() {
+    if (this.#retired) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
     // Schedule the next watchdog before doing fallible work so recovery does not
     // depend on Cloudflare's finite alarm retry budget.
     await this.ctx.storage.setAlarm(Date.now() + WATCHDOG_ALARM_MS);
@@ -233,7 +254,7 @@ export class NvdaMarketStream {
   }
 
   #ensureSupervisor() {
-    if (this.#supervisor) return;
+    if (this.#retired || this.#supervisor) return;
     this.#supervisor = new AlpacaStreamSupervisor({
       feed: this.#market.feed,
       symbol: "NVDA",

@@ -121,6 +121,7 @@ function validProviderEvent(value: unknown, feed: "iex" | "sip"): value is Provi
     !safeInteger(value.receivedAt) || !safeInteger(value.processedAt) || !safeInteger(value.availableAt) ||
     value.sourceObservedAt > value.receivedAt + MAX_PROVIDER_FUTURE_SKEW_MS || value.receivedAt > value.processedAt ||
     value.processedAt > value.availableAt || !(value.providerSequence == null || safeInteger(value.providerSequence))) return false;
+  if (value.transport === "REST_RECOVERY" && value.coverage.executionEligible) return false;
   const payloads = [value.trade, value.quote, value.bar, value.correction, value.cancel].filter((item) => item != null);
   if (payloads.length !== 1) return false;
   if (value.kind === "TRADE") return validTrade(value.trade) && objectValue(value.trade) &&
@@ -143,9 +144,9 @@ function validMinute(value: unknown, feed: "iex" | "sip"): value is Authoritativ
     !(value.correctedAt == null || safeInteger(value.correctedAt))) return false;
   if (!["WEBSOCKET", "REST_RECOVERY"].includes(String(value.sourceTransport))) return false;
   if (value.status === "PENDING" && (value.finalizedAt != null || value.correctedAt != null)) return false;
-  if (value.status === "FINAL" && (!safeInteger(value.finalizedAt) || value.finalizedAt < value.minuteEnd ||
+  if (value.status === "FINAL" && (value.receivedAt < value.minuteEnd || !safeInteger(value.finalizedAt) || value.finalizedAt < value.minuteEnd ||
     value.finalizedAt > value.processedAt || value.correctedAt != null)) return false;
-  if (value.status === "CORRECTED" && (!safeInteger(value.finalizedAt) || !safeInteger(value.correctedAt) ||
+  if (value.status === "CORRECTED" && (value.receivedAt < value.minuteEnd || !safeInteger(value.finalizedAt) || !safeInteger(value.correctedAt) ||
     value.finalizedAt < value.minuteEnd || value.correctedAt < value.minuteEnd ||
     value.finalizedAt > value.processedAt || value.correctedAt > value.processedAt)) return false;
   return exactCoverage({
@@ -257,10 +258,12 @@ function coverageLabel(coverage: MarketCoverage) {
 type ProviderState = NonNullable<MarketStreamEmission["delta"]["providerState"]>;
 
 function sourceState(emission: MarketStreamEmission, now: number, effectiveProviderState: ProviderState | null): MarketSourceStateEvent {
-  const providerConfirmed = effectiveProviderState === "LIVE" || (effectiveProviderState == null && emission.sourceEvent != null);
+  const liveConnectionConfirmed = effectiveProviderState === "LIVE";
+  const providerConfirmed = liveConnectionConfirmed ||
+    (emission.feed === "iex" && effectiveProviderState == null && emission.sourceEvent != null);
   const entitlementConfirmed = emission.feed === "iex"
     ? providerConfirmed
-    : providerConfirmed && emission.coverage.executionEligible;
+    : liveConnectionConfirmed;
   const state = effectiveProviderState === "DISCONNECTED"
     ? "UNAVAILABLE"
     : providerConfirmed ? "CURRENT" : "RECOVERING";
@@ -285,7 +288,11 @@ function sourceState(emission: MarketStreamEmission, now: number, effectiveProvi
   };
 }
 
-async function observation(emission: MarketStreamEmission, now: number): Promise<MarketQualifiedObservation | null> {
+async function observation(
+  emission: MarketStreamEmission,
+  now: number,
+  effectiveProviderState: ProviderState | null,
+): Promise<MarketQualifiedObservation | null> {
   const event = emission.sourceEvent;
   if (!event || !["TRADE", "QUOTE", "CORRECTION"].includes(event.kind)) return null;
   const kind = event.kind === "QUOTE" ? "QUOTE" : "TRADE";
@@ -301,7 +308,8 @@ async function observation(emission: MarketStreamEmission, now: number): Promise
     symbol: "NVDA",
     sessionDate: newYorkDateKey(event.sourceObservedAt),
     kind,
-    qualification: (event.coverage.executionEligible && event.coverage.scope === "CONSOLIDATED_SIP" ? "STRICT_EXECUTION" : "RESEARCH") as MarketQualifiedObservation["qualification"],
+    qualification: (effectiveProviderState === "LIVE" && event.transport === "WEBSOCKET" && event.coverage.executionEligible &&
+      event.coverage.scope === "CONSOLIDATED_SIP" ? "STRICT_EXECUTION" : "RESEARCH") as MarketQualifiedObservation["qualification"],
     entitlement: "ENTITLED" as const,
     coverage: coverageLabel(event.coverage),
     price: priceCents / 100,
@@ -445,7 +453,13 @@ async function firstLedgerBinding(database: D1Database, streamId: string) {
   return streamBinding(value);
 }
 
-async function latestProviderState(database: D1Database, streamId: string, throughSequence: number): Promise<ProviderState | null> {
+type ProviderStateEvidence = { state: ProviderState; connectionEpoch: number };
+
+async function latestProviderState(
+  database: D1Database,
+  streamId: string,
+  throughSequence: number,
+): Promise<ProviderStateEvidence | null> {
   if (throughSequence === 0) return null;
   const row = await database.prepare(`SELECT service_sequence,payload_json FROM market_stream_ingest_emissions
     WHERE stream_id=? AND service_sequence<=? AND json_type(payload_json,'$.delta.providerState')='text'
@@ -455,7 +469,9 @@ async function latestProviderState(database: D1Database, streamId: string, throu
   let value: unknown;
   try { value = JSON.parse(row.payload_json); } catch { reject("INGESTION_LEDGER_CONFLICT", 409); }
   if (!validEmission(value, streamId, row.service_sequence)) reject("INGESTION_LEDGER_CONFLICT", 409);
-  return value.delta.providerState ?? null;
+  return value.delta.providerState == null
+    ? null
+    : { state: value.delta.providerState, connectionEpoch: value.connectionEpoch };
 }
 
 function sameMinuteIdentity(left: AuthoritativeMinute, right: AuthoritativeMinute) {
@@ -679,12 +695,23 @@ export async function ingestMarketStreamBatch(database: D1Database, batchValue: 
   const observationRows: MarketQualifiedObservation[] = [];
   const invalidationRows: MarketObservationInvalidation[] = [];
   const minuteRows: Array<Omit<MarketCompletedMinuteBar, "id" | "revision">> = [];
-  let effectiveProviderState = await latestProviderState(database, batch.streamId, initialCursor);
+  let providerStateEvidence = await latestProviderState(database, batch.streamId, initialCursor);
   for (const emission of newEmissions) {
-    if (emission.delta.providerState) effectiveProviderState = emission.delta.providerState;
-    sourceRows.push(sourceState(emission, now, effectiveProviderState));
-    const admitted = await observation(emission, now);
+    // Observation qualification uses only state proven before this emission.
+    // An event cannot authorize itself as LIVE, and a prior epoch's LIVE state
+    // cannot cross the connection-epoch boundary.
+    const providerStateBeforeEmission = providerStateEvidence?.connectionEpoch === emission.connectionEpoch
+      ? providerStateEvidence.state
+      : null;
+    const admitted = await observation(emission, now, providerStateBeforeEmission);
     if (admitted) observationRows.push(admitted);
+    if (emission.delta.providerState) {
+      providerStateEvidence = { state: emission.delta.providerState, connectionEpoch: emission.connectionEpoch };
+    }
+    const effectiveProviderState = providerStateEvidence?.connectionEpoch === emission.connectionEpoch
+      ? providerStateEvidence.state
+      : null;
+    sourceRows.push(sourceState(emission, now, effectiveProviderState));
     const reconciled = await invalidation(emission, now);
     if (reconciled) invalidationRows.push(reconciled);
     const minute = await completedMinute(emission, now);

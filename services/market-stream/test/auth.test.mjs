@@ -73,10 +73,21 @@ test("browser tokens are atomically one-use to prevent replayed socket and HTTP 
 
 test("Sites delivery requires a valid contiguous acknowledgement and rejects non-2xx", async () => {
   const batch = { schemaVersion: "aperture-market-stream-v2", streamId: "stream-1", fromSequence: 1, toSequence: 1, emissions: [{}] };
-  const failing = new SignedSitesIngestionClient({ url, secret, audience, fetcher: async () => new Response("no", { status: 500 }) });
+  const input = { url, secret, audience, sitesAccessBypassToken: "sites-access-token" };
+  const failing = new SignedSitesIngestionClient({ ...input, fetcher: async () => new Response("no", { status: 500 }) });
   await assert.rejects(() => failing.send(batch), /INGESTION_HTTP_500/);
-  const accepting = new SignedSitesIngestionClient({ url, secret, audience, fetcher: async () => Response.json({ ok: true, streamId: "stream-1", highestContiguousSequence: 1 }) });
+  let forwardedAuthorization = null;
+  let redirectMode = null;
+  const accepting = new SignedSitesIngestionClient({ ...input, fetcher: async (_url, init) => {
+    forwardedAuthorization = new Headers(init.headers).get("OAI-Sites-Authorization");
+    redirectMode = init.redirect;
+    return Response.json({ ok: true, streamId: "stream-1", highestContiguousSequence: 1 });
+  } });
   assert.equal((await accepting.send(batch)).highestContiguousSequence, 1);
-  const invalid = new SignedSitesIngestionClient({ url, secret, audience, fetcher: async () => Response.json({ ok: true, streamId: "other", highestContiguousSequence: 1 }) });
+  assert.equal(forwardedAuthorization, "Bearer sites-access-token");
+  assert.equal(redirectMode, "manual");
+  const redirecting = new SignedSitesIngestionClient({ ...input, fetcher: async () => new Response(null, { status: 302, headers: { location: "https://evil.test/collect" } }) });
+  await assert.rejects(() => redirecting.send(batch), /INGESTION_HTTP_302/);
+  const invalid = new SignedSitesIngestionClient({ ...input, fetcher: async () => Response.json({ ok: true, streamId: "other", highestContiguousSequence: 1 }) });
   await assert.rejects(() => invalid.send(batch), /INGESTION_ACK_INVALID/);
 });

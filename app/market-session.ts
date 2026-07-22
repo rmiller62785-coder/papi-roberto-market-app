@@ -2,6 +2,10 @@ import type { MooDeadline, MooLifecycle } from "./moo-contract.ts";
 
 const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const NEW_YORK = "America/New_York";
+/** Versioned Nasdaq-announced one-off full-day closures outside the formulaic holiday calendar. */
+const NASDAQ_AD_HOC_FULL_DAY_CLOSURES_V1 = new Set([
+  "2025-01-09", // National Day of Mourning for President Jimmy Carter.
+]);
 
 type SessionOptions = { inclusive?: boolean };
 type FreezeOptions = { freezeHour?: number; freezeMinute?: number; freezeSecond?: number };
@@ -99,7 +103,7 @@ function holidaysForYear(year: number) {
 
 export function isNasdaqHoliday(dateKey: string) {
   const { year } = dateParts(dateKey);
-  return holidaysForYear(year).has(dateKey);
+  return holidaysForYear(year).has(dateKey) || NASDAQ_AD_HOC_FULL_DAY_CLOSURES_V1.has(dateKey);
 }
 
 export function isNasdaqSessionDate(dateKey: string) {

@@ -5,6 +5,8 @@ export type PollingContext = {
   workflow: DashboardWorkflow;
   visibilityState: DocumentVisibilityState;
   online: boolean;
+  /** The dedicated operational-health surface needs the small status projection live. */
+  statusSurfaceVisible?: boolean;
 };
 
 export type ForecastReuseContext = {
@@ -15,7 +17,7 @@ export type ForecastReuseContext = {
 export const MARKET_REQUEST_TIMEOUT_MS = 12_000;
 export const FORECAST_REQUEST_TIMEOUT_MS = 20_000;
 
-export const MIN_POLL_INTERVAL_MS = 5_000;
+export const MIN_POLL_INTERVAL_MS = 1_000;
 export const MAX_POLL_INTERVAL_MS = 300_000;
 
 const HIDDEN_MARKET_POLL_INTERVAL_MS = 60_000;
@@ -81,12 +83,43 @@ export function forecastPollingIntervalMs(context: PollingContext) {
   ));
 }
 
-/** Server-owned Strict status has a 45-second validity window. Keep visible
- * evaluations inside that window without coupling expensive forecasts to it. */
+/** A qualified SIP quote expires after two seconds. Poll the small D1-backed
+ * status projection once per second while the market workflow is active. */
 export function mooStatusPollingIntervalMs(context: PollingContext) {
   if (!context.online) return MAX_POLL_INTERVAL_MS;
   if (context.visibilityState !== "visible") return HIDDEN_FORECAST_POLL_INTERVAL_MS;
+  if (context.statusSurfaceVisible) return 1_000;
+  // Strict status is independent of the research market payload. Keep its
+  // two-second SIP readiness projection current even when that separate
+  // payload has no usable session label.
+  if (context.workflow === "moo") return 1_000;
   return 30_000;
+}
+
+/**
+ * Convert the server-authored validity window into a browser-local remaining
+ * lifetime. The complete request round trip is deducted so network transit can
+ * never make an already-aging quote appear newer after it reaches the page.
+ */
+export function remainingStatusValidityMs(
+  validUntil: number,
+  evaluatedAt: number,
+  requestRoundTripMs: number,
+) {
+  if (![validUntil, evaluatedAt, requestRoundTripMs].every(Number.isFinite)) return 0;
+  return Math.max(0, validUntil - evaluatedAt - Math.max(0, requestRoundTripMs));
+}
+
+/** Delay until a received status must be invalidated on the browser's
+ * monotonic clock. This drives an exact timeout instead of relying on the
+ * coarser one-second display clock. */
+export function statusExpiryDelayMs(
+  receivedAt: number,
+  remainingValidityMs: number,
+  now: number,
+) {
+  if (![receivedAt, remainingValidityMs, now].every(Number.isFinite)) return 0;
+  return Math.max(0, remainingValidityMs - Math.max(0, now - receivedAt));
 }
 
 /** A strict view may share the main response only for the identical target. */

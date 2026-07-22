@@ -13,7 +13,7 @@ if (!/"BROWSER_ALLOWED_ORIGINS"\s*:\s*"https:\/\/[^"]+"/.test(source)) failures.
 const feed = /"ALPACA_FEED"\s*:\s*"([^"]+)"/.exec(source)?.[1];
 if (feed !== "iex" && feed !== "sip") failures.push("ALPACA_FEED must be exactly iex or sip");
 if (feed === "sip" && !/"SIP_ENTITLED"\s*:\s*"true"/.test(source)) failures.push("SIP requires explicit SIP_ENTITLED=true");
-for (const secret of ["APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "SITES_INGESTION_URL", "SITES_INGESTION_SECRET", "STREAM_CONTROL_SECRET", "BROWSER_ACCESS_SECRET"]) {
+for (const secret of ["APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "SITES_INGESTION_URL", "SITES_INGESTION_SECRET", "SITES_ACCESS_BYPASS_TOKEN", "STREAM_CONTROL_SECRET", "BROWSER_ACCESS_SECRET"]) {
   if (new RegExp(`"${secret}"\\s*:`).test(source)) failures.push(`${secret} must be installed with wrangler secret put, not committed`);
 }
 
@@ -21,5 +21,5 @@ if (failures.length) {
   for (const failure of failures) process.stderr.write(`preflight: ${failure}\n`);
   process.exitCode = 1;
 } else {
-  process.stdout.write("preflight: configuration structure is production-safe; verify six Cloudflare secrets are installed before deploy\n");
+  process.stdout.write("preflight: configuration structure is production-safe; verify seven Cloudflare secrets are installed before deploy\n");
 }

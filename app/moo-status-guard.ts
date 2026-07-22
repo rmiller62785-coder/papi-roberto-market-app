@@ -1,8 +1,11 @@
 import {
+  isStrictUsSourceReady,
+  MOO_STRICT_US_QUOTE_MAX_AGE_MS,
   MOO_STREAM_HEARTBEAT_MAX_AGE_MS,
   MOO_STREAM_SOURCE_LAG_MAX_MS,
   type MooSystemStatus,
 } from "./moo-system-status.ts";
+import { MOO_PROVIDER_RECEIVE_CLOCK_SKEW_MS } from "./moo-contract.ts";
 
 type JsonObject = Record<string, unknown>;
 
@@ -98,14 +101,40 @@ function uncommissionedSourcePayload(value: unknown) {
     value.entitlement === "NOT_ENTITLED" && value.coverage === undefined &&
     value.observedAt === null && value.checkedAt === null && value.ageMs === null &&
     value.receivedAt === undefined && value.processedAt === undefined && value.availableAt === undefined &&
-    value.validUntil === undefined && value.reasonCode === undefined && value.state === "UNAVAILABLE";
+    value.validUntil === undefined && (
+      (value.reasonCode === undefined && value.state === "UNAVAILABLE") ||
+      (value.reasonCode === "MARKET_IS_CLOSED" && value.state === "CLOSED")
+    );
 }
 
-function strictStreamPayload(value: unknown, persistent: boolean, noteCode: unknown) {
+function paidSipUsSourcePayload(value: unknown, evaluatedAt: number) {
+  if (!strictSourcePayload(value) || !objectValue(value) || value.id !== "US" ||
+    value.label !== "U.S. NVDA execution quote" || value.venue !== "U.S. consolidated SIP" ||
+    value.provider !== "Alpaca SIP" ||
+    value.coverage !== "CONSOLIDATED_SIP" || value.checkedAt !== evaluatedAt) return false;
+  if (value.state === "LIVE") return value.entitlement === "REALTIME" &&
+    isStrictUsSourceReady(value as unknown as MooSystemStatus["decisionSnapshot"]["sources"][number], evaluatedAt);
+  if (value.state === "DEGRADED") {
+    return value.entitlement === "REALTIME" && value.reasonCode === "SOURCE_STALE" && safeTimestamp(value.observedAt) &&
+      safeTimestamp(value.receivedAt) && safeTimestamp(value.processedAt) && safeTimestamp(value.availableAt) &&
+      safeTimestamp(value.validUntil) && value.validUntil === value.observedAt + MOO_STRICT_US_QUOTE_MAX_AGE_MS &&
+      value.observedAt <= value.receivedAt + MOO_PROVIDER_RECEIVE_CLOCK_SKEW_MS && value.receivedAt <= value.processedAt &&
+      value.processedAt <= value.availableAt && value.availableAt <= evaluatedAt &&
+      value.ageMs === evaluatedAt - value.observedAt && value.ageMs > MOO_STRICT_US_QUOTE_MAX_AGE_MS;
+  }
+  return member(value.entitlement, ["REALTIME", "UNAVAILABLE"]) &&
+    member(value.state, ["CLOSED", "UNAVAILABLE"]) && value.observedAt === null && value.ageMs === null &&
+    value.receivedAt === undefined && value.processedAt === undefined && value.availableAt === undefined &&
+    value.validUntil === undefined &&
+    value.reasonCode === (value.state === "CLOSED" ? "MARKET_IS_CLOSED" : "SOURCE_UNAVAILABLE");
+}
+
+function strictStreamPayload(value: unknown, persistent: boolean, noteCode: unknown, evaluatedAt: number) {
   if (!objectValue(value) || !member(value.state, ["LIVE", "STALE", "UNAVAILABLE"]) ||
     nullableText(value.streamId) === false || nullableText(value.provider) === false ||
     !(value.feed == null || member(value.feed, ["iex", "sip"])) ||
     !(value.coverageScope == null || member(value.coverageScope, ["SINGLE_EXCHANGE", "CONSOLIDATED_SIP"])) ||
+    nullableText(value.connectionEpoch) === false ||
     !nullableTimestamp(value.heartbeatAt) || !nullableTimestamp(value.sourceAvailableAt) ||
     !nullableTimestamp(value.heartbeatAgeMs) || !nullableTimestamp(value.sourceLagMs) ||
     value.maxHeartbeatAgeMs !== MOO_STREAM_HEARTBEAT_MAX_AGE_MS ||
@@ -116,15 +145,29 @@ function strictStreamPayload(value: unknown, persistent: boolean, noteCode: unkn
       typeof value.provider === "string" && value.provider.length > 0 &&
       member(value.feed, ["iex", "sip"]) &&
       value.coverageScope === (value.feed === "sip" ? "CONSOLIDATED_SIP" : "SINGLE_EXCHANGE") &&
+      typeof value.connectionEpoch === "string" && value.connectionEpoch.startsWith(`${value.streamId}:`) &&
+      /^\d+$/.test(value.connectionEpoch.slice(value.streamId.length + 1)) &&
       safeTimestamp(value.heartbeatAt) && safeTimestamp(value.sourceAvailableAt) &&
       safeTimestamp(value.heartbeatAgeMs) && safeTimestamp(value.sourceLagMs) &&
+      value.heartbeatAt <= evaluatedAt && value.sourceAvailableAt <= evaluatedAt &&
+      value.heartbeatAgeMs === evaluatedAt - value.heartbeatAt &&
+      value.sourceLagMs === evaluatedAt - value.sourceAvailableAt &&
       value.heartbeatAgeMs <= value.maxHeartbeatAgeMs && value.sourceLagMs <= value.maxSourceLagMs;
   }
   if (value.state === "STALE") {
-    return !persistent && noteCode === "DURABLE_STREAM_SERVICE_STALE";
+    const heartbeatCoherent = value.heartbeatAt === null
+      ? value.heartbeatAgeMs === null
+      : safeTimestamp(value.heartbeatAt) && value.heartbeatAt <= evaluatedAt &&
+        value.heartbeatAgeMs === evaluatedAt - value.heartbeatAt;
+    const sourceCoherent = value.sourceAvailableAt === null
+      ? value.sourceLagMs === null
+      : safeTimestamp(value.sourceAvailableAt) && value.sourceAvailableAt <= evaluatedAt &&
+        value.sourceLagMs === evaluatedAt - value.sourceAvailableAt;
+    return !persistent && noteCode === "DURABLE_STREAM_SERVICE_STALE" && heartbeatCoherent && sourceCoherent;
   }
-  return !persistent && noteCode === "DURABLE_STREAM_SERVICE_NOT_CONFIGURED" &&
+  return !persistent && member(noteCode, ["DURABLE_STREAM_SERVICE_NOT_CONFIGURED", "DURABLE_STREAM_SERVICE_UNAVAILABLE"]) &&
     value.streamId === null && value.provider === null && value.feed === null && value.coverageScope === null &&
+    value.connectionEpoch === null &&
     value.heartbeatAt === null && value.sourceAvailableAt === null && value.heartbeatAgeMs === null && value.sourceLagMs === null;
 }
 
@@ -154,16 +197,18 @@ function strictBrokerPayload(value: unknown) {
  * A malformed last-good payload must never reach readiness or locate logic.
  */
 export function isMooSystemStatus(value: unknown, targetDate: string): value is MooSystemStatus {
-  if (!objectValue(value) || value.schemaVersion !== "moo-system-status-v1" ||
-    value.policyVersion !== "strict-moo-commissioning-v1" || value.targetSession !== targetDate ||
+  if (!objectValue(value) || value.schemaVersion !== "moo-system-status-v2" ||
+    value.policyVersion !== "strict-moo-commissioning-v2" || value.targetSession !== targetDate ||
     value.executionMode !== "NOT_COMMISSIONED" || value.decisionAuthority !== "SERVER" ||
-    !safeTimestamp(value.evaluatedAt) || value.validUntil !== value.evaluatedAt + 45_000 ||
+    !safeTimestamp(value.evaluatedAt) || !safeTimestamp(value.validUntil) ||
+    value.validUntil < value.evaluatedAt || value.validUntil > value.evaluatedAt + 45_000 ||
     !objectValue(value.decisionSnapshot) || !objectValue(value.transport) ||
     !objectValue(value.commissioningEvidence) || !Array.isArray(value.blockers) ||
-    value.blockers.length !== 4 || new Set(value.blockers).size !== 4 || !value.blockers.every((blocker) => member(blocker, [
+    ![3, 4].includes(value.blockers.length) || new Set(value.blockers).size !== value.blockers.length || !value.blockers.every((blocker) => member(blocker, [
       "CONSOLIDATED_US_FEED_NOT_ENTITLED", "TRAINED_MODEL_NOT_PROMOTED",
       "IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE", "ACCOUNT_LOCATE_NOT_AVAILABLE",
-    ])) || value.commissioningEvidence.modelPromoted !== false ||
+    ])) || !["TRAINED_MODEL_NOT_PROMOTED", "IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE", "ACCOUNT_LOCATE_NOT_AVAILABLE"]
+      .every((blocker) => value.blockers.includes(blocker)) || value.commissioningEvidence.modelPromoted !== false ||
     value.commissioningEvidence.artifactValidated !== false ||
     value.commissioningEvidence.riskPolicyVersion !== null) return false;
 
@@ -179,7 +224,7 @@ export function isMooSystemStatus(value: unknown, targetDate: string): value is 
     snapshot.frozenAt === null &&
     member(snapshot.lifecycle, ["FUTURE_SESSION", "MARKET_CLOSED", "PREPARING", "READY", "FROZEN", "LATE_LOCKED", "ENTRY_CLOSED", "CROSS_COMPLETE"]) &&
     snapshot.decision === "NO_TRADE" && snapshot.decisionReasonCode === "GATE_BLOCKED" &&
-    member(snapshot.blockReason, ["MARKET_CLOSED", "TARGET_SESSION_NOT_STARTED", "DATA_PENDING", "STALE_US_QUOTE", "FEED_NOT_ENTITLED", "MODEL_NOT_TRAINED", "LOW_DATA_QUALITY", "LOW_CONFIDENCE", "SHORTABILITY_UNCONFIRMED"]) &&
+    member(snapshot.blockReason, ["MARKET_CLOSED", "ENTRY_WINDOW_CLOSED", "TARGET_SESSION_NOT_STARTED", "DATA_PENDING", "STALE_US_QUOTE", "FEED_NOT_ENTITLED", "MODEL_NOT_TRAINED", "LOW_DATA_QUALITY", "LOW_CONFIDENCE", "SHORTABILITY_UNCONFIRMED"]) &&
     member(snapshot.predictedOpenState, VALUE_STATES) &&
     (snapshot.confidenceState === undefined || member(snapshot.confidenceState, VALUE_STATES)) &&
     (snapshot.dataQualityState === undefined || member(snapshot.dataQualityState, VALUE_STATES)) &&
@@ -192,7 +237,9 @@ export function isMooSystemStatus(value: unknown, targetDate: string): value is 
     Array.isArray(snapshot.sources) && snapshot.sources.length === SOURCE_IDS.length &&
     new Set(snapshot.sources.map((source) => objectValue(source) ? source.id : null)).size === SOURCE_IDS.length &&
     SOURCE_IDS.every((id) => snapshot.sources.some((source) => objectValue(source) && source.id === id)) &&
-    snapshot.sources.every(uncommissionedSourcePayload) &&
+    snapshot.sources.every((source) => objectValue(source) && source.id === "US"
+      ? uncommissionedSourcePayload(source) || paidSipUsSourcePayload(source, value.evaluatedAt)
+      : uncommissionedSourcePayload(source)) &&
     Array.isArray(snapshot.deadlines) && snapshot.deadlines.every(strictDeadlinePayload) &&
     Array.isArray(snapshot.warnings) && snapshot.warnings.every((warning) => typeof warning === "string") &&
     uncommissionedTicketPayload(snapshot.longTicket, "LONG") && uncommissionedTicketPayload(snapshot.shortTicket, "SHORT") &&
@@ -204,10 +251,18 @@ export function isMooSystemStatus(value: unknown, targetDate: string): value is 
     ["FUTURES", "OPTIONAL_RESEARCH"], ["NOII", "POST_FREEZE_MONITORING"],
   ]);
 
-  return snapshotValid && value.transport.browser === "ADAPTIVE_REST_POLLING" &&
+  const usSource = snapshot.sources.find((source) => objectValue(source) && source.id === "US");
+  const usReady = isStrictUsSourceReady(usSource as unknown as MooSystemStatus["decisionSnapshot"]["sources"][number], value.evaluatedAt);
+  const usTransportConsistent = !usReady || (value.transport.persistentUpstreamSupervisor === true &&
+    objectValue(value.transport.stream) && value.transport.stream.state === "LIVE" &&
+    value.transport.stream.feed === "sip" && value.transport.stream.coverageScope === "CONSOLIDATED_SIP");
+  const feedBlockerConsistent = value.blockers.includes("CONSOLIDATED_US_FEED_NOT_ENTITLED") === !usReady &&
+    (!usReady || value.validUntil === (usSource as MooSystemStatus["decisionSnapshot"]["sources"][number]).validUntil);
+
+  return snapshotValid && usTransportConsistent && feedBlockerConsistent && value.transport.browser === "ADAPTIVE_REST_POLLING" &&
     typeof value.transport.persistentUpstreamSupervisor === "boolean" &&
-    member(value.transport.noteCode, ["DURABLE_STREAM_SERVICE_NOT_CONFIGURED", "DURABLE_STREAM_SERVICE_STALE", "DURABLE_STREAM_SERVICE_ENABLED"]) &&
-    strictStreamPayload(value.transport.stream, value.transport.persistentUpstreamSupervisor, value.transport.noteCode) &&
+    member(value.transport.noteCode, ["DURABLE_STREAM_SERVICE_NOT_CONFIGURED", "DURABLE_STREAM_SERVICE_UNAVAILABLE", "DURABLE_STREAM_SERVICE_STALE", "DURABLE_STREAM_SERVICE_ENABLED"]) &&
+    strictStreamPayload(value.transport.stream, value.transport.persistentUpstreamSupervisor, value.transport.noteCode, value.evaluatedAt) &&
     Array.isArray(value.sourceRoles) && value.sourceRoles.length === expectedRoles.size &&
     new Set(value.sourceRoles.map((role) => objectValue(role) ? role.id : null)).size === expectedRoles.size &&
     value.sourceRoles.every((role) => objectValue(role) && typeof role.id === "string" && role.role === expectedRoles.get(role.id)) &&

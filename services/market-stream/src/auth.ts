@@ -180,11 +180,13 @@ export class SignedSitesIngestionClient {
   readonly #url: string;
   readonly #secret: string;
   readonly #audience: string;
+  readonly #sitesAccessBypassToken: string;
   readonly #fetcher: typeof fetch;
-  constructor(input: { url: string; secret: string; audience: string; fetcher?: typeof fetch }) {
+  constructor(input: { url: string; secret: string; audience: string; sitesAccessBypassToken: string; fetcher?: typeof fetch }) {
     this.#url = input.url;
     this.#secret = input.secret;
     this.#audience = input.audience;
+    this.#sitesAccessBypassToken = input.sitesAccessBypassToken;
     this.#fetcher = input.fetcher ?? fetch;
   }
   async send(batch: IngestionBatch, now = Date.now()): Promise<IngestionAck> {
@@ -200,7 +202,18 @@ export class SignedSitesIngestionClient {
       url: this.#url,
       body,
     });
-    const response = await this.#fetcher(this.#url, { method: "POST", headers, body, signal: AbortSignal.timeout(8_000) });
+    // Sites custom access protects every application route before the request
+    // reaches Next. This Worker-only token crosses that outer gate; the
+    // audience-bound HMAC above still authenticates the ingestion payload.
+    headers.set("OAI-Sites-Authorization", `Bearer ${this.#sitesAccessBypassToken}`);
+    // Never forward the HMAC or Sites bypass bearer to a redirect target.
+    const response = await this.#fetcher(this.#url, {
+      method: "POST",
+      headers,
+      body,
+      redirect: "manual",
+      signal: AbortSignal.timeout(8_000),
+    });
     if (!response.ok) throw new Error(`INGESTION_HTTP_${response.status}`);
     const ack = await response.json() as Partial<IngestionAck>;
     if (ack.ok !== true || ack.streamId !== batch.streamId || !Number.isSafeInteger(ack.highestContiguousSequence) ||

@@ -9,6 +9,7 @@ import {
   sealMooFrozenDecisionContext,
 } from "../app/moo-strategy.ts";
 import { sealMooLocateProof } from "../app/moo-contract.ts";
+import { summarizeMooReadiness } from "../app/moo-readiness.ts";
 
 const readyAt = Date.parse("2026-07-20T13:24:00Z");
 
@@ -165,6 +166,22 @@ test("opening-cross outcomes are ignored before the cross completes", () => {
   assert.equal(snapshot.actualOfficialOpenCents, null);
   assert.equal(snapshot.longTicket.actualFillCents, null);
   assert.match(snapshot.warnings.join(" "), /ignored before/i);
+});
+
+test("the final-entry and Opening Cross boundaries report a closed MOO entry window", () => {
+  const stillOpen = buildMooDecisionSnapshot(validInput({
+    nowMs: Date.parse("2026-07-20T13:27:59Z"),
+    frozenContext: persistedContext(),
+    lateOrderAcknowledged: true,
+  }));
+  assert.notEqual(summarizeMooReadiness(stillOpen).dominantBlockerCode, "ENTRY_WINDOW_CLOSED");
+
+  for (const nowMs of [Date.parse("2026-07-20T13:28:00Z"), Date.parse("2026-07-20T13:30:00Z")]) {
+    const snapshot = buildMooDecisionSnapshot(validInput({ nowMs, frozenContext: persistedContext() }));
+    assert.equal(summarizeMooReadiness(snapshot).dominantBlockerCode, "ENTRY_WINDOW_CLOSED");
+    assert.equal(snapshot.longTicket.actionable, false);
+    assert.equal(snapshot.shortTicket.actionable, false);
+  }
 });
 
 test("an untrained transparent baseline remains visible but forces NO_TRADE and null confidence", () => {

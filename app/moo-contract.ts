@@ -1,6 +1,8 @@
 export type MooDecision = "LONG_FAVORED" | "SHORT_FAVORED" | "NO_TRADE";
 export type MooSide = "LONG" | "SHORT";
 export type MooThirdRole = "MAJOR" | "MINOR" | "UNASSIGNED";
+/** Maximum tolerated provider/receiver clock lead before an observation fails closed. */
+export const MOO_PROVIDER_RECEIVE_CLOCK_SKEW_MS = 1_000;
 export type MooFeedCoverage =
   | "CONSOLIDATED_SIP"
   | "IEX_SINGLE_EXCHANGE"
@@ -105,6 +107,7 @@ export type MooLifecycle =
 
 export type MooBlockReason =
   | "MARKET_CLOSED"
+  | "ENTRY_WINDOW_CLOSED"
   | "TARGET_SESSION_NOT_STARTED"
   | "DATA_PENDING"
   | "STALE_US_QUOTE"

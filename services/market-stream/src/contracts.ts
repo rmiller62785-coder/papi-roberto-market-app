@@ -245,6 +245,7 @@ export type MarketStreamEnv = {
   SITES_INGESTION_URL: string;
   SITES_INGESTION_SECRET: string;
   SITES_INGESTION_AUDIENCE: string;
+  SITES_ACCESS_BYPASS_TOKEN: string;
   STREAM_CONTROL_SECRET: string;
   BROWSER_ACCESS_SECRET: string;
   BROWSER_ALLOWED_ORIGINS: string;
@@ -253,8 +254,8 @@ export type MarketStreamEnv = {
 
 /**
  * A configured SIP URL is not evidence of entitlement. Callers may promote
- * SIP coverage only after Alpaca has acknowledged the requested SIP channels
- * (or returned a successful SIP-pinned REST response).
+ * SIP coverage only after Alpaca has acknowledged the requested live SIP
+ * channels. REST recovery remains research/reconciliation evidence.
  */
 export function coverageForFeed(feed: AlpacaFeed, providerConfirmed = false): MarketCoverage {
   return feed === "sip"

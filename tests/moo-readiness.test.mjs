@@ -165,6 +165,75 @@ test("real-time IEX coverage remains unready without consolidated SIP coverage",
   assert.equal(summary.dominantBlockerCode, "FEED_NOT_ENTITLED");
 });
 
+test("provider timestamps may lead receipt by at most the shared one-second skew allowance", () => {
+  const withinAllowance = summarizeMooReadiness(readySnapshot({
+    sources: [source("US", {
+      observedAt: at - 500,
+      receivedAt: at - 1_499,
+      processedAt: at - 200,
+      availableAt: at - 150,
+      checkedAt: at - 100,
+    })],
+  }), guaranteedBroker);
+  assert.equal(withinAllowance.requiredReady, 1);
+
+  const outsideAllowance = summarizeMooReadiness(readySnapshot({
+    sources: [source("US", {
+      observedAt: at - 500,
+      receivedAt: at - 1_501,
+      processedAt: at - 200,
+      availableAt: at - 150,
+      checkedAt: at - 100,
+    })],
+  }), guaranteedBroker);
+  assert.equal(outsideAllowance.requiredReady, 0);
+});
+
+test("a required US feed fault is surfaced ahead of an untrained-model blocker", () => {
+  const notEntitled = summarizeMooReadiness(readySnapshot({
+    blockReason: "MODEL_NOT_TRAINED",
+    modelVersion: null,
+    featureSchemaVersion: null,
+    sources: [source("US", { state: "UNAVAILABLE", entitlement: "NOT_ENTITLED" })],
+  }), guaranteedBroker);
+  assert.equal(notEntitled.dominantBlockerCode, "FEED_NOT_ENTITLED");
+  assert.equal(notEntitled.strictCommissionState, "NOT_COMMISSIONED");
+
+  const stale = summarizeMooReadiness(readySnapshot({
+    blockReason: "MODEL_NOT_TRAINED",
+    modelVersion: null,
+    featureSchemaVersion: null,
+    sources: [source("US", { state: "DEGRADED", reasonCode: "SOURCE_STALE" })],
+  }), guaranteedBroker);
+  assert.equal(stale.dominantBlockerCode, "STALE_US_QUOTE");
+  assert.equal(stale.strictCommissionState, "NOT_COMMISSIONED");
+});
+
+test("required source faults outrank generic data pending without masking closed lifecycle states", () => {
+  const absent = summarizeMooReadiness(readySnapshot({
+    blockReason: "DATA_PENDING",
+    sources: [source("US", { state: "UNAVAILABLE", entitlement: "NOT_ENTITLED" })],
+  }), guaranteedBroker);
+  assert.equal(absent.dominantBlockerCode, "FEED_NOT_ENTITLED");
+
+  const configuredUnavailable = summarizeMooReadiness(readySnapshot({
+    blockReason: "MODEL_NOT_TRAINED",
+    modelVersion: null,
+    featureSchemaVersion: null,
+    sources: [source("US", { state: "UNAVAILABLE", entitlement: "UNAVAILABLE" })],
+  }), guaranteedBroker);
+  assert.equal(configuredUnavailable.dominantBlockerCode, "DATA_PENDING");
+  assert.equal(configuredUnavailable.sourceGroups.requiredNow.items[0].strictReady, false);
+
+  for (const lifecycleBlocker of ["MARKET_CLOSED", "TARGET_SESSION_NOT_STARTED", "ENTRY_WINDOW_CLOSED"]) {
+    const summary = summarizeMooReadiness(readySnapshot({
+      blockReason: lifecycleBlocker,
+      sources: [source("US", { state: "UNAVAILABLE", entitlement: "NOT_ENTITLED" })],
+    }), guaranteedBroker);
+    assert.equal(summary.dominantBlockerCode, lifecycleBlocker);
+  }
+});
+
 test("optional research outages degrade research while an unvalidated snapshot remains blocked", () => {
   const snapshot = readySnapshot({
     sources: [

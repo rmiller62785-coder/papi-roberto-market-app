@@ -76,6 +76,21 @@ test("authoritative bars remain pending until watermark and updated bars create 
   assert.equal(corrected.emissions[0].minute.status, "CORRECTED");
 });
 
+test("a websocket bar received before its minute ends is never finalized as a completed candle", () => {
+  const earlyBar = bar("b", 200.5, base + 30_000);
+  const pending = reduceProviderEvent(initialMarketStreamState("iex", "early-bar-stream"), earlyBar);
+  assert.equal(pending.disposition, "ACCEPTED");
+  assert.equal(pending.state.pendingMinutes[0].receivedAt, base + 30_000);
+  assert.equal(advanceMarketWatermark(pending.state, base + 180_000).emissions.length, 0);
+  assert.equal(pending.state.latestCompletedMinute, null);
+
+  const afterCloseUpdate = bar("u", 200.75, base + 95_100);
+  const updated = reduceProviderEvent(pending.state, afterCloseUpdate);
+  const completed = advanceMarketWatermark(updated.state, base + 95_101);
+  assert.equal(completed.emissions[0].type, "MINUTE_COMPLETED");
+  assert.equal(completed.emissions[0].minute.receivedAt, base + 95_100);
+});
+
 test("duplicates and future-skewed observations fail closed", () => {
   const event = trade(1, "2026-07-20T13:20:01.000000001Z");
   const accepted = reduceProviderEvent(initialMarketStreamState("iex", "stream-1"), event);

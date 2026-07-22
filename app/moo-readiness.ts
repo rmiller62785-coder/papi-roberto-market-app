@@ -1,6 +1,7 @@
 import {
   canonicalMooJson,
   isMooSourceId,
+  MOO_PROVIDER_RECEIVE_CLOCK_SKEW_MS,
   validateMooRequiredSourceIds,
   validateMooLocateProof,
   type MooBlockReason,
@@ -117,7 +118,8 @@ function sourceStrictReady(source: MooSourceHealth | undefined, duplicate: boole
   const sourceTimes = [source.receivedAt, source.processedAt, source.availableAt];
   if (sourceTimes.some((time) => time != null) &&
     (!Number.isSafeInteger(source.receivedAt) || !Number.isSafeInteger(source.processedAt) ||
-      !Number.isSafeInteger(source.availableAt) || source.receivedAt! < source.observedAt! ||
+      !Number.isSafeInteger(source.availableAt) ||
+      source.receivedAt! + MOO_PROVIDER_RECEIVE_CLOCK_SKEW_MS < source.observedAt! ||
       source.processedAt! < source.receivedAt! || source.availableAt! < source.processedAt! ||
       source.checkedAt! < source.availableAt! || source.availableAt! > evaluatedAt)) return false;
   if (source.validUntil != null && (!Number.isSafeInteger(source.validUntil) || source.validUntil < evaluatedAt)) return false;
@@ -166,10 +168,14 @@ function borrowStatusCode(value: string | null | undefined): MooBorrowStatusCode
 
 function requiredSourceBlocker(group: MooReadinessGroup): MooBlockReason | null {
   for (const source of group.items) {
-    if (!source.present || source.duplicate || source.entitlement !== "REALTIME" ||
-      source.coverage !== STRICT_FEED_COVERAGE[source.id]) {
+    if (!source.present || source.duplicate || source.coverage !== STRICT_FEED_COVERAGE[source.id] ||
+      ["MISSING", "NOT_ENTITLED", "DELAYED", "LIMITED"].includes(source.entitlement)) {
       return "FEED_NOT_ENTITLED";
     }
+    // A configured execution feed can be temporarily unavailable while its
+    // entitlement is being confirmed or its supervisor reconnects. Do not
+    // tell a paid user that this operational state is a missing entitlement.
+    if (source.entitlement === "UNAVAILABLE") return "DATA_PENDING";
     if (source.state === "DEGRADED" || source.state === "DELAYED") {
       return source.id === "US" ? "STALE_US_QUOTE" : "DATA_PENDING";
     }
@@ -185,8 +191,13 @@ function dominantBlocker(
   strictLocateReady: boolean,
   artifactAuthorized: boolean,
 ): MooDominantBlockerCode {
-  if (snapshot.blockReason !== "NONE") return snapshot.blockReason;
+  if (snapshot.lifecycle === "ENTRY_CLOSED" || snapshot.lifecycle === "CROSS_COMPLETE") return "ENTRY_WINDOW_CLOSED";
   const sourceBlocker = requiredSourceBlocker(requiredNow);
+  // A model commissioning blocker must not hide a current execution-feed
+  // outage. Operators need the recoverable live-data fault first; other
+  // lifecycle and decision blockers retain their server-authored priority.
+  if (sourceBlocker && ["DATA_PENDING", "MODEL_NOT_TRAINED"].includes(snapshot.blockReason)) return sourceBlocker;
+  if (snapshot.blockReason !== "NONE") return snapshot.blockReason;
   if (sourceBlocker) return sourceBlocker;
   if (!snapshot.modelVersion?.trim() || !snapshot.featureSchemaVersion?.trim()) {
     return "MODEL_NOT_TRAINED";

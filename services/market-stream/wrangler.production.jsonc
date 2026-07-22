@@ -11,8 +11,20 @@
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["NvdaMarketStream"] }
   ],
+  "secrets": {
+    "required": [
+      "APCA_API_KEY_ID",
+      "APCA_API_SECRET_KEY",
+      "SITES_INGESTION_URL",
+      "SITES_INGESTION_SECRET",
+      "SITES_ACCESS_BYPASS_TOKEN",
+      "STREAM_CONTROL_SECRET",
+      "BROWSER_ACCESS_SECRET"
+    ]
+  },
   "vars": {
-    "ALPACA_FEED": "iex",
+    "ALPACA_FEED": "sip",
+    "SIP_ENTITLED": "true",
     "SITES_INGESTION_AUDIENCE": "aperture-sites-market-ingestion",
     "BROWSER_ALLOWED_ORIGINS": "https://aperture-nvda-plan.rmiller62785.chatgpt.site",
     "MAX_BROWSER_CLIENTS": "100"

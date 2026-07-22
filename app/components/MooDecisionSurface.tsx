@@ -767,6 +767,9 @@ function strictSourceName(source: MooSourceHealth, lang: Language) {
 
 function strictVenueName(source: MooSourceHealth, lang: Language) {
   if (!source.venue || lang === "en") return source.venue;
+  if (source.id === "US" && source.coverage === "CONSOLIDATED_SIP") {
+    return "SIP consolidado de EE. UU.";
+  }
   const venues: Record<MooSourceHealth["id"], string> = {
     US: "Se requiere SIP consolidado",
     NVD: "Fuente directa autorizada del mercado no configurada",
@@ -916,6 +919,7 @@ function strictStateLabel(state: ReturnType<typeof strictSurfaceState>, lang: La
 function blockerLabel(code: MooDominantBlockerCode, lang: Language) {
   const labels: Record<MooDominantBlockerCode, [string, string]> = {
     MARKET_CLOSED: ["Market closed", "Mercado cerrado"],
+    ENTRY_WINDOW_CLOSED: ["MOO entry window closed", "Ventana de entrada MOO cerrada"],
     TARGET_SESSION_NOT_STARTED: ["Selected session has not started", "La sesión seleccionada todavía no ha comenzado"],
     DATA_PENDING: ["Critical data pending", "Datos críticos pendientes"],
     STALE_US_QUOTE: ["U.S. quote is stale", "La cotización de EE. UU. está vencida"],
@@ -934,6 +938,7 @@ function blockerLabel(code: MooDominantBlockerCode, lang: Language) {
 function blockerDetail(code: MooDominantBlockerCode, lang: Language) {
   const details: Record<MooDominantBlockerCode, [string, string]> = {
     MARKET_CLOSED: ["The selected execution window is closed. Review the preserved audit state or choose another valid session.", "La ventana de ejecución seleccionada está cerrada. Revise el estado de auditoría conservado o elija otra sesión válida."],
+    ENTRY_WINDOW_CLOSED: ["The final MOO entry cutoff has passed. Source health remains visible for audit, but no opening ticket can become actionable.", "El plazo final de entrada MOO ya pasó. El estado de las fuentes sigue visible para auditoría, pero ninguna orden de apertura puede volverse operable."],
     TARGET_SESSION_NOT_STARTED: ["Planning context may appear now, but strict inputs cannot qualify before the selected session begins.", "El contexto de planificación puede aparecer ahora, pero las entradas estrictas no pueden calificar antes de que comience la sesión seleccionada."],
     DATA_PENDING: ["The gate is waiting for a point-in-time model input or required source observation. No current data is backfilled into the decision.", "El control espera una entrada puntual del modelo o una observación de una fuente requerida. No se reutilizan datos actuales en la decisión."],
     STALE_US_QUOTE: ["The required U.S. observation is delayed or too old for the strict freshness policy.", "La observación requerida de EE. UU. está retrasada o es demasiado antigua para la política estricta de vigencia."],
@@ -1248,6 +1253,7 @@ export function MooDataHealthPanel({ snapshot, brokerReference, lang }: { snapsh
       <article className={`panel moo-health-panel state-${surfaceState}`} aria-busy={surfaceState === "loading"}>
         <div className="moo-health-status" role="status" aria-live="polite" aria-atomic="true"><strong>{decisionLabel(snapshot, lang)}</strong><span>{strictStateLabel(surfaceState, lang)} · {blockerLabel(readiness.dominantBlockerCode, lang)}</span><time dateTime={isoDateTime(snapshot.generatedAt)}>{copy(lang, "Evaluated", "Evaluada")}: {etDateTime(snapshot.generatedAt, lang)}</time></div>
         {notice ? <div className={`moo-state-notice ${surfaceState}`} role={surfaceState === "loading" ? "status" : "alert"}>{notice}</div> : null}
+        {snapshot.warnings.length ? <div className="moo-warnings" role="alert">{snapshot.warnings.map((warning) => <p key={warning}>{warningLabel(warning, lang)}</p>)}</div> : null}
         <div className="moo-health-source-groups">
           <MooSourceGroup sources={requiredSources} readiness={readiness.sourceGroups.requiredNow} lang={lang} kind="required" title={copy(lang, "REQUIRED NOW", "REQUERIDAS AHORA")} description={copy(lang, "Only these sources affect strict readiness", "Solo estas fuentes afectan la preparación estricta")}/>
           <MooSourceGroup sources={optionalSources} readiness={readiness.sourceGroups.optionalResearch} lang={lang} kind="optional" title={copy(lang, "OPTIONAL RESEARCH", "INVESTIGACIÓN OPCIONAL")} description={copy(lang, "Visible context · not an execution gate", "Contexto visible · no es un control de ejecución")} collapsible/>

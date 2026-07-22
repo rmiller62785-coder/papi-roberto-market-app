@@ -140,6 +140,33 @@ test("rejects a contradictory live SIP source inside a not-commissioned status",
   assert.equal(isMooSystemStatus(value, TARGET), false);
 });
 
+test("accepts a server-authored fresh SIP source while execution remains not commissioned", () => {
+  const observedAt = NOW - 100;
+  const streamHealth = {
+    state: "LIVE", streamId: "nvda-sip", provider: "alpaca", feed: "sip", coverageScope: "CONSOLIDATED_SIP",
+    connectionEpoch: "nvda-sip:4",
+    heartbeatAt: NOW - 50, sourceAvailableAt: NOW - 40, heartbeatAgeMs: 50, sourceLagMs: 40,
+    maxHeartbeatAgeMs: 45_000, maxSourceLagMs: 45_000, detailCode: "STREAM_EVENT",
+  };
+  const strictUsSource = {
+    id: "US", label: "U.S. NVDA execution quote", venue: "U.S. consolidated SIP", provider: "Alpaca SIP",
+    entitlement: "REALTIME", coverage: "CONSOLIDATED_SIP", observedAt, checkedAt: NOW, ageMs: 100,
+    state: "LIVE", receivedAt: observedAt + 10, processedAt: observedAt + 20, availableAt: observedAt + 30,
+    validUntil: observedAt + 2_000, reasonCode: "VALUE_PRESENT",
+  };
+  const value = buildMooSystemStatus({
+    nowMs: NOW, targetSession: TARGET, brokerReference: status().brokerReference, streamHealth, strictUsSource,
+  });
+  assert.equal(value.executionMode, "NOT_COMMISSIONED");
+  assert.equal(value.decisionSnapshot.decision, "NO_TRADE");
+  assert.equal(value.blockers.includes("CONSOLIDATED_US_FEED_NOT_ENTITLED"), false);
+  assert.equal(isMooSystemStatus(value, TARGET), true);
+
+  const mismatchedTransport = structuredClone(value);
+  Object.assign(mismatchedTransport.transport.stream, { feed: "iex", coverageScope: "SINGLE_EXCHANGE" });
+  assert.equal(isMooSystemStatus(mismatchedTransport, TARGET), false);
+});
+
 test("transport boolean cannot disagree with server-owned stream evidence", () => {
   const value = structuredClone(status());
   value.transport.persistentUpstreamSupervisor = true;
@@ -153,6 +180,7 @@ test("transport boolean cannot disagree with server-owned stream evidence", () =
     provider: "alpaca",
     feed: "iex",
     coverageScope: "SINGLE_EXCHANGE",
+    connectionEpoch: "nvda-iex:2",
     heartbeatAt: NOW - 60_000,
     sourceAvailableAt: NOW - 60_000,
     heartbeatAgeMs: 60_000,
@@ -163,4 +191,33 @@ test("transport boolean cannot disagree with server-owned stream evidence", () =
   };
   stale.transport.noteCode = "DURABLE_STREAM_SERVICE_STALE";
   assert.equal(isMooSystemStatus(stale, TARGET), true);
+});
+
+test("live transport timestamps and derived ages must match the server evaluation", () => {
+  const observedAt = NOW - 100;
+  const streamHealth = {
+    state: "LIVE", streamId: "nvda-sip", provider: "alpaca", feed: "sip", coverageScope: "CONSOLIDATED_SIP",
+    connectionEpoch: "nvda-sip:4", heartbeatAt: NOW - 50, sourceAvailableAt: NOW - 40,
+    heartbeatAgeMs: 50, sourceLagMs: 40, maxHeartbeatAgeMs: 45_000, maxSourceLagMs: 45_000,
+    detailCode: "STREAM_EVENT",
+  };
+  const strictUsSource = {
+    id: "US", label: "U.S. NVDA execution quote", venue: "U.S. consolidated SIP", provider: "Alpaca SIP",
+    entitlement: "REALTIME", coverage: "CONSOLIDATED_SIP", observedAt, checkedAt: NOW, ageMs: 100,
+    state: "LIVE", receivedAt: observedAt + 10, processedAt: observedAt + 20, availableAt: observedAt + 30,
+    validUntil: observedAt + 2_000, reasonCode: "VALUE_PRESENT",
+  };
+  const value = buildMooSystemStatus({
+    nowMs: NOW, targetSession: TARGET, brokerReference: status().brokerReference, streamHealth, strictUsSource,
+  });
+  assert.equal(isMooSystemStatus(value, TARGET), true);
+
+  const futureHeartbeat = structuredClone(value);
+  futureHeartbeat.transport.stream.heartbeatAt = NOW + 1;
+  futureHeartbeat.transport.stream.heartbeatAgeMs = 0;
+  assert.equal(isMooSystemStatus(futureHeartbeat, TARGET), false);
+
+  const forgedAge = structuredClone(value);
+  forgedAge.transport.stream.heartbeatAgeMs = 0;
+  assert.equal(isMooSystemStatus(forgedAge, TARGET), false);
 });

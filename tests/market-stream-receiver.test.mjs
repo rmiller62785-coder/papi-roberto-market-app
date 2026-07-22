@@ -6,9 +6,10 @@ import { ensureMarketPersistenceSchema } from "../app/d1-schema.ts";
 import { handleMarketStreamPost } from "../app/api/internal/market-stream/handler.ts";
 import { createMarketStore } from "../app/market-store.ts";
 import { ingestMarketStreamBatch, parseIngestionBatch } from "../app/market-stream-receiver.ts";
+import { readMooStreamHealth } from "../app/moo-system-status.ts";
 import { signSitesIngestion } from "../services/market-stream/src/auth.ts";
 import { normalizeAlpacaMessages } from "../services/market-stream/src/ingestor.ts";
-import { advanceMarketWatermark, beginConnectionEpoch, initialMarketStreamState, reduceProviderEvent } from "../services/market-stream/src/reducer.ts";
+import { advanceMarketWatermark, beginConnectionEpoch, initialMarketStreamState, reduceProviderEvent, setProviderConnectionState } from "../services/market-stream/src/reducer.ts";
 
 const BASE = Date.parse("2026-07-20T13:20:00Z");
 
@@ -66,6 +67,26 @@ test("allows fail-closed SIP coverage but rejects contradictory SIP claims", () 
   assert.equal(parseIngestionBatch(value).emissions[1].coverage.executionEligible, false);
 
   value.emissions[1].coverage = { ...value.emissions[1].coverage, researchOnly: true, executionEligible: true };
+  assert.throws(() => parseIngestionBatch(value), /INGESTION_EMISSION_INVALID/);
+});
+
+test("rejects execution-eligible SIP events delivered by REST recovery", () => {
+  const [event] = normalizeAlpacaMessages(JSON.stringify([{
+    T: "t", S: "NVDA", i: 202, x: "Q", p: 200.5, s: 5,
+    c: ["@"], t: "2026-07-20T13:20:02.000000001Z", z: "C",
+  }]), {
+    feed: "sip", receivedAt: BASE + 2_100, processedAt: BASE + 2_101,
+    providerEntitlementConfirmed: true,
+  });
+  const accepted = reduceProviderEvent(initialMarketStreamState("sip", "sip-rest-boundary"), event);
+  const value = {
+    schemaVersion: "aperture-market-stream-v2",
+    streamId: "sip-rest-boundary",
+    fromSequence: 1,
+    toSequence: 1,
+    emissions: accepted.emissions,
+  };
+  value.emissions[0].sourceEvent.transport = "REST_RECOVERY";
   assert.throws(() => parseIngestionBatch(value), /INGESTION_EMISSION_INVALID/);
 });
 
@@ -151,6 +172,71 @@ test("D1 receiver makes duplicate delivery idempotent", async () => {
   assert.equal(await scalar("SELECT COUNT(*) AS value FROM market_stream_ingest_emissions WHERE stream_id=?", "duplicate-stream"), 2);
   assert.equal(await scalar("SELECT COUNT(*) AS value FROM market_source_state_events WHERE connection_epoch LIKE ?", "duplicate-stream:%"), 2);
   assert.equal(await scalar("SELECT highest_contiguous_sequence AS value FROM market_stream_ingest_cursors WHERE stream_id=?", "duplicate-stream"), 2);
+});
+
+test("D1 receiver requires current-epoch LIVE proof before strict SIP websocket qualification", async () => {
+  const streamId = "sip-websocket-strict-stream";
+  const priorEpochLive = setProviderConnectionState(initialMarketStreamState("sip", streamId), "LIVE", BASE - 100);
+  const connecting = beginConnectionEpoch(priorEpochLive.state, BASE);
+  const events = normalizeAlpacaMessages(JSON.stringify([{
+    T: "t", S: "NVDA", i: 303, x: "Q", p: 201.25, s: 6,
+    c: ["@"], t: "2026-07-20T13:20:03.000000001Z", z: "C",
+  }, {
+    T: "t", S: "NVDA", i: 304, x: "Q", p: 201.3, s: 4,
+    c: ["@"], t: "2026-07-20T13:20:04.000000001Z", z: "C",
+  }]), {
+    feed: "sip", receivedAt: BASE + 3_100, processedAt: BASE + 3_101,
+    providerEntitlementConfirmed: true,
+  });
+  const beforeLive = reduceProviderEvent(connecting.state, events[0]);
+  const afterLive = reduceProviderEvent(beforeLive.state, events[1]);
+  const emissions = [...priorEpochLive.emissions, ...connecting.emissions, ...beforeLive.emissions, ...afterLive.emissions];
+  await ingestMarketStreamBatch(database, {
+    schemaVersion: "aperture-market-stream-v2",
+    streamId,
+    fromSequence: 1,
+    toSequence: emissions.length,
+    emissions,
+  }, BASE + 10_000);
+  const observations = await database.prepare(`SELECT provider_event_id,qualification,coverage FROM market_qualified_observations
+    WHERE connection_epoch LIKE ? ORDER BY service_sequence`).bind(`${streamId}:%`).all();
+  assert.deepEqual(observations.results, [
+    { provider_event_id: "303", qualification: "RESEARCH", coverage: "CONSOLIDATED_SIP" },
+    { provider_event_id: "304", qualification: "STRICT_EXECUTION", coverage: "CONSOLIDATED_SIP" },
+  ]);
+});
+
+test("research-only REST recovery preserves independently confirmed live SIP transport health", async () => {
+  const streamId = "sip-live-rest-health-stream";
+  const receivedAt = BASE + 199_000;
+  const live = setProviderConnectionState(initialMarketStreamState("sip", streamId), "LIVE", receivedAt - 100);
+  const [recovery] = normalizeAlpacaMessages(JSON.stringify([{
+    T: "q", S: "NVDA", bx: "Q", bp: 200, bs: 2, ax: "P", ap: 200.2, as: 3,
+    c: ["R"], t: "2026-07-20T13:23:18.000000001Z", z: "C",
+  }]), {
+    feed: "sip", receivedAt, processedAt: receivedAt + 1,
+    transport: "REST_RECOVERY", providerEntitlementConfirmed: false,
+  });
+  const recovered = reduceProviderEvent(live.state, recovery);
+  const emissions = [...live.emissions, ...recovered.emissions];
+  await ingestMarketStreamBatch(database, {
+    schemaVersion: "aperture-market-stream-v2", streamId,
+    fromSequence: 1, toSequence: emissions.length, emissions,
+  }, BASE + 200_000);
+
+  const latestSource = await database.prepare(`SELECT state,entitlement,coverage,detail_code
+    FROM market_source_state_events WHERE connection_epoch LIKE ?
+    ORDER BY service_sequence DESC LIMIT 1`).bind(`${streamId}:%`).first();
+  assert.deepEqual(latestSource, {
+    state: "CURRENT", entitlement: "ENTITLED", coverage: "CONSOLIDATED_SIP", detail_code: "STREAM_LIVE",
+  });
+  const recoveredObservation = await database.prepare(`SELECT qualification,coverage FROM market_qualified_observations
+    WHERE connection_epoch LIKE ? ORDER BY service_sequence DESC LIMIT 1`).bind(`${streamId}:%`).first();
+  assert.deepEqual(recoveredObservation, { qualification: "RESEARCH", coverage: "CONSOLIDATED_SIP" });
+  const health = await readMooStreamHealth(database, BASE + 200_000);
+  assert.equal(health.streamId, streamId);
+  assert.equal(health.state, "LIVE");
+  assert.equal(health.feed, "sip");
 });
 
 test("D1 transaction rollback prevents ghost data after a mid-publication failure", async () => {
@@ -309,7 +395,7 @@ test("route fails typed and read-only when the production migration is absent", 
     const emptyDatabase = await emptyMf.getD1Database("DB");
     const response = await handleMarketStreamPost(new Request("https://example.test/api/internal/market-stream", {
       method: "POST", body: JSON.stringify(fixture("missing-schema-stream")),
-    }), { DB: emptyDatabase, SITES_INGESTION_SECRET: "test-secret", SITES_INGESTION_AUDIENCE: "test-audience" }, BASE);
+    }), { DB: emptyDatabase, SITES_INGESTION_SECRET: "test-secret-at-least-thirty-two-bytes", SITES_INGESTION_AUDIENCE: "test-audience" }, BASE);
     assert.equal(response.status, 503);
     assert.deepEqual(await response.json(), { error: "INGESTION_SCHEMA_UNAVAILABLE" });
     assert.equal(await emptyDatabase.prepare("SELECT COUNT(*) AS value FROM sqlite_master WHERE type='table' AND name LIKE 'market_%'").first("value"), 0);
@@ -321,7 +407,7 @@ test("route fails typed and read-only when the production migration is absent", 
 test("signed ingestion rejects divergent trade, correction, and cancel reconciliation identities", async () => {
   const now = BASE + 10_000;
   const url = "https://example.test/api/internal/market-stream";
-  const secret = "test-only-ingestion-secret";
+  const secret = "test-only-ingestion-secret-at-least-32-bytes";
   const audience = "aperture-sites-market-ingestion";
   const cases = [
     (() => {
@@ -370,6 +456,55 @@ test("signed ingestion rejects divergent trade, correction, and cancel reconcili
     assert.deepEqual(await response.json(), { error: "INGESTION_EMISSION_INVALID" });
     assert.equal(await scalar("SELECT COUNT(*) AS value FROM market_stream_ingest_streams WHERE stream_id=?", cases[index].streamId), 0);
   }
+});
+
+test("signed ingestion accepts the previous HMAC key during a rotation overlap", async () => {
+  const now = BASE + 20_000;
+  const url = "https://example.test/api/internal/market-stream";
+  const currentSecret = "current-ingestion-secret-at-least-32-bytes";
+  const previousSecret = "previous-ingestion-secret-at-least-32-bytes";
+  const audience = "aperture-sites-market-ingestion";
+  const body = JSON.stringify(fixture("rotation-overlap-stream"));
+  const headers = await signSitesIngestion({
+    secret: previousSecret, audience, timestamp: now, nonce: "rotation-overlap-test-nonce", method: "POST", url, body,
+  });
+  const response = await handleMarketStreamPost(new Request(url, { method: "POST", headers, body }), {
+    DB: database,
+    SITES_INGESTION_SECRET: currentSecret,
+    SITES_INGESTION_SECRET_PREVIOUS: previousSecret,
+    SITES_INGESTION_SECRET_PREVIOUS_VALID_UNTIL: String(now + 60_000),
+    SITES_INGESTION_AUDIENCE: audience,
+  }, now);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).highestContiguousSequence, 2);
+});
+
+test("signed ingestion rejects an expired previous HMAC key", async () => {
+  const now = BASE + 30_000;
+  const url = "https://example.test/api/internal/market-stream";
+  const previousSecret = "expired-previous-secret-at-least-32-bytes";
+  const audience = "aperture-sites-market-ingestion";
+  const body = JSON.stringify(fixture("expired-rotation-stream"));
+  const headers = await signSitesIngestion({
+    secret: previousSecret, audience, timestamp: now, nonce: "expired-rotation-test-nonce", method: "POST", url, body,
+  });
+  const response = await handleMarketStreamPost(new Request(url, { method: "POST", headers, body }), {
+    DB: database,
+    SITES_INGESTION_SECRET: "current-ingestion-secret-at-least-32-bytes",
+    SITES_INGESTION_SECRET_PREVIOUS: previousSecret,
+    SITES_INGESTION_SECRET_PREVIOUS_VALID_UNTIL: String(now - 1),
+    SITES_INGESTION_AUDIENCE: audience,
+  }, now);
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { error: "INGESTION_AUTH_SIGNATURE_INVALID" });
+});
+
+test("signed ingestion refuses weak app-owned HMAC configuration", async () => {
+  const response = await handleMarketStreamPost(new Request("https://example.test/api/internal/market-stream", {
+    method: "POST", body: JSON.stringify(fixture("weak-secret-stream")),
+  }), { DB: database, SITES_INGESTION_SECRET: "too-short", SITES_INGESTION_AUDIENCE: "test-audience" }, BASE);
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "INGESTION_NOT_CONFIGURED" });
 });
 
 test("concurrent identical batches cannot create duplicates or skip the cursor", async () => {

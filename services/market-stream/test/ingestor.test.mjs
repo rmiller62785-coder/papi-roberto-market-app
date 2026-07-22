@@ -15,6 +15,10 @@ import { validateMarketStreamEnv } from "../src/config.ts";
 
 const receivedAt = Date.parse("2026-07-20T13:21:01Z");
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+const productionIngestionUrl = "https://aperture-nvda-plan.rmiller62785.chatgpt.site/api/internal/market-stream";
+const strongIngestionSecret = "ingestion-secret-32-bytes-minimum-value";
+const strongControlSecret = "control-secret-32-bytes-minimum-value";
+const strongBrowserSecret = "browser-secret-32-bytes-minimum-value";
 
 test("IEX is research default, SIP is explicit, and invalid feed configuration fails", () => {
   assert.equal(resolveAlpacaFeed(undefined), "iex");
@@ -31,13 +35,22 @@ test("full-session recovery starts at 04:00 ET across daylight-saving offsets", 
 test("runtime configuration rejects placeholders, missing secrets, and unconfirmed SIP", () => {
   const baseEnv = {
     MARKET_STREAM: {}, APCA_API_KEY_ID: "key", APCA_API_SECRET_KEY: "secret", ALPACA_FEED: "iex",
-    SITES_INGESTION_URL: "https://ingestion.test.invalid/market", SITES_INGESTION_SECRET: "ingestion-secret",
-    SITES_INGESTION_AUDIENCE: "sites", STREAM_CONTROL_SECRET: "control", BROWSER_ACCESS_SECRET: "browser",
+    SITES_INGESTION_URL: productionIngestionUrl, SITES_INGESTION_SECRET: strongIngestionSecret,
+    SITES_INGESTION_AUDIENCE: "sites", SITES_ACCESS_BYPASS_TOKEN: "sites-access-token",
+    STREAM_CONTROL_SECRET: strongControlSecret, BROWSER_ACCESS_SECRET: strongBrowserSecret,
     BROWSER_ALLOWED_ORIGINS: "https://app.test",
   };
   assert.equal(validateMarketStreamEnv(baseEnv).feed, "iex");
   assert.throws(() => validateMarketStreamEnv({ ...baseEnv, SITES_INGESTION_URL: "https://replace.example.com" }), /PLACEHOLDER_FORBIDDEN/);
+  assert.throws(() => validateMarketStreamEnv({ ...baseEnv, SITES_INGESTION_URL: "https://evil.invalid/api/internal/market-stream" }), /SITES_INGESTION_URL_NOT_ALLOWED/);
+  assert.throws(() => validateMarketStreamEnv({ ...baseEnv, SITES_INGESTION_URL: "https://aperture-nvda-plan.rmiller62785.chatgpt.site/wrong" }), /SITES_INGESTION_URL_NOT_ALLOWED/);
+  assert.throws(() => validateMarketStreamEnv({ ...baseEnv, SITES_INGESTION_URL: `${productionIngestionUrl}?redirect=evil` }), /SITES_INGESTION_URL_NOT_ALLOWED/);
+  assert.equal(validateMarketStreamEnv({ ...baseEnv, SITES_INGESTION_URL: "http://127.0.0.1:3000/api/internal/market-stream" }).feed, "iex");
   assert.throws(() => validateMarketStreamEnv({ ...baseEnv, APCA_API_KEY_ID: "" }), /APCA_API_KEY_ID_REQUIRED/);
+  assert.throws(() => validateMarketStreamEnv({ ...baseEnv, SITES_ACCESS_BYPASS_TOKEN: "" }), /SITES_ACCESS_BYPASS_TOKEN_REQUIRED/);
+  assert.throws(() => validateMarketStreamEnv({ ...baseEnv, SITES_INGESTION_SECRET: "too-short" }), /SITES_INGESTION_SECRET_TOO_SHORT/);
+  assert.throws(() => validateMarketStreamEnv({ ...baseEnv, STREAM_CONTROL_SECRET: "too-short" }), /STREAM_CONTROL_SECRET_TOO_SHORT/);
+  assert.throws(() => validateMarketStreamEnv({ ...baseEnv, BROWSER_ACCESS_SECRET: "too-short" }), /BROWSER_ACCESS_SECRET_TOO_SHORT/);
   assert.throws(() => validateMarketStreamEnv({ ...baseEnv, ALPACA_FEED: "sip" }), /SIP_ENTITLEMENT_CONFIRMATION_REQUIRED/);
   assert.equal(validateMarketStreamEnv({ ...baseEnv, ALPACA_FEED: "sip", SIP_ENTITLED: "true" }).feed, "sip");
   assert.throws(() => validateMarketStreamEnv({ ...baseEnv, MAX_BROWSER_CLIENTS: "101" }), /MAX_BROWSER_CLIENTS_INVALID/);

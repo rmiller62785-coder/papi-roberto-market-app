@@ -30,7 +30,8 @@ test("REST recovery pins feed, overlaps caller watermark, paginates, and exclude
   assert.equal(requests[0].headers["APCA-API-SECRET-KEY"], "secret");
   const sip = new AlpacaRestRecoveryClient({ feed: "sip", keyId: "key", secretKey: "secret", fetcher, now: () => base + 61_100 });
   const sipEvents = await sip.fetchEvents({ symbol: "NVDA", feed: "sip", atOrAfterProviderAt: base, beforeOrAt: base + 61_000 });
-  assert.equal(sipEvents.every((event) => event.coverage.executionEligible), true);
+  assert.equal(sipEvents.every((event) => event.coverage.executionEligible === false), true,
+    "REST access cannot independently qualify a live execution quote");
   await assert.rejects(() => client.fetchEvents({ symbol: "NVDA", feed: "sip", atOrAfterProviderAt: base, beforeOrAt: base + 1 }), /RECOVERY_FEED_MISMATCH/);
 });
 
@@ -83,6 +84,6 @@ test("dense SIP recovery adaptively bisects a page-capped window and advances a 
   assert.ok(segment.windowMs <= 60_000);
   assert.equal(segment.beforeOrAt, base + segment.windowMs - 1);
   assert.equal(segment.events.length, 2);
-  assert.equal(segment.events.every((event) => event.coverage.executionEligible), true);
+  assert.equal(segment.events.every((event) => event.coverage.executionEligible === false), true);
   assert.ok(new Set(requestedEnds).size > 1, "the capped 15-minute window was bisected");
 });

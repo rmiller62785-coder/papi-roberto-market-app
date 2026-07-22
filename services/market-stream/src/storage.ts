@@ -14,6 +14,7 @@ export type DurableSqlStorageLike = {
   transactionSync<T>(callback: () => T): T;
   setAlarm(at: number): Promise<void>;
   getAlarm?(): Promise<number | null>;
+  deleteAlarm(): Promise<void>;
 };
 
 type OutboxRow = {

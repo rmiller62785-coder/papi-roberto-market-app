@@ -28,6 +28,12 @@ test("2026 Nasdaq holidays and early closes match the published calendar", () =>
   assert.equal(nasdaqSessionSchedule("2026-11-27").regularCloseAt, Date.parse("2026-11-27T18:00:00Z"));
 });
 
+test("versioned ad-hoc Nasdaq closures are not treated as trading sessions", () => {
+  assert.equal(isNasdaqSessionDate("2025-01-09"), false);
+  assert.equal(nextNasdaqSession("2025-01-09"), "2025-01-10");
+  assert.equal(previousNasdaqSession("2025-01-09"), "2025-01-08");
+});
+
 test("next and previous session traversal excludes weekends and holidays", () => {
   assert.equal(nextNasdaqSession("2026-07-03"), "2026-07-06");
   assert.equal(previousNasdaqSession("2026-07-05"), "2026-07-02");

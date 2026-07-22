@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   buildMooSystemStatus,
+  MOO_STRICT_US_QUOTE_MAX_AGE_MS,
   MOO_STREAM_HEARTBEAT_MAX_AGE_MS,
   readMooStreamHealth,
+  readStrictUsSource,
 } from "../app/moo-system-status.ts";
 
 const brokerReference = {
@@ -77,7 +79,7 @@ test("fresh contiguous D1 stream evidence enables the persistent supervisor indi
     research_only_required: 1, execution_eligible_allowed: 0, service_sequence: 42, heartbeat_at: nowMs - 1_000,
   }, {
     state: "CURRENT", checked_at: nowMs - 1_100, available_at: nowMs - 1_200,
-    service_sequence: 42, detail_code: "STREAM_EVENT",
+    connection_epoch: "nvda-iex:3", service_sequence: 42, detail_code: "STREAM_EVENT",
   }), nowMs);
   assert.equal(health.state, "LIVE");
   const status = buildMooSystemStatus({ nowMs, targetSession: "2026-07-21", brokerReference, streamHealth: health });
@@ -107,6 +109,129 @@ test("missing, stale, future, or noncontiguous D1 evidence stays fail closed", a
     research_only_required: 1, execution_eligible_allowed: 0, service_sequence: 10, heartbeat_at: nowMs,
   }, { state: "CURRENT", checked_at: nowMs, available_at: nowMs, service_sequence: 9 }), nowMs);
   assert.notEqual(gap.state, "LIVE");
+});
+
+test("runtime stream-health failures are distinct from an unconfigured service", async () => {
+  const nowMs = Date.parse("2026-07-21T12:00:00Z");
+  const database = { prepare() { throw new Error("D1 unavailable"); } };
+  const health = await readMooStreamHealth(database, nowMs);
+  const status = buildMooSystemStatus({ nowMs, targetSession: "2026-07-21", brokerReference, streamHealth: health });
+  assert.equal(health.detailCode, "D1_STREAM_HEALTH_UNAVAILABLE");
+  assert.equal(status.transport.noteCode, "DURABLE_STREAM_SERVICE_UNAVAILABLE");
+});
+
+test("a fresh exact-session SIP quote satisfies only the required market-data source", async () => {
+  const nowMs = Date.parse("2026-07-21T13:24:00Z");
+  const streamHealth = {
+    state: "LIVE", streamId: "nvda-sip", provider: "alpaca", feed: "sip", coverageScope: "CONSOLIDATED_SIP",
+    connectionEpoch: "nvda-sip:4",
+    heartbeatAt: nowMs - 100, sourceAvailableAt: nowMs - 90, heartbeatAgeMs: 100, sourceLagMs: 90,
+    maxHeartbeatAgeMs: 45_000, maxSourceLagMs: 45_000, detailCode: "STREAM_EVENT",
+  };
+  const observedAt = nowMs - 250;
+  const source = await readStrictUsSource(streamDatabase(null, {
+    provider: "alpaca", feed: "sip", session_date: "2026-07-21", kind: "QUOTE",
+    qualification: "STRICT_EXECUTION", entitlement: "ENTITLED", coverage: "CONSOLIDATED_SIP",
+    price: 17_250, size: 10, provider_time: observedAt, received_at: observedAt + 10,
+    processed_at: observedAt + 20, available_at: observedAt + 30,
+    connection_epoch: "nvda-sip:4", service_sequence: 44,
+  }), "2026-07-21", nowMs, streamHealth);
+
+  assert.equal(source.state, "LIVE");
+  assert.equal(source.validUntil, observedAt + MOO_STRICT_US_QUOTE_MAX_AGE_MS);
+  const status = buildMooSystemStatus({
+    nowMs, targetSession: "2026-07-21", brokerReference, streamHealth, strictUsSource: source,
+  });
+  assert.equal(status.decisionSnapshot.sources.find((item) => item.id === "US").state, "LIVE");
+  assert.equal(status.blockers.includes("CONSOLIDATED_US_FEED_NOT_ENTITLED"), false);
+  assert.equal(status.validUntil, source.validUntil);
+  assert.equal(status.decisionSnapshot.decision, "NO_TRADE");
+  assert.ok(status.blockers.includes("TRAINED_MODEL_NOT_PROMOTED"));
+});
+
+test("strict SIP quote readiness expires after two seconds even while transport stays healthy", async () => {
+  const nowMs = Date.parse("2026-07-21T13:24:00Z");
+  const streamHealth = {
+    state: "LIVE", streamId: "nvda-sip", provider: "alpaca", feed: "sip", coverageScope: "CONSOLIDATED_SIP",
+    connectionEpoch: "nvda-sip:4",
+    heartbeatAt: nowMs, sourceAvailableAt: nowMs, heartbeatAgeMs: 0, sourceLagMs: 0,
+    maxHeartbeatAgeMs: 45_000, maxSourceLagMs: 45_000, detailCode: "STREAM_EVENT",
+  };
+  const observedAt = nowMs - MOO_STRICT_US_QUOTE_MAX_AGE_MS - 1;
+  const source = await readStrictUsSource(streamDatabase(null, {
+    provider: "alpaca", feed: "sip", session_date: "2026-07-21", kind: "QUOTE",
+    qualification: "STRICT_EXECUTION", entitlement: "ENTITLED", coverage: "CONSOLIDATED_SIP",
+    price: 17_250, size: 10, provider_time: observedAt, received_at: observedAt + 10,
+    processed_at: observedAt + 20, available_at: observedAt + 30,
+    connection_epoch: "nvda-sip:4", service_sequence: 44,
+  }), "2026-07-21", nowMs, streamHealth);
+
+  assert.equal(source.state, "DEGRADED");
+  const status = buildMooSystemStatus({
+    nowMs, targetSession: "2026-07-21", brokerReference, streamHealth, strictUsSource: source,
+  });
+  assert.ok(status.blockers.includes("CONSOLIDATED_US_FEED_NOT_ENTITLED"));
+});
+
+test("wrong-session or future SIP observations cannot populate the strict source", async () => {
+  const nowMs = Date.parse("2026-07-21T13:24:00Z");
+  const streamHealth = {
+    state: "LIVE", streamId: "nvda-sip", provider: "alpaca", feed: "sip", coverageScope: "CONSOLIDATED_SIP",
+    connectionEpoch: "nvda-sip:4",
+    heartbeatAt: nowMs, sourceAvailableAt: nowMs, heartbeatAgeMs: 0, sourceLagMs: 0,
+    maxHeartbeatAgeMs: 45_000, maxSourceLagMs: 45_000, detailCode: "STREAM_EVENT",
+  };
+  const source = await readStrictUsSource(streamDatabase(null, {
+    provider: "alpaca", feed: "sip", session_date: "2026-07-22", kind: "QUOTE",
+    qualification: "STRICT_EXECUTION", entitlement: "ENTITLED", coverage: "CONSOLIDATED_SIP",
+    price: 17_250, size: 10, provider_time: nowMs + 1, received_at: nowMs + 1,
+    processed_at: nowMs + 1, available_at: nowMs + 1,
+    connection_epoch: "nvda-sip:4", service_sequence: 44,
+  }), "2026-07-21", nowMs, streamHealth);
+  assert.equal(source.state, "UNAVAILABLE");
+});
+
+test("a quote from a prior connection epoch cannot satisfy the current strict source", async () => {
+  const nowMs = Date.parse("2026-07-21T13:24:00Z");
+  const streamHealth = {
+    state: "LIVE", streamId: "nvda-sip", provider: "alpaca", feed: "sip", coverageScope: "CONSOLIDATED_SIP",
+    connectionEpoch: "nvda-sip:5",
+    heartbeatAt: nowMs, sourceAvailableAt: nowMs, heartbeatAgeMs: 0, sourceLagMs: 0,
+    maxHeartbeatAgeMs: 45_000, maxSourceLagMs: 45_000, detailCode: "STREAM_EVENT",
+  };
+  const source = await readStrictUsSource(streamDatabase(null, {
+    provider: "alpaca", feed: "sip", session_date: "2026-07-21", kind: "QUOTE",
+    qualification: "STRICT_EXECUTION", entitlement: "ENTITLED", coverage: "CONSOLIDATED_SIP",
+    price: 17_250, size: 10, provider_time: nowMs - 100, received_at: nowMs - 90,
+    processed_at: nowMs - 80, available_at: nowMs - 70,
+    connection_epoch: "nvda-sip:4", service_sequence: 44,
+  }), "2026-07-21", nowMs, streamHealth);
+  assert.equal(source.state, "UNAVAILABLE");
+});
+
+test("calendar semantics classify weekends and completed early-close sessions as closed", async () => {
+  const weekend = await readStrictUsSource(undefined, "2026-07-25", Date.parse("2026-07-25T15:00:00Z"));
+  assert.equal(weekend.state, "CLOSED");
+  assert.equal(weekend.reasonCode, "MARKET_IS_CLOSED");
+
+  const afterEarlyClose = await readStrictUsSource(undefined, "2026-11-27", Date.parse("2026-11-27T18:00:01Z"));
+  assert.equal(afterEarlyClose.state, "CLOSED");
+
+  const beforeEarlyClose = await readStrictUsSource(undefined, "2026-11-27", Date.parse("2026-11-27T17:59:59Z"));
+  assert.equal(beforeEarlyClose.state, "UNAVAILABLE");
+});
+
+test("configured but unconfirmed SIP does not claim realtime entitlement", async () => {
+  const nowMs = Date.parse("2026-07-21T13:24:00Z");
+  const source = await readStrictUsSource(undefined, "2026-07-21", nowMs, {
+    state: "STALE", streamId: "nvda-sip", provider: "alpaca", feed: "sip", coverageScope: "CONSOLIDATED_SIP",
+    connectionEpoch: "nvda-sip:4", heartbeatAt: nowMs - 46_000, sourceAvailableAt: nowMs - 46_000,
+    heartbeatAgeMs: 46_000, sourceLagMs: 46_000, maxHeartbeatAgeMs: 45_000, maxSourceLagMs: 45_000,
+    detailCode: "STREAM_RECONNECTING",
+  });
+  assert.equal(source.state, "UNAVAILABLE");
+  assert.equal(source.entitlement, "UNAVAILABLE");
+  assert.equal(source.provider, "Alpaca SIP");
 });
 
 test("post-freeze uncommissioned evaluations retain the explicit unavailable source topology", () => {

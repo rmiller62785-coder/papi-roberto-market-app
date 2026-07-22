@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { pullAlpacaBrokerStatus } from "../../../alpaca-broker-status.ts";
-import { buildMooSystemStatus, readMooStreamHealth } from "../../../moo-system-status.ts";
+import { buildMooSystemStatus, readMooStreamHealth, readStrictUsSource } from "../../../moo-system-status.ts";
 import { validateTargetSession } from "../../../target-session.ts";
 
 const HEADERS = {
@@ -25,8 +25,9 @@ export async function GET(request: Request) {
     pullAlpacaBrokerStatus(),
     readMooStreamHealth(runtime.DB, nowMs),
   ]);
+  const strictUsSource = await readStrictUsSource(runtime.DB, validation.date, nowMs, streamHealth);
   return Response.json(
-    buildMooSystemStatus({ nowMs, targetSession: validation.date, brokerReference, streamHealth }),
+    buildMooSystemStatus({ nowMs, targetSession: validation.date, brokerReference, streamHealth, strictUsSource }),
     { headers: HEADERS },
   );
 }

@@ -88,7 +88,10 @@ function emit(
     streamId: next.streamId,
     symbol: "NVDA",
     feed: next.feed,
-    coverage: next.coverage,
+    // State may remain live-SIP eligible while REST reconciliation runs. The
+    // immutable emission must retain the source event's own (research-only)
+    // coverage so receiver validation and qualification cannot over-promote it.
+    coverage: input.sourceEvent?.coverage ?? next.coverage,
     connectionEpoch: next.connectionEpoch,
     serviceSequence: next.serviceSequence,
     processedAt: input.processedAt,
@@ -308,7 +311,8 @@ export function advanceMarketWatermark(
   const policy = { ...DEFAULT_REDUCER_POLICY, ...overrides };
   let next = state;
   const emissions: MarketStreamEmission[] = [];
-  const due = state.pendingMinutes.filter((minute) => processedAt >= minute.minuteEnd + policy.authoritativeBarLatenessMs &&
+  const due = state.pendingMinutes.filter((minute) => minute.receivedAt >= minute.minuteEnd &&
+    processedAt >= minute.minuteEnd + policy.authoritativeBarLatenessMs &&
     (state.barIntegrity.state === "CLEAR" || (state.barIntegrity.affectedMinuteStarts.length > 0 && !state.barIntegrity.affectedMinuteStarts.includes(minute.minuteStart))));
   for (const pending of due) {
     const minute: AuthoritativeMinute = {
