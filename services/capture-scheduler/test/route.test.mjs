@@ -69,7 +69,7 @@ function harness() {
   return { admitted, calls, dependencies, runtime, fetchApp };
 }
 
-test("private route derives the current minute server-side and reuses capture/archive orchestration", async () => {
+test("private route derives the current minute server-side and keeps archive work off a capture request", async () => {
   const h = harness();
   const response = await handleScheduledCapturePost(await request(), h.runtime, {
     now: NOW,
@@ -84,9 +84,28 @@ test("private route derives the current minute server-side and reuses capture/ar
   assert.equal(h.calls.capture[0].scheduledTime, MINUTE);
   assert.equal(h.calls.capture[0].nowMs, NOW);
   assert.equal(h.calls.capture[0].fetchApp, h.fetchApp);
+  assert.equal(h.calls.archive.length, 0);
+  assert.deepEqual(payload.archive, []);
+});
+
+test("a phase-null heartbeat runs the bounded archive maintenance path", async () => {
+  const h = harness();
+  h.dependencies.runCapture = async (input) => {
+    h.calls.capture.push(input);
+    return { phase: null, status: "skipped", reason: "outside Eastern capture windows" };
+  };
+  const response = await handleScheduledCapturePost(await request(), h.runtime, {
+    now: NOW,
+    fetchApp: h.fetchApp,
+    dependencies: h.dependencies,
+  });
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(h.calls.capture.length, 1);
   assert.equal(h.calls.archive.length, 1);
   assert.equal(h.calls.archive[0].sealedAt, MINUTE);
   assert.equal(h.calls.archive[0].maximumRows, 5_000);
+  assert.equal(payload.archive.length, 1);
 });
 
 test("signed attempts to select a historical time fail before orchestration", async () => {

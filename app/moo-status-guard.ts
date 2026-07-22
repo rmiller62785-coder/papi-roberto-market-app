@@ -210,7 +210,7 @@ export function isMooSystemStatus(value: unknown, targetDate: string): value is 
     value.policyVersion !== "strict-moo-commissioning-v2" || value.targetSession !== targetDate ||
     value.executionMode !== "NOT_COMMISSIONED" || value.decisionAuthority !== "SERVER" ||
     !safeTimestamp(value.evaluatedAt) || !safeTimestamp(value.validUntil) ||
-    value.validUntil < value.evaluatedAt || value.validUntil > value.evaluatedAt + 45_000 ||
+    value.validUntil !== value.evaluatedAt + 45_000 ||
     !objectValue(value.decisionSnapshot) || !(value.decisionArtifact === null || objectValue(value.decisionArtifact)) ||
     !member(value.artifactStoreState, ["FOUND", "NOT_FOUND", "UNAVAILABLE"]) ||
     !objectValue(value.transport) ||
@@ -301,8 +301,7 @@ export function isMooSystemStatus(value: unknown, targetDate: string): value is 
     value.transport.stream.feed === "sip" && value.transport.stream.coverageScope === "CONSOLIDATED_SIP");
   const feedBlockerConsistent = decisionArtifact != null || (
     value.blockers.includes("CONSOLIDATED_US_FEED_NOT_ENTITLED") === (!usReady && !usEntitled) &&
-    value.blockers.includes("CONSOLIDATED_US_QUOTE_NOT_CURRENT") === (!usReady && usEntitled) &&
-    (!usReady || value.validUntil === (usSource as MooSystemStatus["decisionSnapshot"]["sources"][number]).validUntil)
+    value.blockers.includes("CONSOLIDATED_US_QUOTE_NOT_CURRENT") === (!usReady && usEntitled)
   );
 
   return artifactStoreConsistent && (uncommissionedContract || frozenArtifactContract) && usTransportConsistent && feedBlockerConsistent && value.transport.browser === "ADAPTIVE_REST_POLLING" &&

@@ -158,7 +158,14 @@ def evaluate_expanding_walk_forward(
     base = {
         "schemaVersion": EVALUATION_SCHEMA,
         "purpose": "RESEARCH_CANDIDATE_EVALUATION",
+        "modelTrainingMode": "EXTERNAL_PREDICTIONS_EVALUATED_ONLY",
+        "strictGateEligible": False,
         "promotionDecision": "NOT_PERFORMED",
+        "promotionBlockers": [
+            "FOLD_LOCAL_MODEL_TRAINING_NOT_PERFORMED",
+            "IMMUTABLE_PRODUCTION_ARTIFACT_NOT_VERIFIED",
+            "HUMAN_PROMOTION_REVIEW_NOT_PERFORMED",
+        ],
         "modelVersion": model_version,
         "datasetManifestHash": dataset_manifest_hash,
         "configuration": asdict(settings),

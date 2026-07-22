@@ -29,6 +29,7 @@ export type StrictMooPresentationInput = {
     riskPolicyVersion: string | null;
   } | null;
   statusUnavailable?: boolean;
+  deliveryState?: "live" | "retrying" | "expired" | "offline" | "loading";
   nowMs: number;
 };
 
@@ -50,11 +51,13 @@ function strictQuoteState(
   snapshot: MooDecisionSnapshot,
   source: MooSourceHealth | null,
   statusUnavailable: boolean,
+  nowMs: number,
 ): StrictJourneyState {
   if (snapshot.lifecycle === "MARKET_CLOSED" || source?.state === "CLOSED") return "closed";
   if (snapshot.lifecycle === "FUTURE_SESSION" || snapshot.blockReason === "TARGET_SESSION_NOT_STARTED") return "pending";
   if (statusUnavailable) return "unavailable";
   if (source?.state === "LIVE" && source.entitlement === "REALTIME" && source.coverage === "CONSOLIDATED_SIP") {
+    if (source.validUntil != null && nowMs > source.validUntil) return "stale";
     return "live";
   }
   if (source?.state === "DEGRADED" || source?.state === "DELAYED" || snapshot.blockReason === "STALE_US_QUOTE") {
@@ -92,18 +95,27 @@ function nextStageState(
  */
 export function deriveStrictMooPresentation(input: StrictMooPresentationInput): StrictMooPresentation {
   const { snapshot, commissioning, nowMs } = input;
-  const statusUnavailable = input.statusUnavailable === true || snapshot.warnings.includes("LAST_GOOD_SERVER_AUDIT_ONLY");
+  const deliveryState = input.deliveryState ?? (input.statusUnavailable ? "expired" : "live");
+  const statusUnavailable = input.statusUnavailable === true || ["expired", "offline"].includes(deliveryState) ||
+    snapshot.warnings.includes("LAST_GOOD_SERVER_AUDIT_ONLY");
   const usSource = snapshot.sources.find((source) => source.id === "US") ?? null;
-  const quoteState = strictQuoteState(snapshot, usSource, statusUnavailable);
+  const quoteState = strictQuoteState(snapshot, usSource, statusUnavailable, nowMs);
   const streamState = strictStreamState(input.transport, statusUnavailable);
-  const browserState: StrictJourneyState = statusUnavailable ? "unavailable" : "live";
+  const browserState: StrictJourneyState = statusUnavailable
+    ? "unavailable"
+    : deliveryState === "retrying"
+      ? "stale"
+      : deliveryState === "loading"
+        ? "pending"
+        : "live";
+  const browserEvidenceAvailable = browserState === "live" || browserState === "stale";
   const sourceStageState = quoteState === "closed"
     ? "closed"
     : quoteState === "pending"
       ? "pending"
       : quoteState === "stale" || streamState === "stale"
         ? "stale"
-        : quoteState === "live" && streamState === "live" && browserState === "live"
+        : quoteState === "live" && streamState === "live" && browserEvidenceAvailable
           ? "live"
           : "unavailable";
 

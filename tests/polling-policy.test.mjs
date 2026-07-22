@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  AUTOMATION_HEALTH_REQUEST_TIMEOUT_MS,
   FORECAST_REQUEST_TIMEOUT_MS,
   MARKET_REQUEST_TIMEOUT_MS,
   MAX_POLL_INTERVAL_MS,
   MIN_POLL_INTERVAL_MS,
+  MOO_STATUS_REQUEST_TIMEOUT_MS,
+  automationHealthPollingIntervalMs,
   canReuseMainForecast,
   forecastPollingIntervalMs,
   marketPollingIntervalMs,
@@ -52,6 +55,16 @@ test("forecast polling remains slower than quotes and backs off further", () => 
 test("request watchdogs are explicit and endpoint-specific", () => {
   assert.equal(MARKET_REQUEST_TIMEOUT_MS, 12_000);
   assert.equal(FORECAST_REQUEST_TIMEOUT_MS, 20_000);
+  assert.equal(MOO_STATUS_REQUEST_TIMEOUT_MS, 2_000);
+  assert.equal(AUTOMATION_HEALTH_REQUEST_TIMEOUT_MS, 5_000);
+});
+
+test("automation health polls independently at scheduler cadence", () => {
+  assert.equal(automationHealthPollingIntervalMs(context({ workflow: "moo" })), 15_000);
+  assert.equal(automationHealthPollingIntervalMs(context({ statusSurfaceVisible: true })), 15_000);
+  assert.equal(automationHealthPollingIntervalMs(context()), 60_000);
+  assert.equal(automationHealthPollingIntervalMs(context({ visibilityState: "hidden" })), 60_000);
+  assert.equal(automationHealthPollingIntervalMs(context({ online: false })), 300_000);
 });
 
 test("visible Strict status refreshes inside its 45-second validity window", () => {
@@ -119,6 +132,7 @@ test("every policy result is finite, nonnegative, and bounded", () => {
             marketPollingIntervalMs(input),
             forecastPollingIntervalMs(input),
             mooStatusPollingIntervalMs(input),
+            automationHealthPollingIntervalMs(input),
           ]) {
             assert.equal(Number.isFinite(interval), true);
             assert.ok(interval >= 0);

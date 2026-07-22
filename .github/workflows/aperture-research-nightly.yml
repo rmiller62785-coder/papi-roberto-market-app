@@ -1,0 +1,159 @@
+name: Aperture research proxy nightly
+
+on:
+  schedule:
+    # 15:00 UTC is after 09:31 America/New_York in both EST and EDT.
+    - cron: "0 15 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: First session date; defaults to five years before end_date
+        required: false
+        default: ""
+      end_date:
+        description: Last session date to request; defaults to the UTC run date
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aperture-research-proxy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  research-tests:
+    name: Research safety tests (no provider credentials)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: research/src
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Check out the exact workflow revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Run the complete research suite
+        run: python -m unittest discover -s research/tests -v
+
+  alpaca-sip-proxy:
+    name: Non-promoting Alpaca SIP proxy
+    needs: research-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: research/src
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Check out the exact workflow revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve the bounded research run
+        id: run
+        shell: bash
+        env:
+          INPUT_START_DATE: ${{ inputs.start_date }}
+          INPUT_END_DATE: ${{ inputs.end_date }}
+        run: |
+          set -euo pipefail
+          end_date="${INPUT_END_DATE:-$(date -u +%F)}"
+          if [[ -n "$INPUT_START_DATE" ]]; then
+            start_date="$INPUT_START_DATE"
+          else
+            start_date="$(date -u -d "${end_date} -5 years" +%F)"
+          fi
+          created_at_ms="$(python -c 'import time; print(time.time_ns() // 1_000_000)')"
+          code_version="$(git rev-parse HEAD)"
+          model_version="alpaca-proxy-mean-gap-${code_version:0:12}-${end_date}"
+          run_directory="research-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          {
+            echo "start_date=$start_date"
+            echo "end_date=$end_date"
+            echo "created_at_ms=$created_at_ms"
+            echo "code_version=$code_version"
+            echo "model_version=$model_version"
+            echo "run_directory=$run_directory"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download immutable Alpaca SIP source pages
+        env:
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+        run: |
+          test -n "$APCA_API_KEY_ID" || { echo "APCA_API_KEY_ID is not configured" >&2; exit 1; }
+          test -n "$APCA_API_SECRET_KEY" || { echo "APCA_API_SECRET_KEY is not configured" >&2; exit 1; }
+          python -m aperture_research.proxy_cli download \
+            --start-date "${{ steps.run.outputs.start_date }}" \
+            --end-date "${{ steps.run.outputs.end_date }}" \
+            --archive-directory "${{ steps.run.outputs.run_directory }}/archive" \
+            --manifest "${{ steps.run.outputs.run_directory }}/download-manifest.json"
+
+      - name: Build point-in-time proxy rows, evaluation, and health
+        run: |
+          python -m aperture_research.proxy_cli evaluate \
+            --download-manifest "${{ steps.run.outputs.run_directory }}/download-manifest.json" \
+            --archive-directory "${{ steps.run.outputs.run_directory }}/archive" \
+            --rows-output "${{ steps.run.outputs.run_directory }}/alpaca-proxy-rows.jsonl" \
+            --output "${{ steps.run.outputs.run_directory }}/alpaca-proxy-report.json" \
+            --health-output "${{ steps.run.outputs.run_directory }}/research-health.json" \
+            --reconstructed-availability-lag-ms 30000 \
+            --feature-schema-version alpaca-sip-proxy-features-v1 \
+            --code-version "${{ steps.run.outputs.code_version }}" \
+            --model-version "${{ steps.run.outputs.model_version }}" \
+            --created-at-ms "${{ steps.run.outputs.created_at_ms }}" \
+            --minimum-train-sessions 60 \
+            --test-sessions-per-fold 10 \
+            --candidate-cost-cents 3
+
+      - name: Assert the artifact cannot satisfy or promote Strict
+        shell: bash
+        run: |
+          python - "${{ steps.run.outputs.run_directory }}/alpaca-proxy-report.json" "${{ steps.run.outputs.run_directory }}/research-health.json" <<'PY'
+          import json
+          import sys
+
+          report = json.load(open(sys.argv[1], encoding="utf-8"))
+          health = json.load(open(sys.argv[2], encoding="utf-8"))
+          assert report["strictGateEligible"] is False
+          assert report["promotionDecision"] == "NOT_PERFORMED"
+          assert health["strictGateEligible"] is False
+          assert health["promotionDecision"] == "NOT_PERFORMED"
+          assert health["applicationWriteAttempted"] is False
+          PY
+
+      - name: Publish aggregate non-entitled artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: aperture-research-proxy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.run.outputs.run_directory }}/alpaca-proxy-report.json
+            ${{ steps.run.outputs.run_directory }}/research-health.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Publish non-actionable run summary
+        shell: bash
+        run: |
+          {
+            echo "## Aperture research proxy"
+            echo
+            echo "- State: research-only"
+            echo "- Strict gate eligible: false"
+            echo "- Promotion decision: NOT_PERFORMED"
+            echo "- Application writes: none"
+            echo "- Label: ALPACA_SIP_FIRST_MINUTE_OPEN_PROXY"
+            echo "- Window: ${{ steps.run.outputs.start_date }} through ${{ steps.run.outputs.end_date }}"
+            echo "- Revision: ${{ steps.run.outputs.code_version }}"
+          } >> "$GITHUB_STEP_SUMMARY"

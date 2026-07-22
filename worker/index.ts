@@ -55,28 +55,33 @@ const worker = {
 
   scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     const store = createD1ScheduledCaptureStore(env.DB);
-    const capture = ensureMooSafetySchemaOnce(env.DB, controller.scheduledTime)
+    const maintenance = ensureMooSafetySchemaOnce(env.DB, controller.scheduledTime)
         .then(() => runScheduledCapture({
           scheduledTime: controller.scheduledTime,
           fetchApp: (path) =>
             handler.fetch(new Request(new URL(path, "https://nvda-scheduler.internal")), env, ctx),
           store,
         }))
-        .then((result) => console.log("NVDA scheduled capture", result))
-        .catch((error) => console.error("NVDA scheduled capture failed", error));
-    const archive = (async () => {
-      for (let segment = 0; segment < 4; segment += 1) {
-        const result = await archiveD1MarketStreamPrefix({
-          database: env.DB,
-          bucket: env.ARCHIVE,
-          sealedAt: controller.scheduledTime,
-          maximumRows: 5_000,
-        });
-        console.log("NVDA market archive", result);
-        if (result.status === "EMPTY") break;
-      }
-    })().catch((error) => console.error("NVDA market archive failed", error));
-    ctx.waitUntil(Promise.all([capture, archive]).then(() => undefined));
+        .then(async (result) => {
+          console.log("NVDA scheduled capture", result);
+          // Checkpoint minutes are latency-sensitive, especially the 09:24 ET
+          // decision freeze. Archive work is intentionally shifted to the next
+          // ordinary cron minute so it cannot contend with point-in-time D1
+          // writes or determine capture success.
+          if (result.phase !== null) return;
+          for (let segment = 0; segment < 4; segment += 1) {
+            const archived = await archiveD1MarketStreamPrefix({
+              database: env.DB,
+              bucket: env.ARCHIVE,
+              sealedAt: controller.scheduledTime,
+              maximumRows: 5_000,
+            });
+            console.log("NVDA market archive", archived);
+            if (archived.status === "EMPTY") break;
+          }
+        })
+        .catch((error) => console.error("NVDA scheduled maintenance failed", error));
+    ctx.waitUntil(maintenance);
   },
 };
 

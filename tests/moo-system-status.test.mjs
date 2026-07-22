@@ -167,7 +167,9 @@ test("a fresh exact-session SIP quote satisfies only the required market-data so
   });
   assert.equal(status.decisionSnapshot.sources.find((item) => item.id === "US").state, "LIVE");
   assert.equal(status.blockers.includes("CONSOLIDATED_US_FEED_NOT_ENTITLED"), false);
-  assert.equal(status.validUntil, source.validUntil);
+  assert.equal(status.validUntil, status.evaluatedAt + 45_000);
+  assert.equal(source.validUntil, observedAt + MOO_STRICT_US_QUOTE_MAX_AGE_MS);
+  assert.ok(status.validUntil > source.validUntil);
   assert.equal(status.decisionSnapshot.decision, "NO_TRADE");
   assert.ok(status.blockers.includes("TRAINED_MODEL_NOT_PROMOTED"));
 });

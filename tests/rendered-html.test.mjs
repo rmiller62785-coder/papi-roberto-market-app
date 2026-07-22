@@ -5,12 +5,14 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 
 test("ships the NVDA decision dashboard instead of the starter preview", async () => {
-  const [page, layout, styles, mooSurface, strictJourney] = await Promise.all([
+  const [page, layout, styles, mooSurface, strictJourney, mooStatusRoute, operationalState] = await Promise.all([
     readFile(new URL("app/page.tsx", root), "utf8"),
     readFile(new URL("app/layout.tsx", root), "utf8"),
     readFile(new URL("app/globals.css", root), "utf8"),
     readFile(new URL("app/components/MooDecisionSurface.tsx", root), "utf8"),
     readFile(new URL("app/components/StrictMooJourney.tsx", root), "utf8"),
+    readFile(new URL("app/api/moo/status/route.ts", root), "utf8"),
+    readFile(new URL("app/operational-plane-state.ts", root), "utf8"),
   ]);
 
   assert.match(page, /Aperture/);
@@ -81,6 +83,7 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(strictJourney, /PERMANENT UPSTREAM/);
   assert.match(strictJourney, /STRICT QUOTE/);
   assert.match(strictJourney, /BROWSER DELIVERY/);
+  assert.match(strictJourney, /Refresh retrying/);
   assert.match(strictJourney, /ARTIFACT STORAGE UNAVAILABLE/);
   assert.match(strictJourney, /PAPER REVIEW ONLY · NO ORDER/);
   assert.match(strictJourney, /Execution is not commissioned, so no order can be submitted/);
@@ -104,6 +107,10 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(mooSurface, /Short opening ticket/);
   assert.match(mooSurface, /Maximum loss/);
   assert.match(mooSurface, /Shortability/);
+  assert.match(mooSurface, /Advanced paper overrides/);
+  assert.match(mooSurface, /Auto-filled defaults/);
+  assert.match(mooSurface, /riskBudget: "10\.00"/);
+  assert.match(mooSurface, /maxShares: "1"/);
   assert.match(page, /Tradegate BSX \(XGAT\)/);
   assert.match(mooSurface, /Not configured/);
   assert.match(styles, /\.moo-decision-surface/);
@@ -111,6 +118,8 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(styles, /\.strict-connection-lanes/);
   assert.match(styles, /\.strict-command\.state-closed/);
   assert.match(styles, /\.strict-store-alert/);
+  assert.match(styles, /\.operational-planes/);
+  assert.match(styles, /\.moo-paper-advanced/);
   assert.match(styles, /@media\(max-width:390px\)/);
   assert.doesNotMatch(mooSurface, />\$0\.00</);
   assert.match(page, /Source \/ Knowledge/);
@@ -131,7 +140,19 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(page, /MANUAL SCENARIO — NOT LIVE/);
   assert.match(page, /STALE — DO NOT ACT/);
   assert.match(page, /Capture mode: unattended server schedule/);
-  assert.match(page, /forecast\?\.automation\?\.lastSuccessAt/);
+  assert.match(page, /Research, automation and Strict readiness/);
+  assert.match(page, /AUTOMATION PLANE/);
+  assert.match(page, /\/api\/automation\/health/);
+  assert.match(page, /statusDeliveryState/);
+  assert.match(operationalState, /automation\.status === "stalled"/);
+  assert.match(operationalState, /automation\.status === "running"/);
+  assert.match(operationalState, /automation\.status === "awaiting_first_run"/);
+  assert.match(operationalState, /automation\.stalledRuns/);
+  assert.doesNotMatch(`${page}\n${operationalState}`, /failedCheckpoints|stalledCheckpoints/);
+  assert.match(page, /strictGateReady/);
+  assert.match(page, /Official-opening scoring remains pending a licensed official-cross source/);
+  assert.match(page, /Browser-independent checkpoints are stored separately and do not create Library plans/);
+  assert.doesNotMatch(mooStatusRoute, /pullAlpacaBrokerStatus/);
   assert.doesNotMatch(page, /outcomeRef|snapshotRef|savedPlanRef/);
   assert.match(page, /COMPLETED BAR/);
   assert.match(page, /language-toggle/);

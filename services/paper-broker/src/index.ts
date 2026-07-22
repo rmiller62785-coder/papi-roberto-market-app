@@ -70,17 +70,42 @@ export class PaperBrokerCoordinator {
       now: this.#now(),
     });
     if (!verified.ok) return json({ error: `PAPER_COMMAND_AUTH_${verified.reason}` }, verified.reason === "REPLAY" ? 409 : 401);
-    if (url.pathname === "/health") return json({
-      schemaVersion: PAPER_BROKER_SCHEMA,
-      environment: "paper",
-      symbol: "NVDA",
-      submissionEnabled: this.#config.submissionEnabled,
-      shortsEnabled: this.#config.shortsEnabled,
-      maximumShares: this.#config.maximumShares,
-      automaticSubmission: false,
-      tradeUpdates: "NOT_CONNECTED",
-      ...this.#repository.health(),
-    });
+    if (url.pathname === "/health") {
+      const local = this.#repository.health();
+      const providerReference = typeof (this.#client as unknown as { getPaperHealthReference?: unknown }).getPaperHealthReference === "function"
+        ? await this.#client.getPaperHealthReference(this.#now())
+        : {
+            provider: "Alpaca Paper Trading API" as const,
+            environment: "paper" as const,
+            checkedAt: this.#now(),
+            state: "DEGRADED" as const,
+            account: null,
+            nvdaPosition: null,
+            openNvdaMooOrders: null,
+            errors: ["ALPACA_PAPER_HEALTH_CLIENT_UNAVAILABLE"],
+            identifiersRedacted: true as const,
+            liveTradingHostUsed: false as const,
+          };
+      return json({
+        schemaVersion: PAPER_BROKER_SCHEMA,
+        environment: "paper",
+        symbol: "NVDA",
+        submissionEnabled: this.#config.submissionEnabled,
+        shortsEnabled: this.#config.shortsEnabled,
+        maximumShares: this.#config.maximumShares,
+        automaticSubmission: false,
+        tradeUpdates: "NOT_CONNECTED",
+        providerReference,
+        reconciliation: {
+          mode: "REST_BY_CLIENT_ORDER_ID_BEFORE_RETRY",
+          automaticSubmission: false,
+          ambiguousCommands: local.commands.ambiguous,
+          submittedCommands: local.commands.submitted,
+          openNvdaMooOrders: providerReference.openNvdaMooOrders?.count ?? null,
+        },
+        ...local,
+      });
+    }
     return this.#handleCommand(verified.body);
   }
 

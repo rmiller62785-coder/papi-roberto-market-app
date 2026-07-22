@@ -188,6 +188,40 @@ test("runner retries the freeze each minute while persistent inserts remain stor
   assert.deepEqual(fetchPaths.map((path) => path.split("?")[0]), ["/api/market", "/api/forecast"]);
 });
 
+test("runner records started before provider work and overlaps forecast with the market request", async () => {
+  const at = Date.parse("2026-07-20T13:24:00Z");
+  const events = [];
+  let resolveMarket;
+  const marketResponse = new Promise((resolve) => { resolveMarket = resolve; });
+  const run = runScheduledCapture({
+    scheduledTime: at,
+    nowMs: at,
+    fetchApp: async (path) => {
+      if (path.startsWith("/api/market")) {
+        events.push("fetch:market");
+        return marketResponse;
+      }
+      events.push(`fetch:forecast:${new URL(path, "https://internal.test").searchParams.get("targetDate")}`);
+      return Response.json(forecast(at));
+    },
+    store: {
+      async savePreopen() { events.push("save:research"); },
+      async attachOutcome() { assert.fail("outcome should not run"); return 0; },
+      async recordRun(value) { events.push(`run:${value.status}`); },
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events.slice(0, 3), [
+    "run:started",
+    "fetch:market",
+    "fetch:forecast:2026-07-20",
+  ]);
+  resolveMarket(Response.json(market(at)));
+  const result = await run;
+  assert.equal(result.status, "captured");
+  assert.deepEqual(events.filter((event) => event.startsWith("run:")), ["run:started", "run:captured"]);
+});
+
 test("an accepted scheduled checkpoint persists the normalized market contract before the research snapshot", async () => {
   const at = Date.parse("2026-07-20T13:24:00Z");
   const contract = { schemaVersion: "target-market-v1", symbol: "NVDA", targetDate: "2026-07-20" };
@@ -271,8 +305,10 @@ test("a delayed cron invocation is recorded but cannot backfill point-in-time ev
   assert.equal(result.status, "skipped");
   assert.equal(result.reasonCode, "SCHEDULED_INVOCATION_TOO_LATE");
   assert.equal(fetches, 0);
-  assert.equal(recorded[0].checkpoint, "T-5M");
-  assert.equal(recorded[0].detailCode, "SCHEDULED_INVOCATION_TOO_LATE");
+  assert.deepEqual(recorded.map((run) => run.status), ["started", "skipped"]);
+  assert.equal(recorded[0].detailCode, "SCHEDULED_CAPTURE_STARTED");
+  assert.equal(recorded[1].checkpoint, "T-5M");
+  assert.equal(recorded[1].detailCode, "SCHEDULED_INVOCATION_TOO_LATE");
 });
 
 test("scheduler persistence is append-only and idempotent by deterministic run id", async () => {
@@ -280,6 +316,7 @@ test("scheduler persistence is append-only and idempotent by deterministic run i
   assert.match(source, /INSERT INTO scheduler_runs/);
   assert.match(source, /ON CONFLICT\(run_id\) DO NOTHING/);
   assert.match(source, /const runId = `\$\{jobKey\}:\$\{status\}`/);
+  assert.match(source, /status === "started" \? \[appendRun\] : \[appendRun, updateLegacyHealth\]/);
   assert.doesNotMatch(source, /UPDATE scheduler_runs/i);
 });
 
@@ -306,6 +343,75 @@ test("scheduler health separates transport, snapshot, and freeze success", () =>
   assert.equal(health.lastSnapshotSuccessAt, null);
   assert.equal(health.lastFreezeSuccessAt, Date.parse("2026-07-20T13:24:20Z"));
   assert.equal(health.consecutiveFailures, 0);
+  assert.ok(health.missedCheckpoints.includes("T-5M"));
+});
+
+test("scheduler health turns an unfinished T-5M receipt into stalled and missed at the hard cutoff", () => {
+  const startedAt = Date.parse("2026-07-20T13:24:01Z");
+  const row = {
+    runId: "t5:started",
+    jobKey: "t5",
+    scheduledAt: Date.parse("2026-07-20T13:24:00Z"),
+    startedAt,
+    completedAt: startedAt,
+    phase: "preopen",
+    checkpoint: "T-5M",
+    status: "started",
+    targetDate: "2026-07-20",
+    transportSucceeded: 1,
+    snapshotSucceeded: 0,
+    freezeSucceeded: 0,
+    detailCode: "SCHEDULED_CAPTURE_STARTED",
+    detail: "accepted",
+  };
+  const beforeCutoff = summarizeSchedulerHealth([row], Date.parse("2026-07-20T13:24:29Z"));
+  assert.equal(beforeCutoff.status, "running");
+  assert.equal(beforeCutoff.missedCheckpoints.includes("T-5M"), false);
+  assert.equal(beforeCutoff.stalledRuns.length, 0);
+
+  const afterCutoff = summarizeSchedulerHealth([row], Date.parse("2026-07-20T13:24:31Z"));
+  assert.equal(afterCutoff.status, "stalled");
+  assert.ok(afterCutoff.missedCheckpoints.includes("T-5M"));
+  assert.deepEqual(afterCutoff.stalledRuns.map((run) => run.checkpoint), ["T-5M"]);
+
+  const captured = {
+    ...row,
+    runId: "t5:captured",
+    status: "captured",
+    completedAt: Date.parse("2026-07-20T13:24:20Z"),
+    snapshotSucceeded: 1,
+    freezeSucceeded: 1,
+    detailCode: null,
+    detail: null,
+  };
+  const completed = summarizeSchedulerHealth([row, captured], Date.parse("2026-07-20T13:24:31Z"));
+  assert.equal(completed.stalledRuns.length, 0);
+  assert.equal(completed.missedCheckpoints.includes("T-5M"), false);
+  assert.equal(completed.lastRun.status, "captured");
+});
+
+test("scheduler health reports a failed checkpoint as missed after its bounded retry grace", () => {
+  const scheduledAt = Date.parse("2026-07-20T13:00:00Z");
+  const failed = {
+    runId: "t30:failed",
+    jobKey: "t30",
+    scheduledAt,
+    startedAt: scheduledAt + 1_000,
+    completedAt: scheduledAt + 20_000,
+    phase: "preopen",
+    checkpoint: "T-30M",
+    status: "failed",
+    targetDate: "2026-07-20",
+    transportSucceeded: 0,
+    snapshotSucceeded: 0,
+    freezeSucceeded: 0,
+    detailCode: "SCHEDULED_CAPTURE_FAILED",
+    detail: "provider timeout",
+  };
+  const health = summarizeSchedulerHealth([failed], Date.parse("2026-07-20T13:10:01Z"));
+  assert.equal(health.status, "failed");
+  assert.equal(health.consecutiveFailures, 1);
+  assert.ok(health.missedCheckpoints.includes("T-30M"));
 });
 
 test("holiday/closed response skips all writes and never calls forecast", async () => {

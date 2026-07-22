@@ -40,6 +40,9 @@ class WalkForwardTests(unittest.TestCase):
             config=EvaluationConfig(minimum_train_sessions=6, test_sessions_per_fold=3, candidate_cost_cents=2),
         )
         self.assertEqual(report["promotionDecision"], "NOT_PERFORMED")
+        self.assertFalse(report["strictGateEligible"])
+        self.assertEqual(report["modelTrainingMode"], "EXTERNAL_PREDICTIONS_EVALUATED_ONLY")
+        self.assertIn("FOLD_LOCAL_MODEL_TRAINING_NOT_PERFORMED", report["promotionBlockers"])
         self.assertEqual(len(report["folds"]), 2)
         self.assertEqual(report["folds"][0]["trainThroughSession"], "2026-01-06")
         self.assertEqual(report["folds"][0]["testFromSession"], "2026-01-07")

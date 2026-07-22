@@ -22,6 +22,14 @@ out-of-sample calibration report. Reports always say
 `promotionDecision: NOT_PERFORMED`; a production promotion gate must verify and
 approve the resulting immutable artifacts.
 
+The official-row evaluator currently evaluates externally supplied candidate
+predictions; it does not fit a model inside each fold. Its output therefore also
+sets `strictGateEligible: false`, identifies the training mode as
+`EXTERNAL_PREDICTIONS_EVALUATED_ONLY`, and records explicit promotion blockers.
+It remains a research diagnostic even when every row carries an official-cross
+label. A future production candidate must generate predictions from fold-local
+training evidence and pass a separate immutable, human-reviewed promotion gate.
+
 ## Row contract
 
 Input JSONL rows contain:
@@ -164,3 +172,30 @@ Future live point-in-time snapshots and licensed official-cross/NOII outcomes
 remain separate datasets. A later human-reviewed promotion workflow may compare
 the proxy candidate against those artifacts, but must never silently relabel
 this bootstrap as an official or execution-grade model.
+
+### GitHub Actions research job
+
+`.github/workflows/aperture-research-nightly.yml` runs at 15:00 UTC on weekdays,
+which is after 09:31 America/New_York in both daylight and standard time. It can
+also be dispatched manually with a bounded start and end date. The job:
+
+- runs the complete Python research suite;
+- downloads Alpaca SIP `1Day` and `1Min` pages using only repository secrets;
+- creates content-hashed raw pages, rows, an evaluation, and a separate health
+  record;
+- asserts that both report and health say `strictGateEligible: false` and
+  `promotionDecision: NOT_PERFORMED`; and
+- publishes a run-ID-scoped GitHub Actions artifact for 30 days.
+
+Required GitHub repository secrets are named `APCA_API_KEY_ID` and
+`APCA_API_SECRET_KEY`. The workflow has read-only repository permissions. It
+has no application URL, application secret, Cloudflare credential, broker
+command, model-registry write, or deployment step. GitHub scheduled workflows
+run only from the repository's default branch, so this file must be reviewed
+and merged before its schedule becomes active.
+
+The current workflow intentionally performs a bounded full-window research
+download for each run and publishes that run's immutable artifact bundle. A
+future incremental R2 catalog requires separately scoped R2 credentials,
+write-once upload verification, and an append-only source catalog; those are
+not implied by this GitHub artifact publication.

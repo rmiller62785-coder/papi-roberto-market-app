@@ -116,6 +116,24 @@ test("a stale strict quote does not make a healthy permanent stream look disconn
   assert.equal(view.sourceStageState, "stale");
 });
 
+test("a quote expires inside a still-valid status envelope without demoting its stream", () => {
+  const value = status(PREMARKET, TARGET, liveEvidence());
+  const view = presentation(value, { nowMs: PREMARKET + 2_001, deliveryState: "live" });
+  assert.equal(view.browserState, "live");
+  assert.equal(view.streamState, "live");
+  assert.equal(view.quoteState, "stale");
+  assert.equal(view.sourceStageState, "stale");
+});
+
+test("a failed refresh retains valid prior source evidence as retrying", () => {
+  const value = status(PREMARKET, TARGET, liveEvidence());
+  const view = presentation(value, { nowMs: PREMARKET + 500, deliveryState: "retrying" });
+  assert.equal(view.browserState, "stale");
+  assert.equal(view.streamState, "live");
+  assert.equal(view.quoteState, "live");
+  assert.equal(view.sourceStageState, "live");
+});
+
 test("future sessions are pending rather than unavailable", () => {
   const nowMs = Date.parse("2026-07-20T16:00:00Z");
   const value = status(nowMs, TARGET);

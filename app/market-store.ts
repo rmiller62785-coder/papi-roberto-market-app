@@ -358,18 +358,38 @@ function validContractProvenance(value: MarketProvenance | null): value is Marke
     Number.isSafeInteger(value.availableAt) && value.receivedAt! <= value.processedAt && value.processedAt <= value.availableAt!);
 }
 
-function contractValues(envelope: TargetMarketEnvelope) {
-  const values: MarketValue<number>[] = [
-    envelope.quote,
-    ...Object.values(envelope.previousSession).filter((item): item is MarketValue<number> => typeof item === "object"),
-    ...Object.values(envelope.targetSession.premarket),
-    ...Object.values(envelope.targetSession.regular),
-    envelope.targetSession.firstMinute.high,
-    envelope.targetSession.firstMinute.low,
-    envelope.targetSession.firstMinute.close,
-    envelope.targetSession.firstMinute.volume,
+function contractEntries(envelope: TargetMarketEnvelope) {
+  const entries: Array<{ field: string; value: MarketValue<number> }> = [
+    { field: "quote", value: envelope.quote },
+    ...Object.entries(envelope.previousSession)
+      .filter((entry): entry is [string, MarketValue<number>] => typeof entry[1] === "object")
+      .map(([field, value]) => ({ field: `previousSession.${field}`, value })),
+    ...Object.entries(envelope.targetSession.premarket)
+      .map(([field, value]) => ({ field: `targetSession.premarket.${field}`, value })),
+    ...Object.entries(envelope.targetSession.regular)
+      .map(([field, value]) => ({ field: `targetSession.regular.${field}`, value })),
+    { field: "targetSession.firstMinute.high", value: envelope.targetSession.firstMinute.high },
+    { field: "targetSession.firstMinute.low", value: envelope.targetSession.firstMinute.low },
+    { field: "targetSession.firstMinute.close", value: envelope.targetSession.firstMinute.close },
+    { field: "targetSession.firstMinute.volume", value: envelope.targetSession.firstMinute.volume },
   ];
-  return values;
+  return entries;
+}
+
+function contractValues(envelope: TargetMarketEnvelope) {
+  return contractEntries(envelope).map((entry) => entry.value);
+}
+
+function sourceAvailabilityViolation(envelope: TargetMarketEnvelope, cutoff: number) {
+  const violation = contractEntries(envelope).find(({ value }) =>
+    value.provenance?.availableAt != null && !(value.provenance.availableAt <= cutoff));
+  if (!violation) return null;
+  const availableAt = violation.value.provenance?.availableAt;
+  const deltaMs = typeof availableAt === "number" && Number.isFinite(availableAt)
+    ? availableAt - cutoff
+    : "invalid";
+  return `field=${violation.field} source=${violation.value.provenance?.sourceId ?? "unknown"} ` +
+    `availableAt=${String(availableAt)} cutoff=${cutoff} deltaMs=${deltaMs}`;
 }
 
 function sourceStateFor(value: MarketValue<number>): MarketSourceState {
@@ -565,20 +585,18 @@ export function createMarketStore(database: D1Database) {
       invariant(input.envelope.effectiveAsOf <= input.capturedAt + MAX_PROVIDER_FUTURE_SKEW_MS, "effectiveAsOf is too far ahead of capture");
       const cutoff = Math.min(input.envelope.effectiveAsOf, input.capturedAt);
       const values = contractValues(input.envelope);
-      invariant(
-        values.every((value) => value.provenance?.availableAt == null || value.provenance.availableAt <= cutoff),
-        "source availability exceeds the scheduled checkpoint cutoff",
-      );
+      const checkpointAvailabilityViolation = sourceAvailabilityViolation(input.envelope, cutoff);
+      invariant(!checkpointAvailabilityViolation,
+        `source availability exceeds the scheduled checkpoint cutoff: ${checkpointAvailabilityViolation}`);
       if (input.checkpoint === "T-5M") {
         const actionableCutoff = input.envelope.schedule.regularOpenAt - 5.5 * 60_000;
         invariant(input.envelope.view === "DECISION_FREEZE", "T-5M persistence requires the decision-freeze view");
         invariant(input.capturedAt <= actionableCutoff, "T-5M capture is after the actionable freeze cutoff");
         invariant(input.envelope.requestedAt <= actionableCutoff, "T-5M request is after the actionable freeze cutoff");
         invariant(input.envelope.effectiveAsOf <= actionableCutoff, "T-5M effective time is after the actionable freeze cutoff");
-        invariant(
-          contractValues(input.envelope).every((value) => value.provenance?.availableAt == null || value.provenance.availableAt <= actionableCutoff),
-          "T-5M source availability is after the actionable freeze cutoff",
-        );
+        const freezeAvailabilityViolation = sourceAvailabilityViolation(input.envelope, actionableCutoff);
+        invariant(!freezeAvailabilityViolation,
+          `T-5M source availability is after the actionable freeze cutoff: ${freezeAvailabilityViolation}`);
       }
       const validValues = values.filter((value) => validContractProvenance(value.provenance));
       const uniqueSources = new Map<string, MarketValue<number>>();

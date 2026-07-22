@@ -59,11 +59,11 @@ test("paper planner consumes the flat public-safe broker status contract", async
   assert.match(readiness, /locateGuaranteed === true/);
   assert.match(readiness, /snapshot\.decision === "SHORT_FAVORED"/);
   assert.match(component, /Preview only[^\n]+never submits an order/);
-  assert.match(component, /PAPER_PROFILE_STORAGE_KEY = "aperture-moo-paper-risk-profile:v2"/);
+  assert.match(component, /PAPER_PROFILE_STORAGE_KEY = "aperture-moo-paper-risk-profile:v3"/);
   assert.match(component, /stopOffset: "1\.00"/);
-  assert.match(component, /riskBudget: "100\.00"/);
+  assert.match(component, /riskBudget: "10\.00"/);
   assert.match(component, /slippageAllowance: "0\.10"/);
-  assert.match(component, /maxShares: "25"/);
+  assert.match(component, /maxShares: "1"/);
   assert.match(component, /timeStop: "10:00 ET"/);
   assert.match(component, /window\.localStorage\.getItem\(PAPER_PROFILE_STORAGE_KEY\)/);
   assert.match(component, /window\.localStorage\.setItem\(PAPER_PROFILE_STORAGE_KEY/);

@@ -95,7 +95,7 @@ export async function handleScheduledCapturePost(
     const scheduledTime = minuteBoundary(now);
     await dependencies.ensureSchema(runtime.DB, now);
     const store = createD1ScheduledCaptureStore(runtime.DB);
-    const capture = dependencies.runCapture({
+    const captureResult = await dependencies.runCapture({
       scheduledTime,
       // Tests may inject a fixed clock, but production must let
       // runScheduledCapture sample capture time after its internal market
@@ -106,8 +106,11 @@ export async function handleScheduledCapturePost(
       fetchApp: input.fetchApp,
       store,
     });
-    const archive = (async () => {
-      const segments: D1MarketArchiveRun[] = [];
+    // Checkpoint capture owns the latency budget during its narrow ET window.
+    // The every-minute cron archives on the next phase-null invocation instead
+    // of competing with market/forecast reads and immutable D1 writes.
+    const archiveResults: D1MarketArchiveRun[] = [];
+    if (captureResult.phase == null) {
       for (let segment = 0; segment < 4; segment += 1) {
         const result = await dependencies.archivePrefix({
           database: runtime.DB!,
@@ -115,12 +118,10 @@ export async function handleScheduledCapturePost(
           sealedAt: scheduledTime,
           maximumRows: 5_000,
         });
-        segments.push(result);
+        archiveResults.push(result);
         if (result.status === "EMPTY") break;
       }
-      return segments;
-    })();
-    const [captureResult, archiveResults] = await Promise.all([capture, archive]);
+    }
     return Response.json({
       ok: true,
       scheduledTime,

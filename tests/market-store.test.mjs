@@ -574,7 +574,16 @@ test("every scheduled checkpoint rejects post-effective source availability befo
     previousSession: { date: "2026-07-17", open: missing, high: missing, low: missing, close: missing, volume: missing },
     targetSession: { premarket: { high: missing, low: missing, current: missing, volume: missing }, regular: { open: missing, high: missing, low: missing, close: missing, volume: missing }, firstMinute: { high: missing, low: missing, close: missing, volume: missing, complete: false } },
   };
-  await assert.rejects(store.saveScheduledCheckpoint({ envelope, analysisBars: base.completedMinuteBars, checkpoint: "T-30M", capturedAt }), /checkpoint cutoff/i);
+  await assert.rejects(
+    store.saveScheduledCheckpoint({ envelope, analysisBars: base.completedMinuteBars, checkpoint: "T-30M", capturedAt }),
+    (error) => {
+      assert.match(error.message, /checkpoint cutoff/i);
+      assert.match(error.message, /field=quote/);
+      assert.match(error.message, /source=alpaca_iex/);
+      assert.match(error.message, /deltaMs=1/);
+      return true;
+    },
+  );
   assert.equal(database.rows.size, 0);
   assert.equal(database.schemaBatches, 0);
 });

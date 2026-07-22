@@ -10,21 +10,21 @@ Read this file completely before changing the application, Workers, storage cont
 - Authoritative repair branch: `codex/commission-alpaca-sip`
 - Last application commit before this handoff: `95570a02b95ab13fd6e7acba0a71fd71d1e16fed`
 - Last application-code release verified: Sites version 43. A later documentation-only Sites version may carry the same application build.
-- Deployed application build: `2026.07.22.6`
+- Application build prepared by the current repair: `2026.07.22.7`
 - Sites project: `appgprj_6a5bbe1032d48191a928da44006bb605`
 - Sites bindings: D1 `DB`, private R2 `ARCHIVE`
 - Sites environment revision at the verified deployment: 8
-- Access: owner-only custom access. Adding another viewer still requires that person to exist in the Sites workspace.
+- Access: public. Do not add email-based viewer gating unless the owner explicitly requests a future access-policy change.
 
-As of this handoff, GitHub `origin/main` is still at `6793ed7`, older than the repair branch. Do not start new work from `origin/main` and accidentally discard the repair sequence. Continue from `codex/commission-alpaca-sip` until the branch is reviewed and merged.
+The current repair is developed on `codex/commission-alpaca-sip` and must be fast-forwarded to `origin/main` only after the full validation and independent reviews in this handoff pass. Never force-update or rebase over user work.
 
-The authoritative local checkout used for the repair is:
+The synchronized writable clone used for this repair is:
 
 ```text
-C:\Users\rmill\OneDrive\Desktop\CODEX Workspace\Papi Roberto Market App
+C:\Users\rmill\.codex\worktrees\15fa\Papi Roberto Market App\.authoritative
 ```
 
-The detached Codex worktree at `C:\Users\rmill\.codex\worktrees\15fa\Papi Roberto Market App` contains an older, dirty intermediate state. Do not overwrite, reset, merge, or use it as the source of a deployment without first reconciling it deliberately. The unrelated untracked `bitcoin-intelligence/` directory is user-owned and must not be added, edited, moved, or deleted as part of Aperture work.
+The parent Codex worktree at `C:\Users\rmill\.codex\worktrees\15fa\Papi Roberto Market App` contains an older, dirty intermediate state. Do not overwrite, reset, merge, or deploy from the parent. The unrelated untracked `bitcoin-intelligence/` directory is user-owned and must not be added, edited, moved, or deleted as part of Aperture work.
 
 ## Verified production snapshot
 
@@ -54,7 +54,7 @@ The unattended capture system was **not yet proven healthy** at the snapshot tim
 - The next expected checkpoint at the snapshot time was T-30M at 09:00 ET.
 - The deployed scheduler Worker existed and declared the one-minute cron, but the D1 checkpoint ledger had no successful receiver attempt after the earlier T-4H failure.
 
-Highest-priority follow-up: observe the scheduler Worker and Sites receiver at the next exact checkpoint, identify why the signed trigger did not produce a ledger entry, and fix the control plane without backfilling or rewriting missed point-in-time history. A missed checkpoint must remain missed.
+The current repair raises the caller timeout to 30 seconds, records an admitted `started` row before provider work, overlaps market and forecast reads, removes R2 archival from checkpoint minutes, and distinguishes running/stalled/failed/snapshot-success states. After deployment, observe the next exact checkpoint and require a new terminal snapshot-success ledger row before declaring automation healthy. Historical misses remain missed and must never be backfilled.
 
 ## Deployed services
 
@@ -95,11 +95,11 @@ Highest-priority follow-up: observe the scheduler Worker and Sites receiver at t
 ### Paper-broker Worker
 
 - Name reserved by configuration: `aperture-nvda-paper-broker`
-- It is a scaffold only and is not commissioned as an application dependency.
+- It is a scaffold only and is not commissioned as an application dependency. It now has a redacted read-only paper account, NVDA position, and open-NVDA-MOO health projection plus REST reconciliation.
 - `PAPER_ORDER_SUBMISSION_ENABLED=false`
 - `PAPER_SHORTS_ENABLED=false`
 - `PAPER_MAX_SHARES=1`
-- Do not deploy or enable submission until owner confirmation, policy review, trade-update reconciliation, and an explicit user authorization are complete.
+- `tradeUpdates` remains `NOT_CONNECTED`. Do not enable submission until policy review, durable trade-update/fill reconciliation, a trained and frozen Strict decision artifact, and a separate explicit activation are complete.
 
 ### Research runner
 
@@ -107,7 +107,8 @@ Highest-priority follow-up: observe the scheduler Worker and Sites receiver at t
 - The official workflow accepts only point-in-time rows labeled `NASDAQ_OFFICIAL_CROSS`.
 - The Alpaca history bootstrap uses `ALPACA_SIP_FIRST_MINUTE_OPEN_PROXY`; it is research-only, never NOII, never an official-open label, and never Strict-eligible.
 - The historical proxy downloader and chronological expanding walk-forward evaluator are implemented and tested.
-- A nightly external runner and automatic artifact upload are not yet commissioned.
+- A scheduled/manual GitHub Actions runner is checked in. It downloads the Alpaca SIP proxy, runs chronological evaluation, emits a content-hashed health artifact with `strictGateEligible: false`, and publishes only aggregate report/health files as a 30-day Actions artifact. Raw entitled pages and per-session proxy rows are not uploaded. Provider secrets are scoped only to the download step and all GitHub Actions are pinned to immutable commits. It never calls the application or promotes a model.
+- Activation requires the workflow on the default branch and GitHub Actions secrets `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY`.
 - Reports always retain `promotionDecision: NOT_PERFORMED` until a separate human-reviewed promotion workflow exists.
 
 ## Architecture decisions that must remain true
@@ -130,6 +131,8 @@ Highest-priority follow-up: observe the scheduler Worker and Sites receiver at t
 16. Strict banner text and its aria-live text must use the first active server commissioning blocker, not a stale snapshot reason.
 17. English and Spanish copy, accessibility semantics, and mobile layouts must remain equivalent.
 18. No LLM, browser, scheduled Worker, or research runner may place unrestricted live trades.
+19. The 45-second Strict status delivery envelope and five-second quote actionability window are separate. A retained last-good audit may display during a retry, but it cannot keep a quote live.
+20. Broker metadata and paper health are outside the `/api/moo/status` critical path and cannot delay or unlock Strict readiness.
 
 ## Regression map
 
@@ -137,7 +140,8 @@ Highest-priority follow-up: observe the scheduler Worker and Sites receiver at t
 | --- | --- | --- | --- |
 | Cold session selection | Empty/malformed target dates do not crash SSR; active session rolls automatically | `app/target-session.ts`, `app/page.tsx` | `tests/target-session.test.mjs`, `tests/rendered-html.test.mjs`, `tests/moo-planning-integration.test.mjs` |
 | Strict SIP semantics | Entitlement, freshness, stream health, and blockers remain distinct | `app/moo-system-status.ts`, `app/moo-status-guard.ts`, `app/strict-moo-presentation.ts` | `tests/moo-system-status.test.mjs`, `tests/moo-status-guard.test.mjs`, `tests/strict-moo-presentation.test.mjs` |
-| Strict presentation | Five-second window and current blocker are consistent visually and for screen readers | `app/components/StrictMooJourney.tsx` | `tests/rendered-html.test.mjs` |
+| Strict presentation | Five-second quote expiry, 45-second audit envelope, retry state, and current blocker are consistent visually and for screen readers | `app/components/StrictMooJourney.tsx`, `app/page.tsx` | `tests/rendered-html.test.mjs`, `tests/strict-moo-presentation.test.mjs` |
+| Operational planes | Research, unattended automation, and Strict health remain independently visible and bilingual | `app/page.tsx`, `app/globals.css` | `tests/rendered-html.test.mjs`, `tests/polling-policy.test.mjs` |
 | Completed-bar integrity | Strict bars equal analysis bars and exclude forming candles | `app/api/market/route.ts`, `app/market-reducer.ts`, `app/selected-market-research.ts` | `tests/market-route-durable-stream.test.mjs`, `tests/selected-market-research.test.mjs` |
 | Durable ingestion | Immutable ordered events, replay protection, contiguous acknowledgements | `app/api/internal/market-stream/route.ts`, `app/market-stream-receiver.ts`, `services/market-stream/` | stream receiver and service test suites |
 | Scheduled capture | Exact-minute signed trigger, server-derived time, no backfill | `app/api/internal/scheduled-capture/route.ts`, `app/scheduled-capture.ts`, `services/capture-scheduler/` | scheduler auth, route, bridge, and scheduled-capture tests |
@@ -183,6 +187,11 @@ Paper-broker scaffold:
 - `APCA_API_KEY_ID`
 - `APCA_API_SECRET_KEY`
 - `PAPER_COMMAND_SECRET`
+
+GitHub Actions research workflow:
+
+- `APCA_API_KEY_ID`
+- `APCA_API_SECRET_KEY`
 
 Rotate using the documented dual-key order where supported. Never rotate only one side of a shared HMAC contract.
 
@@ -251,12 +260,12 @@ For time/session changes, cover holidays, early closes, DST boundaries, stale/mi
 - `e0e7a12` — make prior-session resolution non-throwing
 - `95570a0` — align the Strict banner and freshness presentation with server state
 
-The release passed the production build, lint, 540 Node tests, 13 Python research tests, focused Worker suites, authenticated production API checks, live browser verification, and independent point-in-time, security, and UX reviews. Re-run checks appropriate to every future change; this historical result is not permission to skip validation.
+The current repair passed the production build, 457 application tests, 16 Python research tests, 13 capture-scheduler tests plus typecheck/preflight, 30 paper-broker tests plus typecheck/preflight, and ESLint on every changed JS/TS file. The broad repository ESLint invocation can be slow on this Windows junction-backed clone; the changed-file lint is the authoritative current result. Production API/browser checks and independent point-in-time, security, and UX reviews must also pass before release.
 
 ## Remaining commissioning roadmap
 
-1. Repair and prove the unattended scheduler at an exact future checkpoint; do not backfill missed evidence.
-2. Run the Alpaca SIP proxy backfill and nightly external research workflow as a separate research plane.
+1. Deploy the scheduler repair and prove it at an exact future checkpoint; do not backfill missed evidence.
+2. Put the Alpaca research workflow on the default branch, configure its two GitHub secrets, and collect immutable nightly proxy artifacts as a separate research plane.
 3. Obtain licensed historical Nasdaq Official Opening Cross/NOII data for a genuine official-open model; Alpaca SIP cannot substitute for it.
 4. Accumulate live point-in-time features and outcomes, compare against simple baselines with costs, calibrate, and pass chronological walk-forward promotion gates.
 5. Add a human-reviewed immutable model promotion workflow and exact-session inference/freeze artifact.

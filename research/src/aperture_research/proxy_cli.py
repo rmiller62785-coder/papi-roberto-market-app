@@ -15,6 +15,7 @@ from .alpaca_proxy import (
     write_download_archive,
 )
 from .manifest import canonical_json, content_hash
+from .health import build_proxy_research_health
 from .proxy_manifest import build_proxy_dataset_manifest, validate_proxy_rows
 from .proxy_walk_forward import ProxyEvaluationConfig, evaluate_proxy_walk_forward
 
@@ -37,6 +38,7 @@ def _parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--archive-directory", type=Path)
     evaluate.add_argument("--rows-output", type=Path, required=True)
     evaluate.add_argument("--output", type=Path, required=True)
+    evaluate.add_argument("--health-output", type=Path)
     evaluate.add_argument("--reconstructed-availability-lag-ms", type=int, required=True)
     evaluate.add_argument("--feature-schema-version", required=True)
     evaluate.add_argument("--code-version", required=True)
@@ -124,6 +126,10 @@ def _evaluate(args: argparse.Namespace) -> int:
     base = {**payload, "reportHash": content_hash(payload)}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(canonical_json(base) + "\n", encoding="utf-8")
+    if args.health_output is not None:
+        health = build_proxy_research_health(base, checked_at_ms=args.created_at_ms)
+        args.health_output.parent.mkdir(parents=True, exist_ok=True)
+        args.health_output.write_text(canonical_json(health) + "\n", encoding="utf-8")
     return 0
 
 

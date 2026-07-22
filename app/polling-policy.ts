@@ -16,6 +16,8 @@ export type ForecastReuseContext = {
 
 export const MARKET_REQUEST_TIMEOUT_MS = 12_000;
 export const FORECAST_REQUEST_TIMEOUT_MS = 20_000;
+export const MOO_STATUS_REQUEST_TIMEOUT_MS = 2_000;
+export const AUTOMATION_HEALTH_REQUEST_TIMEOUT_MS = 5_000;
 
 export const MIN_POLL_INTERVAL_MS = 1_000;
 export const MAX_POLL_INTERVAL_MS = 300_000;
@@ -83,8 +85,9 @@ export function forecastPollingIntervalMs(context: PollingContext) {
   ));
 }
 
-/** A qualified SIP quote expires after two seconds. Poll the small D1-backed
- * status projection once per second while the market workflow is active. */
+/** A qualified SIP quote expires independently of the 45-second status
+ * envelope. Poll the small D1-backed projection once per second while the
+ * market workflow is active so the next server observation arrives promptly. */
 export function mooStatusPollingIntervalMs(context: PollingContext) {
   if (!context.online) return MAX_POLL_INTERVAL_MS;
   if (context.visibilityState !== "visible") return HIDDEN_FORECAST_POLL_INTERVAL_MS;
@@ -94,6 +97,13 @@ export function mooStatusPollingIntervalMs(context: PollingContext) {
   // payload has no usable session label.
   if (context.workflow === "moo") return 1_000;
   return 30_000;
+}
+
+/** Scheduler health changes at checkpoint cadence, not quote cadence. */
+export function automationHealthPollingIntervalMs(context: PollingContext) {
+  if (!context.online) return MAX_POLL_INTERVAL_MS;
+  if (context.visibilityState !== "visible") return 60_000;
+  return context.workflow === "moo" || context.statusSurfaceVisible ? 15_000 : 60_000;
 }
 
 /**

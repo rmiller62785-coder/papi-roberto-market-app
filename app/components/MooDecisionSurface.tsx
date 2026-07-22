@@ -115,9 +115,9 @@ export type MooCommissioningEvidence = StrictMooCommissioningEvidence;
 const defaultSideConfig = (accountLabel: string): PaperSideConfig => ({
   quantityMode: "AUTO_RISK",
   stopOffset: "1.00",
-  riskBudget: "100.00",
+  riskBudget: "10.00",
   slippageAllowance: "0.10",
-  maxShares: "25",
+  maxShares: "1",
   manualQuantity: "",
   accountLabel,
   reserve: "0.00",
@@ -130,7 +130,7 @@ const emptyPaperConfig = (): PaperPlanningConfig => ({
   short: defaultSideConfig("Short paper"),
 });
 
-const PAPER_PROFILE_STORAGE_KEY = "aperture-moo-paper-risk-profile:v2";
+const PAPER_PROFILE_STORAGE_KEY = "aperture-moo-paper-risk-profile:v3";
 
 const copy = (lang: Language, en: string, es: string) => (lang === "es" ? es : en);
 
@@ -415,8 +415,8 @@ function PaperSideConfiguration({
   const sideName = side === "LONG" ? copy(lang, "Long", "Largo") : copy(lang, "Short", "Corto");
   return (
     <fieldset className={`moo-paper-side-config ${side.toLowerCase()}`}>
-      <legend>{sideName} · {copy(lang, "paper risk inputs", "entradas de riesgo de prueba")}</legend>
-      <p id={`${id}-help`}>{copy(lang, "This browser reuses your validated paper-risk profile for future dates. Never enter an API key or account number.", "Este navegador reutiliza su perfil validado de riesgo de prueba para fechas futuras. Nunca ingrese una clave API ni un número de cuenta.")}</p>
+      <legend>{sideName} · {copy(lang, "advanced paper overrides", "ajustes avanzados de prueba")}</legend>
+      <p id={`${id}-help`}>{copy(lang, "Conservative paper defaults are already populated and reused for future dates. Change these advanced overrides only for simulation; never enter an API key or account number.", "Los valores conservadores de prueba ya están completos y se reutilizan en fechas futuras. Cambie estos ajustes avanzados solo para simulación; nunca ingrese una clave API ni un número de cuenta.")}</p>
       <div className="moo-paper-input-grid">
         <label htmlFor={`${id}-mode`}><span>{copy(lang, "Quantity mode", "Modo de cantidad")}</span><select id={`${id}-mode`} value={config.quantityMode} onChange={(event) => onChange("quantityMode", event.target.value as MooQuantityMode)} aria-describedby={`${id}-help`}><option value="AUTO_RISK">{copy(lang, "Auto · risk budget", "Auto · presupuesto de riesgo")}</option><option value="MANUAL">{copy(lang, "Manual shares", "Acciones manuales")}</option></select></label>
         <label htmlFor={`${id}-stop`}><span>{copy(lang, "Stop offset · USD/share", "Distancia al stop · USD/acción")}</span><input id={`${id}-stop`} type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00" value={config.stopOffset} onChange={(event) => onChange("stopOffset", event.target.value)} /></label>
@@ -673,10 +673,13 @@ function PaperPlanningPanel({
         <div className="moo-paper-risk-total"><span>{copy(lang, "Combined modeled maximum loss", "Pérdida máxima modelada combinada")}</span><strong>{cents(combinedLoss) ?? "—"}</strong><small>{copy(lang, "Two paper accounts are not atomic; gaps, halts, fees and failed stops can exceed this amount.", "Dos cuentas de prueba no son atómicas; brechas, suspensiones, comisiones y stops fallidos pueden superar este monto.")}</small></div>
       </div>
 
-      <div className="moo-paper-config-grid">
-        <PaperSideConfiguration side="LONG" config={config.long} lang={lang} onChange={(key, value) => updateSide("long", key, value)}/>
-        <PaperSideConfiguration side="SHORT" config={config.short} lang={lang} onChange={(key, value) => updateSide("short", key, value)}/>
-      </div>
+      <details className="moo-paper-advanced">
+        <summary><span>{copy(lang, "Advanced paper overrides", "Ajustes avanzados de prueba")}</span><small>{copy(lang, "Auto-filled defaults · $10 risk · 1 share maximum · paper only", "Valores automáticos · riesgo de $10 · máximo 1 acción · solo prueba")}</small></summary>
+        <div className="moo-paper-config-grid">
+          <PaperSideConfiguration side="LONG" config={config.long} lang={lang} onChange={(key, value) => updateSide("long", key, value)}/>
+          <PaperSideConfiguration side="SHORT" config={config.short} lang={lang} onChange={(key, value) => updateSide("short", key, value)}/>
+        </div>
+      </details>
 
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {copy(
@@ -870,7 +873,7 @@ function strictSurfaceState(readiness: MooReadinessSummary) {
   return "blocked" as const;
 }
 
-export function MooDecisionSurface({ snapshot, planningSources, planning, brokerReference, commissioning, transport, statusEvaluatedAt, lang }: { snapshot: MooDecisionSnapshot; planningSources: MooPlanningSourceList; planning?: MooPlanningInput; brokerReference?: BrokerStatusPayload | null; commissioning?: MooCommissioningEvidence | null; transport?: MooSystemStatus["transport"] | null; statusEvaluatedAt?: number | null; lang: Language }) {
+export function MooDecisionSurface({ snapshot, planningSources, planning, brokerReference, commissioning, transport, statusEvaluatedAt, statusDeliveryState, lang }: { snapshot: MooDecisionSnapshot; planningSources: MooPlanningSourceList; planning?: MooPlanningInput; brokerReference?: BrokerStatusPayload | null; commissioning?: MooCommissioningEvidence | null; transport?: MooSystemStatus["transport"] | null; statusEvaluatedAt?: number | null; statusDeliveryState?: "live" | "retrying" | "expired" | "offline" | "loading"; lang: Language }) {
   const evaluatedAt = statusEvaluatedAt ?? commissioning?.statusEvaluatedAt;
   const clockAnchor = evaluatedAt != null && Number.isFinite(evaluatedAt)
     ? evaluatedAt
@@ -930,6 +933,7 @@ export function MooDecisionSurface({ snapshot, planningSources, planning, broker
         transport={transport}
         commissioning={commissioning}
         statusUnavailable={diagnosticOnly}
+        deliveryState={statusDeliveryState}
         nowMs={now}
         evaluatedAt={clockAnchor}
         lang={lang}
@@ -988,7 +992,7 @@ export function MooDecisionSurface({ snapshot, planningSources, planning, broker
   );
 }
 
-export function MooDataHealthPanel({ snapshot, brokerReference, commissioning, transport, statusEvaluatedAt, lang }: { snapshot: MooDecisionSnapshot; brokerReference?: BrokerStatusPayload | null; commissioning?: MooCommissioningEvidence | null; transport?: MooSystemStatus["transport"] | null; statusEvaluatedAt?: number | null; lang: Language }) {
+export function MooDataHealthPanel({ snapshot, brokerReference, commissioning, transport, statusEvaluatedAt, statusDeliveryState, lang }: { snapshot: MooDecisionSnapshot; brokerReference?: BrokerStatusPayload | null; commissioning?: MooCommissioningEvidence | null; transport?: MooSystemStatus["transport"] | null; statusEvaluatedAt?: number | null; statusDeliveryState?: "live" | "retrying" | "expired" | "offline" | "loading"; lang: Language }) {
   const diagnosticOnly = snapshot.warnings.includes("LAST_GOOD_SERVER_AUDIT_ONLY");
   const readiness = summarizeMooReadiness(snapshot, diagnosticOnly ? undefined : brokerReference ?? undefined);
   const requiredSourceIds = new Set(readiness.sourceGroups.requiredNow.items.map((source) => source.id));
@@ -1009,7 +1013,7 @@ export function MooDataHealthPanel({ snapshot, brokerReference, commissioning, t
         <div className={`moo-health-summary ${surfaceState}`}><strong>{readiness.requiredReady}/{readiness.requiredTotal}</strong><span>{copy(lang, "required-now feeds ready", "fuentes requeridas ahora listas")}</span></div>
       </div>
       <article className={`panel moo-health-panel state-${surfaceState}`} aria-busy={surfaceState === "loading"}>
-        <StrictMooJourney snapshot={snapshot} transport={transport} commissioning={commissioning} statusUnavailable={diagnosticOnly} nowMs={statusEvaluatedAt ?? commissioning?.statusEvaluatedAt ?? snapshot.generatedAt} evaluatedAt={statusEvaluatedAt ?? commissioning?.statusEvaluatedAt ?? snapshot.generatedAt} lang={lang}/>
+        <StrictMooJourney snapshot={snapshot} transport={transport} commissioning={commissioning} statusUnavailable={diagnosticOnly} deliveryState={statusDeliveryState} nowMs={statusEvaluatedAt ?? commissioning?.statusEvaluatedAt ?? snapshot.generatedAt} evaluatedAt={statusEvaluatedAt ?? commissioning?.statusEvaluatedAt ?? snapshot.generatedAt} lang={lang}/>
         {snapshot.warnings.length ? <div className="moo-warnings" role="alert">{snapshot.warnings.map((warning) => <p key={warning}>{warningLabel(warning, lang)}</p>)}</div> : null}
         <div className="moo-health-source-groups">
           <MooSourceGroup sources={requiredSources} readiness={readiness.sourceGroups.requiredNow} lang={lang} kind="required" title={copy(lang, "REQUIRED NOW", "REQUERIDAS AHORA")} description={copy(lang, "Only these sources affect strict readiness", "Solo estas fuentes afectan la preparación estricta")}/>

@@ -28,6 +28,8 @@ ALPACA_DOWNLOAD_MANIFEST_SCHEMA = "aperture-alpaca-download-manifest-v1"
 ALPACA_DATA_BASE_URL = "https://data.alpaca.markets"
 MAX_DOWNLOAD_DAYS = 3_660
 MAX_PAGES_PER_TIMEFRAME = 500
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+MAX_TOTAL_DOWNLOAD_BYTES = 256 * 1024 * 1024
 NEW_YORK = ZoneInfo("America/New_York")
 
 
@@ -115,6 +117,7 @@ class AlpacaHistoricalClient:
         self.__api_secret_key = _api_secret_key
         self.__transport = transport or self._urlopen
         self.__clock = clock or (lambda: datetime.now(timezone.utc))
+        self.__downloaded_bytes = 0
 
     @classmethod
     def from_environment(
@@ -136,7 +139,10 @@ class AlpacaHistoricalClient:
         try:
             opener = build_opener(_RejectRedirects())
             with opener.open(request, timeout=timeout) as response:  # fixed Alpaca authority; redirects rejected
-                return response.read()
+                body = response.read(MAX_RESPONSE_BYTES + 1)
+                if len(body) > MAX_RESPONSE_BYTES:
+                    raise AlpacaProxyError("Alpaca historical response exceeded the byte limit")
+                return body
         except HTTPError as error:
             raise AlpacaProxyError(f"Alpaca historical request returned HTTP {error.code}") from None
         except (URLError, TimeoutError):
@@ -182,6 +188,11 @@ class AlpacaHistoricalClient:
             body = self.__transport(request, 30.0)
             if not isinstance(body, bytes) or not body:
                 raise AlpacaProxyError("Alpaca historical response body is empty")
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise AlpacaProxyError("Alpaca historical response exceeded the byte limit")
+            self.__downloaded_bytes += len(body)
+            if self.__downloaded_bytes > MAX_TOTAL_DOWNLOAD_BYTES:
+                raise AlpacaProxyError("Alpaca historical download exceeded the aggregate byte limit")
             try:
                 payload = json.loads(body)
             except (UnicodeDecodeError, json.JSONDecodeError):

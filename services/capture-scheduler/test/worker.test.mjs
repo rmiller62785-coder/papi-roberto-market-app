@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import worker, { sendCaptureTrigger, validateCaptureSchedulerEnv } from "../src/index.ts";
+import worker, {
+  CAPTURE_SCHEDULER_RESPONSE_TIMEOUT_MS,
+  sendCaptureTrigger,
+  validateCaptureSchedulerEnv,
+} from "../src/index.ts";
 import { CAPTURE_TRIGGER_BODY, verifyCaptureSchedulerRequest } from "../src/auth.ts";
 
 const NOW = Date.parse("2026-07-22T13:24:10Z");
@@ -29,6 +33,8 @@ test("scheduler sends only the fixed signed trigger and the Sites access credent
   assert.equal(received.url, URL);
   assert.equal(received.init.body, CAPTURE_TRIGGER_BODY);
   assert.equal(received.init.redirect, "manual");
+  assert.ok(received.init.signal instanceof AbortSignal);
+  assert.equal(CAPTURE_SCHEDULER_RESPONSE_TIMEOUT_MS, 30_000);
   assert.equal(received.init.headers.get("OAI-Sites-Authorization"), "Bearer sites-access-bypass-token");
   const request = new Request(received.url, received.init);
   const verified = await verifyCaptureSchedulerRequest({

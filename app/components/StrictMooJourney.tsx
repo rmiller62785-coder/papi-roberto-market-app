@@ -23,6 +23,7 @@ type Props = {
   transport?: MooSystemStatus["transport"] | null;
   commissioning?: StrictMooCommissioningEvidence | null;
   statusUnavailable?: boolean;
+  deliveryState?: "live" | "retrying" | "expired" | "offline" | "loading";
   nowMs: number;
   evaluatedAt?: number | null;
   lang: Language;
@@ -108,8 +109,16 @@ function commandDecisionLabel(
 function commandBlockerLabel(
   snapshot: MooDecisionSnapshot,
   commissioning: StrictMooCommissioningEvidence | null | undefined,
+  quoteState: StrictJourneyState,
+  streamState: StrictJourneyState,
   lang: Language,
 ) {
+  if (quoteState === "stale") {
+    return copy(lang, "Current consolidated SIP quote required", "Se requiere una cotización SIP consolidada vigente");
+  }
+  if (streamState === "stale") {
+    return copy(lang, "Market-data supervisor is reconnecting", "El supervisor de datos de mercado se está reconectando");
+  }
   if (isUncommissionedFavoredDecision(snapshot, commissioning)) {
     return copy(lang, "Execution is not commissioned", "La ejecución no está comisionada");
   }
@@ -237,6 +246,7 @@ export function StrictMooJourney({
   transport,
   commissioning,
   statusUnavailable = false,
+  deliveryState,
   nowMs,
   evaluatedAt = snapshot.generatedAt,
   lang,
@@ -246,10 +256,14 @@ export function StrictMooJourney({
     transport,
     commissioning,
     statusUnavailable,
+    deliveryState,
     nowMs,
   });
   const stream = transport?.stream;
   const source = presentation.usSource;
+  const displayedQuoteAgeMs = source?.observedAt == null
+    ? source?.ageMs ?? null
+    : Math.max(source.ageMs ?? 0, nowMs - source.observedAt);
   const quoteFreshnessWindowMs = source?.observedAt != null && source.validUntil != null
     ? Math.max(0, source.validUntil - source.observedAt)
     : null;
@@ -317,7 +331,7 @@ export function StrictMooJourney({
         </div>
         <div>
           <span>{copy(lang, "CURRENT BLOCKER", "BLOQUEO ACTUAL")}</span>
-          <b>{commandBlockerLabel(snapshot, commissioning, lang)}</b>
+          <b>{commandBlockerLabel(snapshot, commissioning, presentation.quoteState, presentation.streamState, lang)}</b>
         </div>
         <div>
           <span>{copy(lang, "CURRENT STAGE", "ETAPA ACTUAL")}</span>
@@ -344,7 +358,7 @@ export function StrictMooJourney({
       </div>
 
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {commandDecisionLabel(snapshot, commissioning, lang)}. {commandBlockerLabel(snapshot, commissioning, lang)}. {stageLabel(currentStage.id, lang)}: {stateLabel(currentStage.state, lang)}.
+        {commandDecisionLabel(snapshot, commissioning, lang)}. {commandBlockerLabel(snapshot, commissioning, presentation.quoteState, presentation.streamState, lang)}. {stageLabel(currentStage.id, lang)}: {stateLabel(currentStage.state, lang)}.
       </p>
 
       <div className="strict-journey-heading">
@@ -390,13 +404,19 @@ export function StrictMooJourney({
                     <p>{source?.provider ?? copy(lang, "Provider not confirmed", "Proveedor no confirmado")} · {source?.coverage?.replaceAll("_", " ") ?? copy(lang, "Consolidated SIP required", "Se requiere SIP consolidado")}</p>
                     <dl>
                       <div><dt>{copy(lang, "Observed", "Observada")}</dt><dd>{etDateTime(source?.observedAt, lang)}</dd></div>
-                      <div><dt>{copy(lang, "Quote age", "Edad de cotización")}</dt><dd>{age(source?.ageMs, lang)} / {age(quoteFreshnessWindowMs, lang)}</dd></div>
+                      <div><dt>{copy(lang, "Quote age", "Edad de cotización")}</dt><dd>{age(displayedQuoteAgeMs, lang)} / {age(quoteFreshnessWindowMs, lang)}</dd></div>
                     </dl>
                   </article>
                   <article className={`state-${presentation.browserState}`}>
                     <div><span>{copy(lang, "BROWSER DELIVERY", "ENTREGA AL NAVEGADOR")}</span><b>{stateLabel(presentation.browserState, lang)}</b></div>
-                    <strong>{presentation.browserState === "live" ? copy(lang, "Validated status polling active", "Sondeo de estado validado activo") : copy(lang, "Status refresh interrupted", "Actualización de estado interrumpida")}</strong>
-                    <p>{copy(lang, "Adaptive REST polling reads server-owned evidence. The browser does not maintain the market-data socket.", "El sondeo REST adaptativo lee evidencia del servidor. El navegador no mantiene el socket de datos de mercado.")}</p>
+                    <strong>{presentation.browserState === "live"
+                      ? copy(lang, "Validated status polling active", "Sondeo de estado validado activo")
+                      : presentation.browserState === "stale"
+                        ? copy(lang, "Refresh retrying · prior envelope still valid", "Reintentando actualización · el estado anterior sigue vigente")
+                        : copy(lang, "Status refresh interrupted", "Actualización de estado interrumpida")}</strong>
+                    <p>{presentation.browserState === "stale"
+                      ? copy(lang, "The last validated server audit remains visible until its own expiry. Quote actionability still expires independently.", "La última auditoría validada del servidor permanece visible hasta su propio vencimiento. La operabilidad de la cotización vence por separado.")
+                      : copy(lang, "Adaptive REST polling reads server-owned evidence. The browser does not maintain the market-data socket.", "El sondeo REST adaptativo lee evidencia del servidor. El navegador no mantiene el socket de datos de mercado.")}</p>
                     <dl><div><dt>{copy(lang, "Checked", "Consultado")}</dt><dd>{etDateTime(source?.checkedAt ?? evaluatedAt, lang)}</dd></div></dl>
                   </article>
                 </div>

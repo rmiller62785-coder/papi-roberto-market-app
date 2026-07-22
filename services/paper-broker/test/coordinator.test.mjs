@@ -23,7 +23,24 @@ async function request(body, now = NOW, path = "/commands") {
 
 test("disabled-by-default service authenticates but records and submits nothing", async () => {
   let calls = 0;
-  const client = { async getByClientOrderId() { calls += 1; }, async submitMoo() { calls += 1; } };
+  const client = {
+    async getByClientOrderId() { calls += 1; },
+    async submitMoo() { calls += 1; },
+    async getPaperHealthReference(checkedAt) {
+      return {
+        provider: "Alpaca Paper Trading API",
+        environment: "paper",
+        checkedAt,
+        state: "LIVE",
+        account: { status: "ACTIVE", currency: "USD", buyingPower: "100000", cash: "100000", equity: "100000", portfolioValue: "100000", tradingBlocked: false, accountBlocked: false, tradeSuspendedByUser: false, shortingEnabled: true },
+        nvdaPosition: { present: false },
+        openNvdaMooOrders: { count: 0, byStatus: {} },
+        errors: [],
+        identifiersRedacted: true,
+        liveTradingHostUsed: false,
+      };
+    },
+  };
   const coordinator = new PaperBrokerCoordinator(context(), environment(), { client, now: () => NOW });
   const response = await coordinator.fetch(await request(command()));
   assert.equal(response.status, 423);
@@ -34,7 +51,13 @@ test("disabled-by-default service authenticates but records and submits nothing"
   assert.equal(payload.submissionEnabled, false);
   assert.equal(payload.automaticSubmission, false);
   assert.equal(payload.tradeUpdates, "NOT_CONNECTED");
+  assert.equal(payload.providerReference.state, "LIVE");
+  assert.equal(payload.providerReference.account.buyingPower, "100000");
+  assert.equal(payload.reconciliation.mode, "REST_BY_CLIENT_ORDER_ID_BEFORE_RETRY");
+  assert.equal(payload.reconciliation.automaticSubmission, false);
+  assert.equal(payload.reconciliation.openNvdaMooOrders, 0);
   assert.equal(payload.commands.total, 0);
+  assert.equal(calls, 0, "health remains read-only and never enters the submission methods");
 });
 
 test("enabled service reconciles first, submits once, and returns idempotent terminal state", async () => {

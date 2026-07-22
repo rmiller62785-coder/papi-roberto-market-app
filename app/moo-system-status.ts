@@ -424,13 +424,14 @@ export function buildMooSystemStatus(input: {
     ...(strictArtifact ? [] : ["IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE" as const]),
     ...(strictArtifact && artifactHasRequiredLocate ? [] : ["ACCOUNT_LOCATE_NOT_AVAILABLE" as const]),
   ];
-  const strictQuoteValidUntil = strictUsReady ? input.strictUsSource?.validUntil ?? input.nowMs : null;
-
   return {
     schemaVersion: MOO_SYSTEM_STATUS_SCHEMA,
     policyVersion: MOO_EXECUTION_POLICY_VERSION,
     evaluatedAt: input.nowMs,
-    validUntil: strictQuoteValidUntil == null ? input.nowMs + 45_000 : Math.min(input.nowMs + 45_000, strictQuoteValidUntil),
+    // Status delivery and quote actionability are deliberately independent.
+    // The browser may retain this complete server audit for 45 seconds while
+    // source.validUntil independently turns the five-second quote lane stale.
+    validUntil: input.nowMs + 45_000,
     targetSession: input.targetSession,
     executionMode: "NOT_COMMISSIONED",
     decisionAuthority: "SERVER",

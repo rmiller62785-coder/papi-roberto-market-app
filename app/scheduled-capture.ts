@@ -120,7 +120,7 @@ export type ScheduledCaptureStore = {
     completedAt: number;
     phase: Exclude<ScheduledCapturePhase, null>;
     checkpoint: ScheduledInterval | "OUTCOME";
-    status: ScheduledCaptureResult["status"] | "failed";
+    status: ScheduledCaptureResult["status"] | "started" | "failed";
     targetDate: string | null;
     detailCode: string | null;
     detail: string | null;
@@ -357,14 +357,27 @@ export async function runScheduledCapture(input: {
   const checkpoint = scheduledCaptureCheckpoint(input.scheduledTime);
   if (!phase) return { phase, status: "skipped", reason: "outside Eastern capture windows" };
   const startedAt = input.nowMs ?? Date.now();
-  let targetDate: string | null = null;
+  const scheduledSessionDate = easternDate(input.scheduledTime);
+  let targetDate: string | null = scheduledSessionDate;
+  const checkpointName = checkpoint as ScheduledInterval | "OUTCOME";
+  await input.store.recordRun?.({
+    scheduledAt: input.scheduledTime,
+    startedAt,
+    completedAt: startedAt,
+    phase,
+    checkpoint: checkpointName,
+    status: "started",
+    targetDate,
+    detailCode: "SCHEDULED_CAPTURE_STARTED",
+    detail: "authenticated scheduled capture admitted before provider work",
+  });
   const finish = async (result: ScheduledCaptureResult) => {
     await input.store.recordRun?.({
       scheduledAt: input.scheduledTime,
       startedAt,
       completedAt: input.nowMs ?? Date.now(),
       phase,
-      checkpoint: checkpoint as ScheduledInterval | "OUTCOME",
+      checkpoint: checkpointName,
       status: result.status,
       targetDate: result.targetDate ?? targetDate,
       detailCode: result.reasonCode ?? null,
@@ -391,7 +404,6 @@ export async function runScheduledCapture(input: {
       reason: "scheduled capture time is ahead of the worker clock",
     });
   }
-  const scheduledSessionDate = easternDate(input.scheduledTime);
   if (checkpoint === "T-5M" && startedAt > actionableMooFreezeAt(scheduledSessionDate)) {
     return finish({
       phase,
@@ -403,12 +415,25 @@ export async function runScheduledCapture(input: {
   }
   try {
     const marketView = checkpoint === "T-5M" ? "&view=DECISION_FREEZE" : "";
+    const marketResponse = input.fetchApp(`/api/market?symbol=NVDA&automation=${input.scheduledTime}${marketView}`);
+    // Forecast research is independent of the market payload's target field.
+    // Start it concurrently only from the server-derived session date, and
+    // convert rejection into data so an early market return cannot leak an
+    // unhandled promise rejection.
+    const forecastResult = phase === "preopen"
+      ? input.fetchApp(`/api/forecast?targetDate=${encodeURIComponent(scheduledSessionDate)}&automation=${input.scheduledTime}`)
+        .then((response) => responseJson<ForecastPayload>(response, "Forecast endpoint"))
+        .then(
+          (value) => ({ ok: true as const, value }),
+          (error: unknown) => ({ ok: false as const, error }),
+        )
+      : null;
     const market = await responseJson<MarketPayload>(
-      await input.fetchApp(`/api/market?symbol=NVDA&automation=${input.scheduledTime}${marketView}`),
+      await marketResponse,
       "Market endpoint",
     );
     targetDate = market.targetDate;
-    if (targetDate !== easternDate(startedAt)) {
+    if (targetDate !== scheduledSessionDate) {
       return finish({
         phase,
         status: "skipped",
@@ -491,10 +516,9 @@ export async function runScheduledCapture(input: {
     // A successful GET writes the monotonic forecast_preopen_freezes row. It is
     // intentionally invoked on every admitted minute so the last successful
     // request before 09:30 becomes the immutable post-open forecast block.
-    const forecast = await responseJson<ForecastPayload>(
-      await input.fetchApp(`/api/forecast?targetDate=${encodeURIComponent(targetDate)}&automation=${input.scheduledTime}`),
-      "Forecast endpoint",
-    );
+    const settledForecast = await forecastResult!;
+    if (!settledForecast.ok) throw settledForecast.error;
+    const forecast = settledForecast.value;
     const captureAt = input.nowMs ?? Date.now();
     const capture = buildScheduledPreopenCapture(
       market,
@@ -519,7 +543,7 @@ export async function runScheduledCapture(input: {
       startedAt,
       completedAt: input.nowMs ?? Date.now(),
       phase,
-      checkpoint: checkpoint as ScheduledInterval | "OUTCOME",
+      checkpoint: checkpointName,
       status: "failed",
       targetDate,
       detailCode: "SCHEDULED_CAPTURE_FAILED",
@@ -765,7 +789,9 @@ export function createD1ScheduledCaptureStore(database: D1Database): ScheduledCa
           targetDate,
           detail,
         );
-      await database.batch([appendRun, updateLegacyHealth]);
+      // The append-only started row proves that the signed request reached D1,
+      // but it must not replace the last terminal state used by legacy cards.
+      await database.batch(status === "started" ? [appendRun] : [appendRun, updateLegacyHealth]);
     },
   };
 }

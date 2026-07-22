@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from aperture_research.alpaca_proxy import (
     AlpacaHistoricalClient,
+    MAX_RESPONSE_BYTES,
     build_proxy_rows,
     load_download_archive,
     write_download_archive,
@@ -166,6 +167,43 @@ class ProxyBootstrapTests(unittest.TestCase):
         self.assertEqual([item["baseline"] for item in report["aggregate"]["baselines"]],
                          ["PREVIOUS_CLOSE", "OVERNIGHT_MIDPOINT"])
 
+    def test_proxy_fit_is_fold_local_and_ignores_a_future_test_outcome(self):
+        rows = self.rows()
+        manifest = build_proxy_dataset_manifest(
+            rows,
+            source_pages(),
+            reconstructed_availability_lag_ms=LAG_MS,
+            feature_schema_version="alpaca-proxy-features-v1",
+            created_at_ms=1,
+            code_version="abc",
+        )
+        settings = ProxyEvaluationConfig(minimum_train_sessions=2, test_sessions_per_fold=1)
+        original = evaluate_proxy_walk_forward(
+            rows,
+            dataset_manifest_hash=manifest["manifestHash"],
+            reconstructed_availability_lag_ms=LAG_MS,
+            model_version="proxy-candidate-v1",
+            config=settings,
+        )
+        changed = [dict(row) for row in rows]
+        changed[-1]["proxyOpenCents"] += 10_000
+        changed_report = evaluate_proxy_walk_forward(
+            changed,
+            dataset_manifest_hash=manifest["manifestHash"],
+            reconstructed_availability_lag_ms=LAG_MS,
+            model_version="proxy-candidate-v1",
+            config=settings,
+        )
+        self.assertEqual(original["folds"][0], changed_report["folds"][0])
+        self.assertEqual(
+            original["folds"][1]["fittedMeanGapCents"],
+            changed_report["folds"][1]["fittedMeanGapCents"],
+        )
+        self.assertNotEqual(
+            original["folds"][1]["candidate"]["grossMaeCents"],
+            changed_report["folds"][1]["candidate"]["grossMaeCents"],
+        )
+
     def test_evaluate_cli_reads_only_archived_fixtures_and_writes_hashed_output(self):
         def transport(request, _timeout):
             timeframe = parse_qs(urlparse(request.full_url).query)["timeframe"][0]
@@ -185,12 +223,14 @@ class ProxyBootstrapTests(unittest.TestCase):
             write_download_archive(pages, archive_directory=raw, manifest_path=manifest_path, created_at_ms=1)
             rows_path = root / "rows.jsonl"
             report_path = root / "report.json"
+            health_path = root / "health.json"
             result = proxy_main([
                 "evaluate",
                 "--download-manifest", str(manifest_path),
                 "--archive-directory", str(raw),
                 "--rows-output", str(rows_path),
                 "--output", str(report_path),
+                "--health-output", str(health_path),
                 "--reconstructed-availability-lag-ms", str(LAG_MS),
                 "--feature-schema-version", "alpaca-proxy-features-v1",
                 "--code-version", "abc",
@@ -206,10 +246,28 @@ class ProxyBootstrapTests(unittest.TestCase):
             self.assertFalse(report["strictGateEligible"])
             self.assertTrue(report["reportHash"].startswith("sha256:"))
             self.assertEqual(len(rows_path.read_text(encoding="utf-8").splitlines()), 4)
+            health = json.loads(health_path.read_text(encoding="utf-8"))
+            self.assertEqual(health["state"], "HEALTHY")
+            self.assertEqual(health["plane"], "RESEARCH_ONLY")
+            self.assertFalse(health["strictGateEligible"])
+            self.assertEqual(health["promotionDecision"], "NOT_PERFORMED")
+            self.assertFalse(health["applicationWriteAttempted"])
+            self.assertEqual(health["reportHash"], report["reportHash"])
+            self.assertTrue(health["healthHash"].startswith("sha256:"))
 
     def test_missing_credentials_reports_names_without_values(self):
         with self.assertRaisesRegex(Exception, "APCA_API_KEY_ID and APCA_API_SECRET_KEY"):
             AlpacaHistoricalClient.from_environment({})
+
+    def test_downloader_rejects_oversized_transport_body(self):
+        client = AlpacaHistoricalClient.from_environment(
+            {"APCA_API_KEY_ID": "fixture-key", "APCA_API_SECRET_KEY": "fixture-secret"},
+            transport=lambda _request, _timeout: b"x" * (MAX_RESPONSE_BYTES + 1),
+        )
+        with self.assertRaisesRegex(Exception, "byte limit"):
+            client.download_bars(
+                start_date="2026-07-22", end_date="2026-07-22", timeframe="1Day",
+            )
 
     def test_default_transport_rejects_redirect_without_forwarding_credentials(self):
         opened = []

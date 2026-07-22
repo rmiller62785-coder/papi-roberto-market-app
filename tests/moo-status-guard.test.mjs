@@ -35,6 +35,16 @@ test("accepts the complete server-authored not-commissioned payload", () => {
   assert.equal(isMooSystemStatus(status(), TARGET), true);
 });
 
+test("requires the exact 45-second response envelope independent of quote validity", () => {
+  const shortened = structuredClone(status());
+  shortened.validUntil = shortened.evaluatedAt + 44_999;
+  assert.equal(isMooSystemStatus(shortened, TARGET), false);
+
+  const extended = structuredClone(status());
+  extended.validUntil = extended.evaluatedAt + 45_001;
+  assert.equal(isMooSystemStatus(extended, TARGET), false);
+});
+
 test("rejects arbitrary execution modes and commissioning overclaims", () => {
   const mode = structuredClone(status());
   mode.executionMode = "LIVE";

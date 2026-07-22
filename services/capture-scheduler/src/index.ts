@@ -14,6 +14,7 @@ type ScheduledControllerLike = { scheduledTime: number };
 type ExecutionContextLike = { waitUntil(promise: Promise<unknown>): void };
 
 const encoder = new TextEncoder();
+export const CAPTURE_SCHEDULER_RESPONSE_TIMEOUT_MS = 30_000;
 
 function configuredTarget(value: string) {
   let url: URL;
@@ -59,7 +60,10 @@ export async function sendCaptureTrigger(
     headers,
     body: CAPTURE_TRIGGER_BODY,
     redirect: "manual",
-    signal: AbortSignal.timeout(15_000),
+    // The receiver performs bounded provider reads before it can acknowledge a
+    // point-in-time checkpoint. Thirty seconds is defense-in-depth for that
+    // response path; the receiver's earlier market cutoff remains authoritative.
+    signal: AbortSignal.timeout(CAPTURE_SCHEDULER_RESPONSE_TIMEOUT_MS),
   });
   if (response.status >= 300 && response.status < 400) throw new Error("CAPTURE_SCHEDULER_REDIRECT_REJECTED");
   if (!response.ok) throw new Error(`CAPTURE_SCHEDULER_HTTP_${response.status}`);

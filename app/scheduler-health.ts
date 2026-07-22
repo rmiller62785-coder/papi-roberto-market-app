@@ -6,6 +6,7 @@ import {
 } from "./market-session.ts";
 
 export type SchedulerRunStatus =
+  | "started"
   | "skipped"
   | "captured"
   | "freeze_only"
@@ -36,6 +37,12 @@ type ExpectedCheckpoint = {
 };
 
 const CHECKPOINT_GRACE_MS = 10 * 60_000;
+const SCHEDULER_STALL_AFTER_MS = 45_000;
+
+function checkpointGraceMs(checkpoint: string) {
+  // T-5M has no retry minute after the canonical 09:24:30 ET cutoff.
+  return checkpoint === "T-5M" ? 30_000 : CHECKPOINT_GRACE_MS;
+}
 
 function sessionCheckpoints(targetDate: string): ExpectedCheckpoint[] {
   const schedule = nasdaqSessionSchedule(targetDate);
@@ -58,34 +65,61 @@ export function nextExpectedSchedulerCheckpoint(nowMs: number): ExpectedCheckpoi
 }
 
 export function summarizeSchedulerHealth(rows: SchedulerRunRow[], nowMs: number) {
-  const ordered = [...rows].sort((left, right) => right.completedAt - left.completedAt);
+  const ordered = [...rows].sort((left, right) =>
+    right.completedAt - left.completedAt ||
+    Number(left.status === "started") - Number(right.status === "started"));
   const lastRun = ordered[0] ?? null;
+  const terminalRuns = ordered.filter((row) => row.status !== "started");
+  const startedRuns = ordered.filter((row) => row.status === "started");
   const latest = (predicate: (row: SchedulerRunRow) => boolean) =>
     ordered.find(predicate)?.completedAt ?? null;
   let consecutiveFailures = 0;
-  for (const row of ordered) {
+  for (const row of terminalRuns) {
     if (row.status !== "failed") break;
     consecutiveFailures += 1;
   }
 
+  const unresolvedStarts = startedRuns.filter((started) => !terminalRuns.some((terminal) =>
+    terminal.jobKey === started.jobKey || (
+      terminal.checkpoint === started.checkpoint &&
+      terminal.targetDate === started.targetDate &&
+      terminal.completedAt >= started.startedAt &&
+      Math.abs(terminal.scheduledAt - started.scheduledAt) <= 5 * 60_000
+    )));
+  const stalledRuns = unresolvedStarts.filter((started) => {
+    if (started.checkpoint !== "T-5M") return nowMs > started.startedAt + SCHEDULER_STALL_AFTER_MS;
+    const sessionDate = started.targetDate ?? newYorkDateKey(started.scheduledAt);
+    const hardCutoff = isNasdaqSessionDate(sessionDate)
+      ? nasdaqSessionSchedule(sessionDate).decisionFreezeAt
+      : started.scheduledAt + 30_000;
+    return nowMs > hardCutoff;
+  });
+
   const today = newYorkDateKey(nowMs);
   const missedCheckpoints = isNasdaqSessionDate(today)
     ? sessionCheckpoints(today)
-      .filter((expected) => expected.scheduledAt + CHECKPOINT_GRACE_MS < nowMs)
-      .filter((expected) => !ordered.some((row) =>
+      .filter((expected) => expected.scheduledAt + checkpointGraceMs(expected.checkpoint) < nowMs)
+      .filter((expected) => !terminalRuns.some((row) =>
         row.checkpoint === expected.checkpoint &&
-        Math.abs(row.scheduledAt - expected.scheduledAt) <= 5 * 60_000
+        Math.abs(row.scheduledAt - expected.scheduledAt) <= 5 * 60_000 &&
+        (expected.checkpoint === "OUTCOME"
+          ? row.status === "outcome_attached"
+          : Boolean(row.snapshotSucceeded))
       ))
       .map((expected) => expected.checkpoint)
     : [];
 
-  const status = lastRun == null
-    ? "awaiting_first_run"
-    : lastRun.status === "failed"
-      ? "failed"
-      : lastRun.status === "freeze_only" || missedCheckpoints.length > 0
-        ? "degraded"
-        : "healthy";
+  const status = stalledRuns.length > 0
+    ? "stalled"
+    : lastRun == null
+      ? "awaiting_first_run"
+      : lastRun.status === "started"
+        ? "running"
+        : lastRun.status === "failed"
+          ? "failed"
+          : lastRun.status === "freeze_only" || missedCheckpoints.length > 0
+            ? "degraded"
+            : "healthy";
 
   return {
     status,
@@ -97,6 +131,7 @@ export function summarizeSchedulerHealth(rows: SchedulerRunRow[], nowMs: number)
     lastPreopenAt: latest((row) => row.phase === "preopen" && Boolean(row.snapshotSucceeded)),
     lastOutcomeAt: latest((row) => row.status === "outcome_attached"),
     consecutiveFailures,
+    stalledRuns,
     missedCheckpoints,
     nextExpectedCheckpoint: nextExpectedSchedulerCheckpoint(nowMs),
     lastRun,

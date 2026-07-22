@@ -32,7 +32,23 @@ The Durable Object serializes commands for the single paper account. It stores c
 
 ## Health
 
-`GET /health` uses the same signed request protocol. It reports activation flags, fixed paper scope, counts, and `tradeUpdates: NOT_CONNECTED`. A permanent Alpaca `trade_updates` supervisor and Sites ingestion mirror are intentionally a later integration step; this scaffold does not imply that fill streaming is live.
+`GET /health` uses the same signed request protocol. It reports activation
+flags, fixed paper scope, durable command counts, and read-only Alpaca paper
+references for account status, buying power, cash, equity, the current NVDA
+position, and open NVDA MOO orders. Provider account IDs, account numbers,
+order IDs, and client-order IDs are never returned. Every provider request is
+pinned to `https://paper-api.alpaca.markets`, rejects redirects, and is bounded
+by the same response and timeout limits as order reconciliation.
+
+The health response describes reconciliation as
+`REST_BY_CLIENT_ORDER_ID_BEFORE_RETRY`: an ambiguous command is looked up by
+its deterministic client-order ID before the service may submit again. Health
+does not create an order and `automaticSubmission` remains false.
+
+The response continues to state `tradeUpdates: NOT_CONNECTED`. A permanent
+Alpaca `trade_updates` supervisor and Sites ingestion mirror are intentionally
+a later integration step; the REST account/order snapshot must not be described
+as fill streaming.
 
 ## Local verification
 
