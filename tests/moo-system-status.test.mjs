@@ -172,7 +172,7 @@ test("a fresh exact-session SIP quote satisfies only the required market-data so
   assert.ok(status.blockers.includes("TRAINED_MODEL_NOT_PROMOTED"));
 });
 
-test("strict SIP quote readiness expires after two seconds even while transport stays healthy", async () => {
+test("strict SIP quote readiness expires after the bounded transit window while transport stays healthy", async () => {
   const nowMs = Date.parse("2026-07-21T13:24:00Z");
   const streamHealth = {
     state: "LIVE", streamId: "nvda-sip", provider: "alpaca", feed: "sip", coverageScope: "CONSOLIDATED_SIP",
@@ -193,7 +193,8 @@ test("strict SIP quote readiness expires after two seconds even while transport 
   const status = buildMooSystemStatus({
     nowMs, targetSession: "2026-07-21", brokerReference, streamHealth, strictUsSource: source,
   });
-  assert.ok(status.blockers.includes("CONSOLIDATED_US_FEED_NOT_ENTITLED"));
+  assert.ok(status.blockers.includes("CONSOLIDATED_US_QUOTE_NOT_CURRENT"));
+  assert.equal(status.blockers.includes("CONSOLIDATED_US_FEED_NOT_ENTITLED"), false);
 });
 
 test("wrong-session or future SIP observations cannot populate the strict source", async () => {

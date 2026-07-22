@@ -216,7 +216,7 @@ export function isMooSystemStatus(value: unknown, targetDate: string): value is 
     !objectValue(value.transport) ||
     !objectValue(value.commissioningEvidence) || !Array.isArray(value.blockers) ||
     value.blockers.length > 4 || new Set(value.blockers).size !== value.blockers.length || !value.blockers.every((blocker) => member(blocker, [
-      "CONSOLIDATED_US_FEED_NOT_ENTITLED", "TRAINED_MODEL_NOT_PROMOTED",
+      "CONSOLIDATED_US_FEED_NOT_ENTITLED", "CONSOLIDATED_US_QUOTE_NOT_CURRENT", "TRAINED_MODEL_NOT_PROMOTED",
       "IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE", "ACCOUNT_LOCATE_NOT_AVAILABLE",
     ])) || typeof value.commissioningEvidence.modelPromoted !== "boolean" ||
     typeof value.commissioningEvidence.artifactValidated !== "boolean" ||
@@ -284,6 +284,7 @@ export function isMooSystemStatus(value: unknown, targetDate: string): value is 
     value.blockers.includes("TRAINED_MODEL_NOT_PROMOTED") === !artifactModelPromoted &&
     !value.blockers.includes("IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE") &&
     !value.blockers.includes("CONSOLIDATED_US_FEED_NOT_ENTITLED") &&
+    !value.blockers.includes("CONSOLIDATED_US_QUOTE_NOT_CURRENT") &&
     !value.blockers.includes("ACCOUNT_LOCATE_NOT_AVAILABLE");
 
   const expectedRoles = new Map<string, string>([
@@ -293,11 +294,14 @@ export function isMooSystemStatus(value: unknown, targetDate: string): value is 
 
   const usSource = snapshot.sources.find((source) => objectValue(source) && source.id === "US");
   const usReady = isStrictUsSourceReady(usSource as unknown as MooSystemStatus["decisionSnapshot"]["sources"][number], value.evaluatedAt);
+  const usEntitled = objectValue(usSource) && usSource.provider === "Alpaca SIP" &&
+    usSource.entitlement === "REALTIME" && usSource.coverage === "CONSOLIDATED_SIP";
   const usTransportConsistent = !usReady || (value.transport.persistentUpstreamSupervisor === true &&
     objectValue(value.transport.stream) && value.transport.stream.state === "LIVE" &&
     value.transport.stream.feed === "sip" && value.transport.stream.coverageScope === "CONSOLIDATED_SIP");
   const feedBlockerConsistent = decisionArtifact != null || (
-    value.blockers.includes("CONSOLIDATED_US_FEED_NOT_ENTITLED") === !usReady &&
+    value.blockers.includes("CONSOLIDATED_US_FEED_NOT_ENTITLED") === (!usReady && !usEntitled) &&
+    value.blockers.includes("CONSOLIDATED_US_QUOTE_NOT_CURRENT") === (!usReady && usEntitled) &&
     (!usReady || value.validUntil === (usSource as MooSystemStatus["decisionSnapshot"]["sources"][number]).validUntil)
   );
 

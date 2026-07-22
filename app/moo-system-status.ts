@@ -8,7 +8,11 @@ export const MOO_SYSTEM_STATUS_SCHEMA = "moo-system-status-v2" as const;
 export const MOO_EXECUTION_POLICY_VERSION = "strict-moo-commissioning-v2" as const;
 export const MOO_STREAM_HEARTBEAT_MAX_AGE_MS = 45_000;
 export const MOO_STREAM_SOURCE_LAG_MAX_MS = 45_000;
-export const MOO_STRICT_US_QUOTE_MAX_AGE_MS = 2_000;
+// The durable Cloudflare ingestion and status-read path is normally a few
+// seconds behind provider time even while the upstream SIP socket is live.
+// Five seconds keeps the execution source fail-closed while avoiding a false
+// stale state caused solely by the measured server-side transit path.
+export const MOO_STRICT_US_QUOTE_MAX_AGE_MS = 5_000;
 
 export type MooStreamHealthEvidence = {
   state: "LIVE" | "STALE" | "UNAVAILABLE";
@@ -28,6 +32,7 @@ export type MooStreamHealthEvidence = {
 
 export type MooSystemBlockerCode =
   | "CONSOLIDATED_US_FEED_NOT_ENTITLED"
+  | "CONSOLIDATED_US_QUOTE_NOT_CURRENT"
   | "TRAINED_MODEL_NOT_PROMOTED"
   | "IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE"
   | "ACCOUNT_LOCATE_NOT_AVAILABLE";
@@ -406,11 +411,15 @@ export function buildMooSystemStatus(input: {
     streamHealth.detailCode === "STREAM_NOT_REGISTERED";
   const strictUsReady = streamHealth.state === "LIVE" && streamHealth.feed === "sip" &&
     streamHealth.coverageScope === "CONSOLIDATED_SIP" && isStrictUsSourceReady(input.strictUsSource, input.nowMs);
+  const strictUsEntitled = input.strictUsSource?.provider === "Alpaca SIP" &&
+    input.strictUsSource.entitlement === "REALTIME" && input.strictUsSource.coverage === "CONSOLIDATED_SIP";
   const artifactModelPromoted = strictArtifact?.model?.status === "PROMOTED";
   const artifactHasRequiredLocate = strictArtifact?.decisionSnapshot.decision !== "SHORT_FAVORED" ||
     strictArtifact.shortLocateProof != null;
   const blockers: MooSystemBlockerCode[] = [
-    ...(strictArtifact || strictUsReady ? [] : ["CONSOLIDATED_US_FEED_NOT_ENTITLED" as const]),
+    ...(strictArtifact || strictUsReady
+      ? []
+      : [strictUsEntitled ? "CONSOLIDATED_US_QUOTE_NOT_CURRENT" as const : "CONSOLIDATED_US_FEED_NOT_ENTITLED" as const]),
     ...(artifactModelPromoted ? [] : ["TRAINED_MODEL_NOT_PROMOTED" as const]),
     ...(strictArtifact ? [] : ["IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE" as const]),
     ...(strictArtifact && artifactHasRequiredLocate ? [] : ["ACCOUNT_LOCATE_NOT_AVAILABLE" as const]),

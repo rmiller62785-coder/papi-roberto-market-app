@@ -148,6 +148,12 @@ function commissioningBlockerReason(
   lang: Language,
 ): StrictEmptyReason {
   if (blocker === "CONSOLIDATED_US_FEED_NOT_ENTITLED") {
+    return {
+      fields: copy(lang, "Required source / readiness", "Fuente requerida / preparación"),
+      reason: copy(lang, "A consolidated SIP execution entitlement has not been confirmed for this source.", "No se ha confirmado una autorización de ejecución SIP consolidada para esta fuente."),
+    };
+  }
+  if (blocker === "CONSOLIDATED_US_QUOTE_NOT_CURRENT") {
     const reason = quoteState === "stale"
       ? copy(lang, "The last consolidated SIP observation is too old for execution.", "La última observación SIP consolidada es demasiado antigua para ejecución.")
       : quoteState === "pending"
