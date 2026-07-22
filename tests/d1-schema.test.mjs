@@ -218,8 +218,8 @@ test("the controlled bridge is idempotent and preserves an already-upgraded prod
   sqlite.close();
 });
 
-test("migration journal retains the drift bridge and ends at explicit MOO safety readiness", async () => {
-  const [journalText, migration, snapshotText, streamMigration, streamSnapshotText, safetyMigration, safetySnapshotText, drizzleSchema] = await Promise.all([
+test("migration journal retains the drift bridge, safety readiness, and immutable model/archive ownership", async () => {
+  const [journalText, migration, snapshotText, streamMigration, streamSnapshotText, safetyMigration, safetySnapshotText, modelArchiveMigration, modelArchiveSnapshotText, drizzleSchema] = await Promise.all([
     readFile(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0006_live_market_state.sql", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/meta/0006_snapshot.json", import.meta.url), "utf8"),
@@ -227,10 +227,13 @@ test("migration journal retains the drift bridge and ends at explicit MOO safety
     readFile(new URL("../drizzle/meta/0007_snapshot.json", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0008_moo_safety_schema_state.sql", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/meta/0008_snapshot.json", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/0009_moo_model_archive.sql", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/meta/0009_snapshot.json", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
   const journal = JSON.parse(journalText);
-  assert.equal(journal.entries.at(-1).tag, "0008_moo_safety_schema_state");
+  assert.equal(journal.entries.at(-1).tag, "0009_moo_model_archive");
+  assert.equal(journal.entries.some((entry) => entry.tag === "0008_moo_safety_schema_state"), true);
   assert.equal(journal.entries.some((entry) => entry.tag.startsWith("0004_")), false);
   assert.equal(journal.entries.some((entry) => entry.tag.startsWith("0005_")), false);
   assert.match(migration, /Do not replay or rewrite those already-deployed migrations/);
@@ -267,4 +270,14 @@ test("migration journal retains the drift bridge and ends at explicit MOO safety
   assert.match(safetyMigration, /INSERT OR IGNORE INTO `moo_safety_schema_state`/);
   assert.ok(JSON.parse(safetySnapshotText).tables.moo_safety_schema_state);
   assert.match(drizzleSchema, /mooSafetySchemaState/);
+  const modelArchiveSnapshot = JSON.parse(modelArchiveSnapshotText);
+  for (const tableName of [
+    "market_archive_segments", "moo_feature_snapshots", "moo_model_entries",
+    "moo_model_promotion_events", "moo_decision_artifacts", "moo_decision_outcomes",
+  ]) {
+    assert.ok(modelArchiveSnapshot.tables[tableName]);
+    assert.match(modelArchiveMigration, new RegExp(tableName));
+    assert.match(drizzleSchema, new RegExp(tableName));
+  }
+  assert.match(modelArchiveMigration, /market_archive_stream_start_idx/);
 });

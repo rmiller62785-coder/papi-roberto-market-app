@@ -10,6 +10,7 @@ import {
   validateMooDecisionArtifact,
   validateMooDecisionOutcome,
 } from "../app/moo-artifact-store.ts";
+import { createD1MooArtifactStore } from "../app/d1-moo-artifact-store.ts";
 import { computeMooFeatureManifestDigest, sealMooFeatureSnapshot } from "../app/moo-feature-snapshot.ts";
 import { computeMooModelEntryDigest } from "../app/moo-model-registry.ts";
 import { sealMooLocateProof } from "../app/moo-contract.ts";
@@ -307,6 +308,65 @@ test("READY artifacts recompute source freshness and bind feature availability t
   timeTravel.decisionSnapshot.generatedAt = timeTravel.evaluatedAt;
   rehash(timeTravel);
   assert.ok(validateMooDecisionArtifact(timeTravel).errors.includes("FEATURE_AVAILABLE_AFTER_EVALUATION"));
+
+  const postDecisionSource = structuredClone(artifact());
+  postDecisionSource.evaluatedAt = frozenAt - 1_500;
+  postDecisionSource.decisionSnapshot.generatedAt = postDecisionSource.evaluatedAt;
+  postDecisionSource.decisionSnapshot.sources[0].observedAt = frozenAt - 1_400;
+  postDecisionSource.decisionSnapshot.sources[0].checkedAt = frozenAt - 1_300;
+  rehash(postDecisionSource);
+  assert.ok(validateMooDecisionArtifact(postDecisionSource).errors.includes("SNAPSHOT_REQUIRED_SOURCE_TIME_INVALID:US"));
+});
+
+test("model, risk, and locate evidence cannot arrive after the decision evaluation", () => {
+  const evaluatedAt = frozenAt - 1_500;
+
+  const lateModel = structuredClone(artifact());
+  lateModel.evaluatedAt = evaluatedAt;
+  lateModel.decisionSnapshot.generatedAt = evaluatedAt;
+  lateModel.model.promotedAt = evaluatedAt + 1;
+  lateModel.model.contentHash = computeMooModelEntryDigest(lateModel.model);
+  rehash(lateModel);
+  assert.ok(validateMooDecisionArtifact(lateModel).errors.includes("MODEL_FEATURE_NOT_ELIGIBLE"));
+
+  const lateRisk = structuredClone(artifact());
+  lateRisk.evaluatedAt = evaluatedAt;
+  lateRisk.decisionSnapshot.generatedAt = evaluatedAt;
+  lateRisk.riskPolicy.effectiveFrom = evaluatedAt + 1;
+  lateRisk.riskPolicy.approvedAt = evaluatedAt;
+  lateRisk.riskPolicy = sealMooRiskPolicy(lateRisk.riskPolicy);
+  rehash(lateRisk);
+  assert.ok(validateMooDecisionArtifact(lateRisk).errors.includes("READY_RISK_POLICY_NOT_STRICT"));
+
+  const lateProof = locate({ availableAt: evaluatedAt + 1 });
+  const lateLocate = artifactInput({
+    evaluatedAt,
+    shortLocateProof: lateProof,
+    decisionSnapshot: decisionSnapshot(lateProof, { generatedAt: evaluatedAt }),
+  });
+  lateLocate.contentHash = computeMooDecisionArtifactDigest(lateLocate);
+  assert.ok(validateMooDecisionArtifact(lateLocate).errors.includes("READY_SHORT_LOCATE_INVALID"));
+});
+
+test("D1 never reveals a frozen artifact before its trusted freeze instant", async () => {
+  const value = artifact();
+  const database = {
+    prepare() {
+      return {
+        bind() { return this; },
+        async first() { return { payload_json: JSON.stringify(value) }; },
+      };
+    },
+  };
+  const originalNow = Date.now;
+  try {
+    Date.now = () => value.frozenAt - 1;
+    assert.equal(await createD1MooArtifactStore(database).getFrozen(value.targetSession), null);
+    Date.now = () => value.frozenAt;
+    assert.equal((await createD1MooArtifactStore(database).getFrozen(value.targetSession))?.artifactId, value.artifactId);
+  } finally {
+    Date.now = originalNow;
+  }
 });
 
 test("short artifacts reject account, quantity, time-window, and digest substitution", () => {

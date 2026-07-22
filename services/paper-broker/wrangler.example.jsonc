@@ -1,0 +1,21 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "aperture-nvda-paper-broker-dev",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-21",
+  "durable_objects": {
+    "bindings": [
+      { "name": "PAPER_BROKER", "class_name": "PaperBrokerCoordinator" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["PaperBrokerCoordinator"] }
+  ],
+  "vars": {
+    "PAPER_ORDER_SUBMISSION_ENABLED": "false",
+    "PAPER_SHORTS_ENABLED": "false",
+    "PAPER_MAX_SHARES": "1",
+    "PAPER_ORDER_ADMIN_EMAILS": "owner@example.test",
+    "PAPER_COMMAND_AUDIENCE": "aperture-paper-broker-command"
+  }
+}

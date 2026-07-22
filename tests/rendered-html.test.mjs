@@ -5,11 +5,12 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 
 test("ships the NVDA decision dashboard instead of the starter preview", async () => {
-  const [page, layout, styles, mooSurface] = await Promise.all([
+  const [page, layout, styles, mooSurface, strictJourney] = await Promise.all([
     readFile(new URL("app/page.tsx", root), "utf8"),
     readFile(new URL("app/layout.tsx", root), "utf8"),
     readFile(new URL("app/globals.css", root), "utf8"),
     readFile(new URL("app/components/MooDecisionSurface.tsx", root), "utf8"),
+    readFile(new URL("app/components/StrictMooJourney.tsx", root), "utf8"),
   ]);
 
   assert.match(page, /Aperture/);
@@ -67,10 +68,23 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(page, /workflow\s*===\s*"moo"\s*\?\s*<>\s*<section className="moo-session-picker[\s\S]*?<MooDecisionSurface/);
   assert.match(page, /mooSystemStatus\.decisionSnapshot/);
   assert.doesNotMatch(page, /buildMooDecisionSnapshot/);
-  assert.match(mooSurface, /Predicted Official Open/);
-  assert.match(mooSurface, /NO TRADE/);
-  assert.match(mooSurface, /Modify \/ cancel · 09:25 ET/);
-  assert.match(mooSurface, /Final MOO entry · 09:28 ET/);
+  assert.match(strictJourney, /Predicted official open/);
+  assert.match(strictJourney, /NO TRADE/);
+  assert.match(mooSurface, /StrictMooJourney/);
+  assert.match(mooSurface, /DETAILED STRICT AUDIT/);
+  assert.match(mooSurface, /Source entitlements and strict ticket fields/);
+  assert.match(strictJourney, /Source health/);
+  assert.match(strictJourney, /Model readiness/);
+  assert.match(strictJourney, /Fill \/ audit/);
+  assert.match(strictJourney, /Modify \/ cancel cutoff/);
+  assert.doesNotMatch(strictJourney, /Decision freeze · 09:24:30 ET/);
+  assert.match(strictJourney, /PERMANENT UPSTREAM/);
+  assert.match(strictJourney, /STRICT QUOTE/);
+  assert.match(strictJourney, /BROWSER DELIVERY/);
+  assert.match(strictJourney, /ARTIFACT STORAGE UNAVAILABLE/);
+  assert.match(strictJourney, /PAPER REVIEW ONLY · NO ORDER/);
+  assert.match(strictJourney, /Execution is not commissioned, so no order can be submitted/);
+  assert.equal([...strictJourney.matchAll(/aria-live=/g)].length, 1);
   assert.match(mooSurface, /Long opening ticket/);
   assert.match(mooSurface, /Short opening ticket/);
   assert.match(mooSurface, /Maximum loss/);
@@ -78,6 +92,10 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(page, /Tradegate BSX \(XGAT\)/);
   assert.match(mooSurface, /Not configured/);
   assert.match(styles, /\.moo-decision-surface/);
+  assert.match(styles, /\.strict-stage-list/);
+  assert.match(styles, /\.strict-connection-lanes/);
+  assert.match(styles, /\.strict-command\.state-closed/);
+  assert.match(styles, /\.strict-store-alert/);
   assert.match(styles, /@media\(max-width:390px\)/);
   assert.doesNotMatch(mooSurface, />\$0\.00</);
   assert.match(page, /Source \/ Knowledge/);

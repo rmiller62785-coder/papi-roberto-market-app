@@ -2,6 +2,7 @@ import type { AlpacaBrokerStatus } from "./alpaca-broker-status.ts";
 import { MOO_PROVIDER_RECEIVE_CLOCK_SKEW_MS, type MooDecisionSnapshot, type MooSourceHealth } from "./moo-contract.ts";
 import { nasdaqSessionSchedule, newYorkDateKey } from "./market-session.ts";
 import { buildMooDecisionSnapshot } from "./moo-strategy.ts";
+import { validateMooDecisionArtifact, type MooDecisionArtifact } from "./moo-artifact-store.ts";
 
 export const MOO_SYSTEM_STATUS_SCHEMA = "moo-system-status-v2" as const;
 export const MOO_EXECUTION_POLICY_VERSION = "strict-moo-commissioning-v2" as const;
@@ -40,6 +41,8 @@ export type MooSystemStatus = {
   executionMode: "NOT_COMMISSIONED";
   decisionAuthority: "SERVER";
   decisionSnapshot: MooDecisionSnapshot;
+  decisionArtifact: MooDecisionArtifact | null;
+  artifactStoreState: "FOUND" | "NOT_FOUND" | "UNAVAILABLE";
   blockers: MooSystemBlockerCode[];
   commissioningEvidence: {
     modelPromoted: boolean;
@@ -219,9 +222,7 @@ export async function readStrictUsSource(
   nowMs = Date.now(),
   streamHealth?: MooStreamHealthEvidence,
 ): Promise<MooSourceHealth> {
-  if (targetSessionIsClosed(targetSession, nowMs)) {
-    return unavailableStrictUsSource(targetSession, streamHealth, nowMs);
-  }
+  const marketClosed = targetSessionIsClosed(targetSession, nowMs);
   const epochPrefix = typeof streamHealth?.streamId === "string" ? `${streamHealth.streamId}:` : "";
   const connectionEpochValid = typeof streamHealth?.connectionEpoch === "string" &&
     streamHealth.connectionEpoch.startsWith(epochPrefix) &&
@@ -232,14 +233,16 @@ export async function readStrictUsSource(
     return unavailableStrictUsSource(targetSession, streamHealth, nowMs);
   }
   try {
+    const epochClause = marketClosed ? "connection_epoch LIKE ?" : "connection_epoch=?";
+    const epochBinding = marketClosed ? `${streamHealth.streamId}:%` : streamHealth.connectionEpoch;
     const row = await database.prepare(`SELECT provider,feed,session_date,kind,qualification,entitlement,coverage,
       price,size,provider_time,received_at,processed_at,available_at,connection_epoch,service_sequence
       FROM market_qualified_observations
       WHERE symbol='NVDA' AND session_date=? AND kind='QUOTE' AND qualification='STRICT_EXECUTION'
         AND provider='alpaca' AND feed='sip' AND entitlement='ENTITLED' AND coverage='CONSOLIDATED_SIP'
-        AND available_at<=? AND provider_time<=? AND connection_epoch=?
+        AND available_at<=? AND provider_time<=? AND ${epochClause}
       ORDER BY provider_time DESC,available_at DESC,service_sequence DESC LIMIT 1`)
-      .bind(targetSession, nowMs, nowMs, streamHealth.connectionEpoch).first<Record<string, unknown>>();
+      .bind(targetSession, nowMs, nowMs, epochBinding).first<Record<string, unknown>>();
     if (!row) return unavailableStrictUsSource(targetSession, streamHealth, nowMs);
 
     const providerTime = databaseNumber(row, "provider_time");
@@ -253,7 +256,8 @@ export async function readStrictUsSource(
       processedAt <= availableAt && availableAt <= nowMs;
     const payloadValid = row.provider === "alpaca" && row.feed === "sip" && row.session_date === targetSession &&
       row.kind === "QUOTE" && row.qualification === "STRICT_EXECUTION" && row.entitlement === "ENTITLED" &&
-      row.coverage === "CONSOLIDATED_SIP" && row.connection_epoch === streamHealth.connectionEpoch &&
+      row.coverage === "CONSOLIDATED_SIP" && typeof row.connection_epoch === "string" &&
+      (marketClosed ? row.connection_epoch.startsWith(epochPrefix) : row.connection_epoch === streamHealth.connectionEpoch) &&
       typeof price === "number" && Number.isFinite(price) && price > 0 &&
       (size == null || (typeof size === "number" && Number.isFinite(size) && size >= 0));
     if (!timestampsValid || !payloadValid) return unavailableStrictUsSource(targetSession, streamHealth, nowMs);
@@ -270,12 +274,12 @@ export async function readStrictUsSource(
       observedAt: providerTime,
       checkedAt: nowMs,
       ageMs,
-      state: live ? "LIVE" : "DEGRADED",
+      state: marketClosed ? "CLOSED" : live ? "LIVE" : "DEGRADED",
       receivedAt,
       processedAt,
       availableAt,
       validUntil: providerTime + MOO_STRICT_US_QUOTE_MAX_AGE_MS,
-      reasonCode: live ? "VALUE_PRESENT" : "SOURCE_STALE",
+      reasonCode: marketClosed ? "MARKET_IS_CLOSED" : live ? "VALUE_PRESENT" : "SOURCE_STALE",
     };
   } catch {
     return unavailableStrictUsSource(targetSession, streamHealth, nowMs);
@@ -358,6 +362,8 @@ export function buildMooSystemStatus(input: {
   brokerReference: AlpacaBrokerStatus;
   streamHealth?: MooStreamHealthEvidence;
   strictUsSource?: MooSourceHealth;
+  strictArtifact?: MooDecisionArtifact | null;
+  artifactStoreState?: "FOUND" | "NOT_FOUND" | "UNAVAILABLE";
 }): MooSystemStatus {
   const sources = commissioningSources(input.strictUsSource, input.targetSession, input.nowMs);
   const builtSnapshot = buildMooDecisionSnapshot({
@@ -382,18 +388,32 @@ export function buildMooSystemStatus(input: {
   });
   // An uncommissioned post-freeze evaluation has no executable frozen context,
   // but its explicitly unavailable source topology remains useful diagnostics.
-  const decisionSnapshot: MooDecisionSnapshot = { ...builtSnapshot, sources, requiredSourceIds: ["US"] };
+  const artifactValidation = input.strictArtifact ? validateMooDecisionArtifact(input.strictArtifact) : null;
+  const artifactReady = artifactValidation?.valid === true && input.strictArtifact?.targetSession === input.targetSession &&
+    input.strictArtifact.frozenAt <= input.nowMs && input.strictArtifact.evaluatedAt <= input.nowMs;
+  const strictArtifact = artifactReady ? input.strictArtifact! : null;
+  const reportedArtifactStoreState = input.artifactStoreState ?? (input.strictArtifact ? "FOUND" : "NOT_FOUND");
+  let artifactStoreState: MooSystemStatus["artifactStoreState"];
+  if (strictArtifact) artifactStoreState = reportedArtifactStoreState === "FOUND" ? "FOUND" : "UNAVAILABLE";
+  else if (input.strictArtifact != null || reportedArtifactStoreState === "FOUND") artifactStoreState = "UNAVAILABLE";
+  else artifactStoreState = reportedArtifactStoreState;
+  const decisionSnapshot: MooDecisionSnapshot = strictArtifact
+    ? strictArtifact.decisionSnapshot
+    : { ...builtSnapshot, sources, requiredSourceIds: ["US"] };
   const streamHealth = input.streamHealth ?? unavailableStream("D1_NOT_BOUND");
   const persistentUpstreamSupervisor = streamHealth.state === "LIVE";
   const transportNotConfigured = streamHealth.detailCode === "D1_NOT_BOUND" ||
     streamHealth.detailCode === "STREAM_NOT_REGISTERED";
   const strictUsReady = streamHealth.state === "LIVE" && streamHealth.feed === "sip" &&
     streamHealth.coverageScope === "CONSOLIDATED_SIP" && isStrictUsSourceReady(input.strictUsSource, input.nowMs);
+  const artifactModelPromoted = strictArtifact?.model?.status === "PROMOTED";
+  const artifactHasRequiredLocate = strictArtifact?.decisionSnapshot.decision !== "SHORT_FAVORED" ||
+    strictArtifact.shortLocateProof != null;
   const blockers: MooSystemBlockerCode[] = [
-    ...(strictUsReady ? [] : ["CONSOLIDATED_US_FEED_NOT_ENTITLED" as const]),
-    "TRAINED_MODEL_NOT_PROMOTED",
-    "IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE",
-    "ACCOUNT_LOCATE_NOT_AVAILABLE",
+    ...(strictArtifact || strictUsReady ? [] : ["CONSOLIDATED_US_FEED_NOT_ENTITLED" as const]),
+    ...(artifactModelPromoted ? [] : ["TRAINED_MODEL_NOT_PROMOTED" as const]),
+    ...(strictArtifact ? [] : ["IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE" as const]),
+    ...(strictArtifact && artifactHasRequiredLocate ? [] : ["ACCOUNT_LOCATE_NOT_AVAILABLE" as const]),
   ];
   const strictQuoteValidUntil = strictUsReady ? input.strictUsSource?.validUntil ?? input.nowMs : null;
 
@@ -406,11 +426,13 @@ export function buildMooSystemStatus(input: {
     executionMode: "NOT_COMMISSIONED",
     decisionAuthority: "SERVER",
     decisionSnapshot,
+    decisionArtifact: strictArtifact,
+    artifactStoreState,
     blockers,
     commissioningEvidence: {
-      modelPromoted: false,
-      artifactValidated: false,
-      riskPolicyVersion: null,
+      modelPromoted: artifactModelPromoted,
+      artifactValidated: strictArtifact != null,
+      riskPolicyVersion: strictArtifact?.riskPolicyVersion ?? null,
     },
     sourceRoles: [
       { id: "US", role: "REQUIRED" },

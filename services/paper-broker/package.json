@@ -1,0 +1,21 @@
+{
+  "name": "@aperture/nvda-paper-broker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "preflight": "node scripts/preflight.mjs wrangler.production.jsonc",
+    "preflight:secrets": "wrangler secret list --config wrangler.production.jsonc --format json | node scripts/verify-secret-list.mjs",
+    "dev": "wrangler dev --config wrangler.example.jsonc",
+    "deploy": "npm run preflight && npm run preflight:secrets && wrangler deploy --config wrangler.production.jsonc"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "wrangler": "4.92.0"
+  }
+}

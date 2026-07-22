@@ -6,6 +6,7 @@ import {
   type MooSystemStatus,
 } from "./moo-system-status.ts";
 import { MOO_PROVIDER_RECEIVE_CLOCK_SKEW_MS } from "./moo-contract.ts";
+import { validateMooDecisionArtifact, type MooDecisionArtifact } from "./moo-artifact-store.ts";
 
 type JsonObject = Record<string, unknown>;
 
@@ -122,11 +123,19 @@ function paidSipUsSourcePayload(value: unknown, evaluatedAt: number) {
       value.processedAt <= value.availableAt && value.availableAt <= evaluatedAt &&
       value.ageMs === evaluatedAt - value.observedAt && value.ageMs > MOO_STRICT_US_QUOTE_MAX_AGE_MS;
   }
-  return member(value.entitlement, ["REALTIME", "UNAVAILABLE"]) &&
-    member(value.state, ["CLOSED", "UNAVAILABLE"]) && value.observedAt === null && value.ageMs === null &&
-    value.receivedAt === undefined && value.processedAt === undefined && value.availableAt === undefined &&
-    value.validUntil === undefined &&
-    value.reasonCode === (value.state === "CLOSED" ? "MARKET_IS_CLOSED" : "SOURCE_UNAVAILABLE");
+  if (value.state === "CLOSED") {
+    if (value.reasonCode !== "MARKET_IS_CLOSED") return false;
+    if (value.observedAt === null) return value.entitlement === "UNAVAILABLE" && value.ageMs === null && value.receivedAt === undefined &&
+      value.processedAt === undefined && value.availableAt === undefined && value.validUntil === undefined;
+    return value.entitlement === "REALTIME" && safeTimestamp(value.observedAt) && safeTimestamp(value.receivedAt) && safeTimestamp(value.processedAt) &&
+      safeTimestamp(value.availableAt) && safeTimestamp(value.validUntil) && value.validUntil === value.observedAt + MOO_STRICT_US_QUOTE_MAX_AGE_MS &&
+      value.observedAt <= value.receivedAt + MOO_PROVIDER_RECEIVE_CLOCK_SKEW_MS && value.receivedAt <= value.processedAt &&
+      value.processedAt <= value.availableAt && value.availableAt <= evaluatedAt &&
+      value.ageMs === evaluatedAt - value.observedAt;
+  }
+  return value.entitlement === "UNAVAILABLE" && value.state === "UNAVAILABLE" && value.observedAt === null &&
+    value.ageMs === null && value.receivedAt === undefined && value.processedAt === undefined &&
+    value.availableAt === undefined && value.validUntil === undefined && value.reasonCode === "SOURCE_UNAVAILABLE";
 }
 
 function strictStreamPayload(value: unknown, persistent: boolean, noteCode: unknown, evaluatedAt: number) {
@@ -202,15 +211,16 @@ export function isMooSystemStatus(value: unknown, targetDate: string): value is 
     value.executionMode !== "NOT_COMMISSIONED" || value.decisionAuthority !== "SERVER" ||
     !safeTimestamp(value.evaluatedAt) || !safeTimestamp(value.validUntil) ||
     value.validUntil < value.evaluatedAt || value.validUntil > value.evaluatedAt + 45_000 ||
-    !objectValue(value.decisionSnapshot) || !objectValue(value.transport) ||
+    !objectValue(value.decisionSnapshot) || !(value.decisionArtifact === null || objectValue(value.decisionArtifact)) ||
+    !member(value.artifactStoreState, ["FOUND", "NOT_FOUND", "UNAVAILABLE"]) ||
+    !objectValue(value.transport) ||
     !objectValue(value.commissioningEvidence) || !Array.isArray(value.blockers) ||
-    ![3, 4].includes(value.blockers.length) || new Set(value.blockers).size !== value.blockers.length || !value.blockers.every((blocker) => member(blocker, [
+    value.blockers.length > 4 || new Set(value.blockers).size !== value.blockers.length || !value.blockers.every((blocker) => member(blocker, [
       "CONSOLIDATED_US_FEED_NOT_ENTITLED", "TRAINED_MODEL_NOT_PROMOTED",
       "IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE", "ACCOUNT_LOCATE_NOT_AVAILABLE",
-    ])) || !["TRAINED_MODEL_NOT_PROMOTED", "IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE", "ACCOUNT_LOCATE_NOT_AVAILABLE"]
-      .every((blocker) => value.blockers.includes(blocker)) || value.commissioningEvidence.modelPromoted !== false ||
-    value.commissioningEvidence.artifactValidated !== false ||
-    value.commissioningEvidence.riskPolicyVersion !== null) return false;
+    ])) || typeof value.commissioningEvidence.modelPromoted !== "boolean" ||
+    typeof value.commissioningEvidence.artifactValidated !== "boolean" ||
+    !nullableText(value.commissioningEvidence.riskPolicyVersion)) return false;
 
   const snapshot = value.decisionSnapshot;
   const numericFields = [
@@ -246,6 +256,36 @@ export function isMooSystemStatus(value: unknown, targetDate: string): value is 
     snapshot.shortLocateProof == null && Array.isArray(snapshot.requiredSourceIds) &&
     snapshot.requiredSourceIds.length === 1 && snapshot.requiredSourceIds[0] === "US";
 
+  let decisionArtifact: MooDecisionArtifact | null = null;
+  if (value.decisionArtifact !== null) {
+    try {
+      const candidate = value.decisionArtifact as unknown as MooDecisionArtifact;
+      const validation = validateMooDecisionArtifact(candidate);
+      if (validation.valid && candidate.targetSession === targetDate &&
+        candidate.frozenAt <= value.evaluatedAt && candidate.evaluatedAt <= value.evaluatedAt &&
+        JSON.stringify(candidate.decisionSnapshot) === JSON.stringify(snapshot)) decisionArtifact = candidate;
+    } catch { decisionArtifact = null; }
+    if (!decisionArtifact) return false;
+  }
+  const artifactModelPromoted = decisionArtifact?.model?.status === "PROMOTED";
+  const artifactStoreConsistent = decisionArtifact == null
+    ? value.artifactStoreState === "NOT_FOUND" || value.artifactStoreState === "UNAVAILABLE"
+    : value.artifactStoreState === "FOUND";
+  const uncommissionedContract = decisionArtifact === null && snapshotValid &&
+    value.commissioningEvidence.modelPromoted === false &&
+    value.commissioningEvidence.artifactValidated === false &&
+    value.commissioningEvidence.riskPolicyVersion === null &&
+    ["TRAINED_MODEL_NOT_PROMOTED", "IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE", "ACCOUNT_LOCATE_NOT_AVAILABLE"]
+      .every((blocker) => value.blockers.includes(blocker));
+  const frozenArtifactContract = decisionArtifact !== null &&
+    value.commissioningEvidence.modelPromoted === artifactModelPromoted &&
+    value.commissioningEvidence.artifactValidated === true &&
+    value.commissioningEvidence.riskPolicyVersion === decisionArtifact.riskPolicyVersion &&
+    value.blockers.includes("TRAINED_MODEL_NOT_PROMOTED") === !artifactModelPromoted &&
+    !value.blockers.includes("IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE") &&
+    !value.blockers.includes("CONSOLIDATED_US_FEED_NOT_ENTITLED") &&
+    !value.blockers.includes("ACCOUNT_LOCATE_NOT_AVAILABLE");
+
   const expectedRoles = new Map<string, string>([
     ["US", "REQUIRED"], ["NVD", "OPTIONAL_RESEARCH"], ["FX", "OPTIONAL_RESEARCH"],
     ["FUTURES", "OPTIONAL_RESEARCH"], ["NOII", "POST_FREEZE_MONITORING"],
@@ -256,10 +296,12 @@ export function isMooSystemStatus(value: unknown, targetDate: string): value is 
   const usTransportConsistent = !usReady || (value.transport.persistentUpstreamSupervisor === true &&
     objectValue(value.transport.stream) && value.transport.stream.state === "LIVE" &&
     value.transport.stream.feed === "sip" && value.transport.stream.coverageScope === "CONSOLIDATED_SIP");
-  const feedBlockerConsistent = value.blockers.includes("CONSOLIDATED_US_FEED_NOT_ENTITLED") === !usReady &&
-    (!usReady || value.validUntil === (usSource as MooSystemStatus["decisionSnapshot"]["sources"][number]).validUntil);
+  const feedBlockerConsistent = decisionArtifact != null || (
+    value.blockers.includes("CONSOLIDATED_US_FEED_NOT_ENTITLED") === !usReady &&
+    (!usReady || value.validUntil === (usSource as MooSystemStatus["decisionSnapshot"]["sources"][number]).validUntil)
+  );
 
-  return snapshotValid && usTransportConsistent && feedBlockerConsistent && value.transport.browser === "ADAPTIVE_REST_POLLING" &&
+  return artifactStoreConsistent && (uncommissionedContract || frozenArtifactContract) && usTransportConsistent && feedBlockerConsistent && value.transport.browser === "ADAPTIVE_REST_POLLING" &&
     typeof value.transport.persistentUpstreamSupervisor === "boolean" &&
     member(value.transport.noteCode, ["DURABLE_STREAM_SERVICE_NOT_CONFIGURED", "DURABLE_STREAM_SERVICE_UNAVAILABLE", "DURABLE_STREAM_SERVICE_STALE", "DURABLE_STREAM_SERVICE_ENABLED"]) &&
     strictStreamPayload(value.transport.stream, value.transport.persistentUpstreamSupervisor, value.transport.noteCode, value.evaluatedAt) &&

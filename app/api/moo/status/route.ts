@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { pullAlpacaBrokerStatus } from "../../../alpaca-broker-status.ts";
 import { buildMooSystemStatus, readMooStreamHealth, readStrictUsSource } from "../../../moo-system-status.ts";
+import { createD1MooArtifactStore } from "../../../d1-moo-artifact-store.ts";
 import { validateTargetSession } from "../../../target-session.ts";
 
 const HEADERS = {
@@ -26,8 +27,27 @@ export async function GET(request: Request) {
     readMooStreamHealth(runtime.DB, nowMs),
   ]);
   const strictUsSource = await readStrictUsSource(runtime.DB, validation.date, nowMs, streamHealth);
+  let strictArtifact = null;
+  let artifactStoreState: "FOUND" | "NOT_FOUND" | "UNAVAILABLE" = "UNAVAILABLE";
+  if (runtime.DB) {
+    try {
+      strictArtifact = await createD1MooArtifactStore(runtime.DB).getFrozen(validation.date);
+      artifactStoreState = strictArtifact ? "FOUND" : "NOT_FOUND";
+    } catch {
+      strictArtifact = null;
+      artifactStoreState = "UNAVAILABLE";
+    }
+  }
   return Response.json(
-    buildMooSystemStatus({ nowMs, targetSession: validation.date, brokerReference, streamHealth, strictUsSource }),
+    buildMooSystemStatus({
+      nowMs,
+      targetSession: validation.date,
+      brokerReference,
+      streamHealth,
+      strictUsSource,
+      strictArtifact,
+      artifactStoreState,
+    }),
     { headers: HEADERS },
   );
 }

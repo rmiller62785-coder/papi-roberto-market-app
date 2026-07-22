@@ -1,0 +1,28 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "aperture-nvda-paper-broker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-21",
+  "durable_objects": {
+    "bindings": [
+      { "name": "PAPER_BROKER", "class_name": "PaperBrokerCoordinator" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["PaperBrokerCoordinator"] }
+  ],
+  "secrets": {
+    "required": [
+      "APCA_API_KEY_ID",
+      "APCA_API_SECRET_KEY",
+      "PAPER_COMMAND_SECRET"
+    ]
+  },
+  "vars": {
+    "PAPER_ORDER_SUBMISSION_ENABLED": "false",
+    "PAPER_SHORTS_ENABLED": "false",
+    "PAPER_MAX_SHARES": "1",
+    "PAPER_ORDER_ADMIN_EMAILS": "rmiller62785@gmail.com",
+    "PAPER_COMMAND_AUDIENCE": "aperture-paper-broker-command"
+  }
+}

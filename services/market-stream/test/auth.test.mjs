@@ -94,16 +94,16 @@ test("Sites delivery requires a valid contiguous acknowledgement and rejects non
 
 test("default Sites delivery calls the platform fetch without rebinding it", async () => {
   const originalFetch = globalThis.fetch;
-  let receiver = "not-called";
-  globalThis.fetch = async function (_url, _init) {
-    receiver = this;
+  const capture = { receiver: "not-called" };
+  globalThis.fetch = async function () {
+    capture.receiver = this;
     return Response.json({ ok: true, streamId: "stream-1", highestContiguousSequence: 1 });
   };
   try {
     const batch = { schemaVersion: "aperture-market-stream-v2", streamId: "stream-1", fromSequence: 1, toSequence: 1, emissions: [{}] };
     const client = new SignedSitesIngestionClient({ url, secret, audience, sitesAccessBypassToken: "sites-access-token" });
     await client.send(batch);
-    assert.equal(receiver, undefined);
+    assert.equal(capture.receiver, undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }

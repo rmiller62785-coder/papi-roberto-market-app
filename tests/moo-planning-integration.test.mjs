@@ -17,6 +17,7 @@ test("Strict MOO uses the served forecast block and an exact prior session", asy
   assert.match(page, /=== mooPlanningPreviousSession/);
   assert.match(page, /const mooPlanningInput = \{/);
   assert.match(page, /planning=\{mooPlanningInput\}/);
+  assert.match(page, /transport=\{mooSystemStatus\?\.transport\}/);
   assert.doesNotMatch(page, /planningSources\.planningInput = \{/);
   assert.match(page, /let timedOut = false/);
   assert.match(page, /timedOut = true; controller\.abort\(\)/);
@@ -45,6 +46,8 @@ test("paper planner consumes the flat public-safe broker status contract", async
   assert.match(component, /timeStop: "10:00 ET"/);
   assert.match(component, /window\.localStorage\.getItem\(PAPER_PROFILE_STORAGE_KEY\)/);
   assert.match(component, /window\.localStorage\.setItem\(PAPER_PROFILE_STORAGE_KEY/);
+  assert.match(component, /StrictMooJourney/);
+  assert.match(component, /strict-audit-details/);
   assert.match(component, /Missing: prior close/);
   assert.match(component, /Missing: premarket current/);
   assert.match(component, /Incomplete high\/low/);

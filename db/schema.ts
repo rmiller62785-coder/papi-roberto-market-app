@@ -319,3 +319,121 @@ export const mooSafetySchemaState = sqliteTable("moo_safety_schema_state", {
   check("moo_safety_schema_singleton_check", sql`${table.id} = 1`),
   check("moo_safety_schema_version_check", sql`${table.schemaVersion} >= 1`),
 ]);
+
+/** Verified immutable R2 segments. D1 remains the searchable ownership index. */
+export const marketArchiveSegments = sqliteTable("market_archive_segments", {
+  segmentId: text("segment_id").primaryKey(),
+  streamId: text("stream_id").notNull(),
+  provider: text("provider").notNull(),
+  feed: text("feed").notNull(),
+  symbol: text("symbol").notNull(),
+  sessionDate: text("session_date").notNull(),
+  fromSequence: integer("from_sequence").notNull(),
+  toSequence: integer("to_sequence").notNull(),
+  objectKey: text("object_key").notNull(),
+  contentHash: text("content_hash").notNull(),
+  rowCount: integer("row_count").notNull(),
+  byteLength: integer("byte_length").notNull(),
+  state: text("state", { enum: ["PENDING", "VERIFIED", "FAILED"] }).notNull(),
+  createdAt: integer("created_at").notNull(),
+  verifiedAt: integer("verified_at"),
+  failureCode: text("failure_code"),
+}, (table) => [
+  uniqueIndex("market_archive_range_idx").on(table.streamId, table.fromSequence, table.toSequence),
+  uniqueIndex("market_archive_stream_start_idx").on(table.streamId, table.fromSequence),
+  uniqueIndex("market_archive_object_key_idx").on(table.objectKey),
+  index("market_archive_session_idx").on(table.symbol, table.sessionDate, table.streamId, table.fromSequence),
+  check("market_archive_sequence_check", sql`${table.fromSequence} > 0 AND ${table.toSequence} >= ${table.fromSequence}`),
+  check("market_archive_counts_check", sql`${table.rowCount} > 0 AND ${table.byteLength} > 0`),
+  check("market_archive_state_check", sql`${table.state} IN ('PENDING','VERIFIED','FAILED')`),
+]);
+
+/** Immutable executable feature snapshots with field-level point-in-time provenance. */
+export const mooFeatureSnapshots = sqliteTable("moo_feature_snapshots", {
+  snapshotId: text("snapshot_id").primaryKey(),
+  targetSession: text("target_session").notNull(),
+  asOf: integer("as_of").notNull(),
+  capturedAt: integer("captured_at").notNull(),
+  featureSchemaVersion: text("feature_schema_version").notNull(),
+  state: text("state", { enum: ["PARTIAL", "QUALIFIED", "REJECTED"] }).notNull(),
+  qualityState: text("quality_state", { enum: ["PASS", "FAIL", "UNAVAILABLE"] }).notNull(),
+  qualityScore: real("quality_score"),
+  contentHash: text("content_hash").notNull(),
+  payloadJson: text("payload_json").notNull(),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [
+  uniqueIndex("moo_feature_content_hash_idx").on(table.contentHash),
+  index("moo_feature_target_asof_idx").on(table.targetSession, sql`${table.asOf} desc`),
+  check("moo_feature_state_check", sql`${table.state} IN ('PARTIAL','QUALIFIED','REJECTED')`),
+  check("moo_feature_quality_state_check", sql`${table.qualityState} IN ('PASS','FAIL','UNAVAILABLE')`),
+  check("moo_feature_quality_score_check", sql`${table.qualityScore} IS NULL OR (${table.qualityScore} >= 0 AND ${table.qualityScore} <= 100)`),
+]);
+
+/** Current registry projection. Every promotion/retirement change is also append-only below. */
+export const mooModelEntries = sqliteTable("moo_model_entries", {
+  modelVersion: text("model_version").primaryKey(),
+  status: text("status", { enum: ["CANDIDATE", "PROMOTED", "RETIRED"] }).notNull(),
+  featureSchemaVersion: text("feature_schema_version").notNull(),
+  expectedTargetSession: text("expected_target_session").notNull(),
+  artifactKey: text("artifact_key").notNull(),
+  artifactHash: text("artifact_hash").notNull(),
+  trainedThrough: integer("trained_through").notNull(),
+  promotedAt: integer("promoted_at"),
+  contentHash: text("content_hash").notNull(),
+  payloadJson: text("payload_json").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("moo_model_content_hash_idx").on(table.contentHash),
+  index("moo_model_status_target_idx").on(table.status, table.expectedTargetSession),
+  check("moo_model_status_check", sql`${table.status} IN ('CANDIDATE','PROMOTED','RETIRED')`),
+]);
+
+export const mooModelPromotionEvents = sqliteTable("moo_model_promotion_events", {
+  eventId: text("event_id").primaryKey(),
+  modelVersion: text("model_version").notNull(),
+  fromStatus: text("from_status", { enum: ["CANDIDATE", "PROMOTED", "RETIRED"] }).notNull(),
+  toStatus: text("to_status", { enum: ["CANDIDATE", "PROMOTED", "RETIRED"] }).notNull(),
+  actorEmail: text("actor_email").notNull(),
+  eventAt: integer("event_at").notNull(),
+  reason: text("reason").notNull(),
+  contentHash: text("content_hash").notNull(),
+}, (table) => [
+  index("moo_model_promotion_version_idx").on(table.modelVersion, sql`${table.eventAt} desc`),
+  check("moo_model_promotion_from_check", sql`${table.fromStatus} IN ('CANDIDATE','PROMOTED','RETIRED')`),
+  check("moo_model_promotion_to_check", sql`${table.toStatus} IN ('CANDIDATE','PROMOTED','RETIRED')`),
+]);
+
+/** Freeze records are immutable; outcome facts attach in a separate table. */
+export const mooDecisionArtifacts = sqliteTable("moo_decision_artifacts", {
+  artifactId: text("artifact_id").primaryKey(),
+  targetSession: text("target_session").notNull(),
+  state: text("state", { enum: ["READY", "NO_EDGE", "BLOCKED"] }).notNull(),
+  executionEnvironment: text("execution_environment", { enum: ["paper", "live"] }).notNull(),
+  evaluatedAt: integer("evaluated_at").notNull(),
+  cutoffAt: integer("cutoff_at").notNull(),
+  frozenAt: integer("frozen_at").notNull(),
+  featureSnapshotId: text("feature_snapshot_id"),
+  modelVersion: text("model_version"),
+  riskPolicyVersion: text("risk_policy_version"),
+  contentHash: text("content_hash").notNull(),
+  payloadJson: text("payload_json").notNull(),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [
+  uniqueIndex("moo_decision_target_idx").on(table.targetSession),
+  uniqueIndex("moo_decision_content_hash_idx").on(table.contentHash),
+  check("moo_decision_state_check", sql`${table.state} IN ('READY','NO_EDGE','BLOCKED')`),
+  check("moo_decision_environment_check", sql`${table.executionEnvironment} IN ('paper','live')`),
+]);
+
+export const mooDecisionOutcomes = sqliteTable("moo_decision_outcomes", {
+  artifactId: text("artifact_id").primaryKey(),
+  targetSession: text("target_session").notNull(),
+  contentHash: text("content_hash").notNull(),
+  payloadJson: text("payload_json").notNull(),
+  capturedAt: integer("captured_at").notNull(),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [
+  uniqueIndex("moo_decision_outcome_hash_idx").on(table.contentHash),
+  index("moo_decision_outcome_target_idx").on(table.targetSession),
+]);

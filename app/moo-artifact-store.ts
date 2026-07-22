@@ -144,21 +144,23 @@ function snapshotContractErrors(artifact: MooDecisionArtifact, errors: string[])
       if (source.state !== "LIVE" || source.entitlement !== "REALTIME" || source.coverage !== STRICT_COVERAGE[id]) {
         errors.push(`SNAPSHOT_REQUIRED_SOURCE_NOT_STRICT:${id}`);
       }
-      if (!timestamp(source.observedAt) || !timestamp(source.checkedAt) || source.observedAt > artifact.frozenAt || source.checkedAt > artifact.frozenAt) {
+      if (!timestamp(source.observedAt) || !timestamp(source.checkedAt) ||
+        source.observedAt > artifact.evaluatedAt || source.checkedAt > artifact.evaluatedAt) {
         errors.push(`SNAPSHOT_REQUIRED_SOURCE_TIME_INVALID:${id}`);
       }
       if (timestamp(source.observedAt) && timestamp(source.checkedAt) && source.checkedAt < source.observedAt - 1_000) {
         errors.push(`SNAPSHOT_REQUIRED_SOURCE_CHECK_ORDER_INVALID:${id}`);
       }
       if (timestamp(source.observedAt)) {
-        const derivedAge = Math.max(0, artifact.frozenAt - source.observedAt);
+        const derivedAge = Math.max(0, artifact.evaluatedAt - source.observedAt);
+        const ageAtFreeze = Math.max(0, artifact.frozenAt - source.observedAt);
         const reportedAge = source.ageMs == null ? derivedAge : source.ageMs;
-        if (!timestamp(reportedAge) || Math.max(derivedAge, reportedAge) > STRICT_MAX_SOURCE_AGE_MS[id]) {
+        if (!timestamp(reportedAge) || Math.max(derivedAge, ageAtFreeze, reportedAge) > STRICT_MAX_SOURCE_AGE_MS[id]) {
           errors.push(`SNAPSHOT_REQUIRED_SOURCE_STALE:${id}`);
         }
       }
       for (const time of [source.receivedAt, source.processedAt, source.availableAt]) {
-        if (time != null && (!timestamp(time) || time > artifact.frozenAt)) errors.push(`SNAPSHOT_REQUIRED_SOURCE_AVAILABLE_TOO_LATE:${id}`);
+        if (time != null && (!timestamp(time) || time > artifact.evaluatedAt)) errors.push(`SNAPSHOT_REQUIRED_SOURCE_AVAILABLE_TOO_LATE:${id}`);
       }
       if (source.validUntil != null && (!timestamp(source.validUntil) || source.validUntil < artifact.frozenAt)) {
         errors.push(`SNAPSHOT_REQUIRED_SOURCE_EXPIRED:${id}`);
@@ -207,7 +209,7 @@ function nestedContractErrors(artifact: MooDecisionArtifact, errors: string[]) {
   if (featureSnapshot && model && !mooModelEligibleForFeature({
     model,
     featureSnapshot,
-    evaluatedAt: artifact.frozenAt,
+    evaluatedAt: artifact.evaluatedAt,
     expectedTargetSession: artifact.targetSession,
   })) errors.push("MODEL_FEATURE_NOT_ELIGIBLE");
 }
@@ -253,7 +255,7 @@ export function validateMooDecisionArtifact(artifact: MooDecisionArtifact): MooA
     const favored = snapshot?.decision === "LONG_FAVORED" ? snapshot.longTicket : snapshot?.shortTicket;
     const opposite = snapshot?.decision === "LONG_FAVORED" ? snapshot.shortTicket : snapshot?.longTicket;
     if (!favored?.actionable || opposite?.actionable) errors.push("READY_TICKET_ACTIONABILITY_INVALID");
-    const resolvedRisk = artifact.riskPolicy ? resolveMooRiskPolicy(artifact.riskPolicy, artifact.frozenAt, {
+    const resolvedRisk = artifact.riskPolicy ? resolveMooRiskPolicy(artifact.riskPolicy, artifact.evaluatedAt, {
       environment: artifact.executionEnvironment,
       purpose: "STRICT",
     }) : null;
@@ -275,7 +277,7 @@ export function validateMooDecisionArtifact(artifact: MooDecisionArtifact): MooA
         accountAlias,
         targetSession: artifact.targetSession,
         quantity,
-        availableBy: artifact.frozenAt,
+        availableBy: artifact.evaluatedAt,
         validThrough: schedule.finalEntryAt,
       });
       if (!locate.valid || snapshot.shortTicket?.shortability !== "AVAILABLE") {

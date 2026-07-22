@@ -37,11 +37,34 @@ test("server commissioning status stays fail closed despite healthy broker metad
   assert.equal(status.decisionAuthority, "SERVER");
   assert.equal(status.executionMode, "NOT_COMMISSIONED");
   assert.equal(status.decisionSnapshot.decision, "NO_TRADE");
+  assert.equal(status.artifactStoreState, "NOT_FOUND");
   assert.notEqual(status.decisionSnapshot.blockReason, "NONE");
   assert.deepEqual(status.decisionSnapshot.requiredSourceIds, ["US"]);
   assert.equal(status.brokerReference.shortable, true);
   assert.equal(status.brokerReference.locateGuaranteed, false);
   assert.ok(status.blockers.includes("ACCOUNT_LOCATE_NOT_AVAILABLE"));
+});
+
+test("artifact storage failures remain distinct from a missing frozen artifact", () => {
+  const nowMs = Date.parse("2026-07-21T12:00:00Z");
+  const unavailable = buildMooSystemStatus({
+    nowMs,
+    targetSession: "2026-07-21",
+    brokerReference,
+    artifactStoreState: "UNAVAILABLE",
+  });
+  assert.equal(unavailable.artifactStoreState, "UNAVAILABLE");
+  assert.equal(unavailable.decisionArtifact, null);
+  assert.equal(unavailable.commissioningEvidence.artifactValidated, false);
+
+  const invalidClaim = buildMooSystemStatus({
+    nowMs,
+    targetSession: "2026-07-21",
+    brokerReference,
+    artifactStoreState: "FOUND",
+  });
+  assert.equal(invalidClaim.artifactStoreState, "UNAVAILABLE");
+  assert.equal(invalidClaim.decisionArtifact, null);
 });
 
 test("source policy separates required, optional, and monitoring roles", () => {
@@ -219,6 +242,27 @@ test("calendar semantics classify weekends and completed early-close sessions as
 
   const beforeEarlyClose = await readStrictUsSource(undefined, "2026-11-27", Date.parse("2026-11-27T17:59:59Z"));
   assert.equal(beforeEarlyClose.state, "UNAVAILABLE");
+});
+
+test("a completed session keeps its last verified SIP observation as closed audit evidence", async () => {
+  const nowMs = Date.parse("2026-07-21T21:00:00Z");
+  const observedAt = Date.parse("2026-07-21T19:59:59Z");
+  const source = await readStrictUsSource(streamDatabase(null, {
+    provider: "alpaca", feed: "sip", session_date: "2026-07-21", kind: "QUOTE",
+    qualification: "STRICT_EXECUTION", entitlement: "ENTITLED", coverage: "CONSOLIDATED_SIP",
+    price: 17_250, size: 10, provider_time: observedAt, received_at: observedAt + 10,
+    processed_at: observedAt + 20, available_at: observedAt + 30,
+    connection_epoch: "nvda-sip:3", service_sequence: 400,
+  }), "2026-07-21", nowMs, {
+    state: "STALE", streamId: "nvda-sip", provider: "alpaca", feed: "sip", coverageScope: "CONSOLIDATED_SIP",
+    connectionEpoch: "nvda-sip:4", heartbeatAt: nowMs - 60_000, sourceAvailableAt: nowMs - 60_000,
+    heartbeatAgeMs: 60_000, sourceLagMs: 60_000, maxHeartbeatAgeMs: 45_000, maxSourceLagMs: 45_000,
+    detailCode: "MARKET_CLOSED",
+  });
+  assert.equal(source.state, "CLOSED");
+  assert.equal(source.entitlement, "REALTIME");
+  assert.equal(source.observedAt, observedAt);
+  assert.equal(source.reasonCode, "MARKET_IS_CLOSED");
 });
 
 test("configured but unconfirmed SIP does not claim realtime entitlement", async () => {
