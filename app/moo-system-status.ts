@@ -25,6 +25,10 @@ export type MooStreamHealthEvidence = {
   sourceAvailableAt: number | null;
   heartbeatAgeMs: number | null;
   sourceLagMs: number | null;
+  rawCursorSequence: number | null;
+  currentProjectionSequence: number | null;
+  rawBacklogEvents: number | null;
+  projectionState: string | null;
   maxHeartbeatAgeMs: number;
   maxSourceLagMs: number;
   detailCode: string;
@@ -80,6 +84,10 @@ function unavailableStream(detailCode: string): MooStreamHealthEvidence {
     sourceAvailableAt: null,
     heartbeatAgeMs: null,
     sourceLagMs: null,
+    rawCursorSequence: null,
+    currentProjectionSequence: null,
+    rawBacklogEvents: null,
+    projectionState: null,
     maxHeartbeatAgeMs: MOO_STREAM_HEARTBEAT_MAX_AGE_MS,
     maxSourceLagMs: MOO_STREAM_SOURCE_LAG_MAX_MS,
     detailCode,
@@ -91,10 +99,9 @@ function safeNonnegativeInteger(value: unknown): value is number {
 }
 
 /**
- * Read-only transport proof from the receiver's append-only D1 ledger. A
- * checked-in worker or configured secret is not proof that a stream is alive;
- * only a fresh contiguous receiver cursor and its matching source-state event
- * can enable the transport indicator.
+ * Read-only transport proof from either the receiver's contiguous append-only
+ * ledger or its authenticated one-row current projection. The projection
+ * exposes its raw backlog explicitly and never advances the ordered cursor.
  */
 export async function readMooStreamHealth(
   database: D1Database | undefined,
@@ -125,21 +132,49 @@ export async function readMooStreamHealth(
         : coverageScope === "CONSOLIDATED_SIP" && stream.research_only_required === 0 && stream.execution_eligible_allowed === 1);
     if (!bindingValid) return unavailableStream("STREAM_BINDING_INVALID");
 
-    const source = await database.prepare(`SELECT state,entitlement,coverage,checked_at,available_at,connection_epoch,service_sequence,detail_code
-      FROM market_source_state_events
-      WHERE provider=? AND feed=? AND symbol='NVDA' AND connection_epoch LIKE ?
-      ORDER BY service_sequence DESC,checked_at DESC LIMIT 1`)
-      .bind(stream.provider, feed, `${stream.stream_id}:%`).first<Record<string, unknown>>();
+    const [rawSource, priority] = await Promise.all([
+      database.prepare(`SELECT state,entitlement,coverage,checked_at,available_at,connection_epoch,service_sequence,detail_code
+        FROM market_source_state_events WHERE id=?`).bind(`stream-source:${stream.stream_id}:${stream.service_sequence}`)
+        .first<Record<string, unknown>>(),
+      database.prepare(`SELECT connection_epoch,head_sequence,head_state,head_execution_eligible,head_processed_at,head_available_at,
+        projection_hash,updated_at FROM market_stream_priority_current WHERE stream_id=?`).bind(stream.stream_id)
+        .first<Record<string, unknown>>(),
+    ]);
+    const priorityValid = priority != null && safeNonnegativeInteger(priority.connection_epoch) &&
+      safeNonnegativeInteger(priority.head_sequence) && priority.head_sequence > stream.service_sequence &&
+      typeof priority.head_state === "string" &&
+      ["DISCONNECTED","CONNECTING","AUTHENTICATING","SUBSCRIBING","LIVE","SILENT","BACKOFF","DEGRADED"].includes(priority.head_state) &&
+      (priority.head_execution_eligible === 0 || priority.head_execution_eligible === 1) &&
+      safeNonnegativeInteger(priority.head_processed_at) && safeNonnegativeInteger(priority.head_available_at) &&
+      priority.head_processed_at <= priority.head_available_at && safeNonnegativeInteger(priority.updated_at) &&
+      priority.head_available_at <= nowMs && priority.updated_at <= nowMs &&
+      typeof priority.projection_hash === "string" && /^[0-9a-f]{64}$/.test(priority.projection_hash);
+    const priorityCheckedAt = priorityValid
+      ? Math.max(priority.updated_at as number, priority.head_available_at as number)
+      : null;
+    const source = priorityValid ? {
+      state: priority.head_state === "LIVE" ? "CURRENT" : "UNAVAILABLE",
+      entitlement: priority.head_execution_eligible === 1 ? "ENTITLED" : "UNKNOWN",
+      coverage: "CONSOLIDATED_SIP",
+      checked_at: priorityCheckedAt,
+      available_at: priority.head_available_at,
+      connection_epoch: `${stream.stream_id}:${priority.connection_epoch}`,
+      service_sequence: priority.head_sequence,
+      detail_code: `STREAM_PRIORITY_${priority.head_state}`,
+    } : rawSource;
     const connectionEpoch = typeof source?.connection_epoch === "string" ? source.connection_epoch : null;
     const epochPrefix = `${stream.stream_id}:`;
     const epochValid = connectionEpoch?.startsWith(epochPrefix) === true &&
       /^\d+$/.test(connectionEpoch.slice(epochPrefix.length));
     const entitlementValid = feed === "iex" ||
       (source?.entitlement === "ENTITLED" && source?.coverage === "CONSOLIDATED_SIP");
-    if (!source || source.service_sequence !== stream.service_sequence || !epochValid || !entitlementValid ||
+    const sourceSequence = source?.service_sequence;
+    const priorityProjection = priorityValid && sourceSequence === priority.head_sequence;
+    const contiguousProjection = sourceSequence === stream.service_sequence;
+    if (!source || (!contiguousProjection && !priorityProjection) || !epochValid || !entitlementValid ||
       !safeNonnegativeInteger(source.checked_at) || !safeNonnegativeInteger(source.available_at) ||
-      source.available_at > source.checked_at || source.checked_at > stream.heartbeat_at ||
-      stream.heartbeat_at > nowMs) {
+      source.available_at > source.checked_at || source.checked_at > nowMs ||
+      (contiguousProjection && source.checked_at > stream.heartbeat_at) || stream.heartbeat_at > nowMs) {
       return {
         ...unavailableStream("STREAM_SOURCE_STATE_INVALID"),
         state: "STALE",
@@ -150,10 +185,15 @@ export async function readMooStreamHealth(
         connectionEpoch,
         heartbeatAt: stream.heartbeat_at,
         heartbeatAgeMs: Math.max(0, nowMs - stream.heartbeat_at),
+        rawCursorSequence: stream.service_sequence,
+        currentProjectionSequence: priorityValid ? priority.head_sequence : null,
+        rawBacklogEvents: priorityValid ? priority.head_sequence - stream.service_sequence : null,
+        projectionState: priorityValid ? String(priority.head_state) : null,
       };
     }
 
-    const heartbeatAgeMs = Math.max(0, nowMs - stream.heartbeat_at);
+    const heartbeatAt = priorityProjection ? source.checked_at : stream.heartbeat_at;
+    const heartbeatAgeMs = Math.max(0, nowMs - heartbeatAt);
     const sourceLagMs = Math.max(0, nowMs - source.available_at);
     const live = source.state === "CURRENT" && heartbeatAgeMs <= MOO_STREAM_HEARTBEAT_MAX_AGE_MS &&
       sourceLagMs <= MOO_STREAM_SOURCE_LAG_MAX_MS;
@@ -164,10 +204,14 @@ export async function readMooStreamHealth(
       feed,
       coverageScope,
       connectionEpoch,
-      heartbeatAt: stream.heartbeat_at,
+      heartbeatAt,
       sourceAvailableAt: source.available_at,
       heartbeatAgeMs,
       sourceLagMs,
+      rawCursorSequence: stream.service_sequence,
+      currentProjectionSequence: priorityValid ? priority.head_sequence : null,
+      rawBacklogEvents: priorityValid ? priority.head_sequence - stream.service_sequence : 0,
+      projectionState: priorityValid ? String(priority.head_state) : null,
       maxHeartbeatAgeMs: MOO_STREAM_HEARTBEAT_MAX_AGE_MS,
       maxSourceLagMs: MOO_STREAM_SOURCE_LAG_MAX_MS,
       detailCode: live ? String(source.detail_code ?? "STREAM_CURRENT") : String(source.detail_code ?? `STREAM_${source.state}`),
@@ -240,7 +284,31 @@ export async function readStrictUsSource(
   try {
     const epochClause = marketClosed ? "connection_epoch LIKE ?" : "connection_epoch=?";
     const epochBinding = marketClosed ? `${streamHealth.streamId}:%` : streamHealth.connectionEpoch;
-    const row = await database.prepare(`SELECT provider,feed,session_date,kind,qualification,entitlement,coverage,
+    const priorityExpected = !marketClosed && safeNonnegativeInteger(streamHealth.currentProjectionSequence);
+    const current = priorityExpected
+      ? await database.prepare(`SELECT connection_epoch,head_sequence,head_state,head_execution_eligible,quote_sequence,
+          quote_session_date,quote_provider_time,quote_received_at,quote_processed_at,quote_available_at,quote_price,quote_size
+          FROM market_stream_priority_current WHERE stream_id=?`).bind(streamHealth.streamId).first<Record<string, unknown>>()
+      : null;
+    let row: Record<string, unknown> | null = null;
+    const coherentCurrent = current && current.head_state === "LIVE" && current.head_execution_eligible === 1 &&
+      current.head_sequence === streamHealth.currentProjectionSequence && current.quote_sequence === current.head_sequence &&
+      current.quote_session_date === targetSession &&
+      safeNonnegativeInteger(current.connection_epoch) && safeNonnegativeInteger(current.quote_sequence) &&
+      `${streamHealth.streamId}:${current.connection_epoch}` === streamHealth.connectionEpoch;
+    if (coherentCurrent) {
+      row = {
+        provider: "alpaca", feed: "sip", session_date: current.quote_session_date, kind: "QUOTE",
+        qualification: "STRICT_EXECUTION", entitlement: "ENTITLED", coverage: "CONSOLIDATED_SIP",
+        price: current.quote_price, size: current.quote_size, provider_time: current.quote_provider_time,
+        received_at: current.quote_received_at, processed_at: current.quote_processed_at,
+        available_at: current.quote_available_at,
+        connection_epoch: `${streamHealth.streamId}:${current.connection_epoch}`,
+        service_sequence: current.quote_sequence,
+      };
+    }
+    if (priorityExpected && !row) return unavailableStrictUsSource(targetSession, streamHealth, nowMs);
+    row ??= await database.prepare(`SELECT provider,feed,session_date,kind,qualification,entitlement,coverage,
       price,size,provider_time,received_at,processed_at,available_at,connection_epoch,service_sequence
       FROM market_qualified_observations
       WHERE symbol='NVDA' AND session_date=? AND kind='QUOTE' AND qualification='STRICT_EXECUTION'
@@ -405,7 +473,14 @@ export function buildMooSystemStatus(input: {
   const decisionSnapshot: MooDecisionSnapshot = strictArtifact
     ? strictArtifact.decisionSnapshot
     : { ...builtSnapshot, sources, requiredSourceIds: ["US"] };
-  const streamHealth = input.streamHealth ?? unavailableStream("D1_NOT_BOUND");
+  const suppliedStream = input.streamHealth ?? unavailableStream("D1_NOT_BOUND");
+  const streamHealth: MooStreamHealthEvidence = {
+    ...suppliedStream,
+    rawCursorSequence: suppliedStream.rawCursorSequence ?? null,
+    currentProjectionSequence: suppliedStream.currentProjectionSequence ?? null,
+    rawBacklogEvents: suppliedStream.rawBacklogEvents ?? null,
+    projectionState: suppliedStream.projectionState ?? null,
+  };
   const persistentUpstreamSupervisor = streamHealth.state === "LIVE";
   const transportNotConfigured = streamHealth.detailCode === "D1_NOT_BOUND" ||
     streamHealth.detailCode === "STREAM_NOT_REGISTERED";

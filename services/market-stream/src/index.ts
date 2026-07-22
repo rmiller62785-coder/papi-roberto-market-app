@@ -36,6 +36,8 @@ import { DurableSqlNonceStore, MarketStreamRepository, type DurableSqlStorageLik
 
 const WATCHDOG_ALARM_MS = 5_000;
 const BACKLOG_DRAIN_ALARM_MS = 250;
+const PRIORITY_PROJECTION_RETRY_MS = 500;
+const PRIORITY_QUOTE_CADENCE_MS = 2_000;
 const MAX_SOCKET_BUFFER_BYTES = 1_000_000;
 const PROVIDER_RECOVERY_WINDOWS_PER_TICK = 4;
 const CORRECTION_RECOVERY_SETTLE_MS = 60_000;
@@ -92,27 +94,38 @@ export class NvdaMarketStream {
   readonly #browserNonces: DurableSqlNonceStore;
   #market: MarketStreamState;
   #supervisor: AlpacaStreamSupervisor | null = null;
-  #ingestion: SignedSitesIngestionClient;
+  #ingestion: Pick<SignedSitesIngestionClient, "send" | "sendPriority">;
   #providerRecovery: AlpacaRestRecoveryClient;
   #mutationChain: Promise<void> = Promise.resolve();
   #drainPromise: Promise<void> | null = null;
+  #priorityQuotePromise: Promise<void> | null = null;
+  readonly #priorityStatePromises = new Map<number, Promise<void>>();
+  #priorityQuoteRetryAt = 0;
+  #priorityStateRetryAt = 0;
+  #priorityStateRetrySequence = 0;
+  #priorityNextQuoteAt = 0;
   #providerRecoveryPromise: Promise<void> | null = null;
   #lastError: string | null = null;
   #lastErrorAt: number | null = null;
   #retired = false;
+  readonly #suppressSupervisor: boolean;
   readonly #ready: Promise<void>;
 
-  constructor(ctx: DurableObjectStateLike, env: MarketStreamEnv) {
+  constructor(ctx: DurableObjectStateLike, env: MarketStreamEnv, dependencies: {
+    ingestion?: Pick<SignedSitesIngestionClient, "send" | "sendPriority">;
+    suppressSupervisor?: boolean;
+  } = {}) {
     this.ctx = ctx; this.env = env; this.#config = validateMarketStreamEnv(env);
     this.#repository = new MarketStreamRepository(ctx.storage);
     this.#browserNonces = new DurableSqlNonceStore(ctx.storage, "browser-access");
     this.#market = initialMarketStreamState(this.#config.feed, "initializing");
-    this.#ingestion = new SignedSitesIngestionClient({
+    this.#ingestion = dependencies.ingestion ?? new SignedSitesIngestionClient({
       url: env.SITES_INGESTION_URL,
       secret: env.SITES_INGESTION_SECRET,
       audience: env.SITES_INGESTION_AUDIENCE,
       sitesAccessBypassToken: env.SITES_ACCESS_BYPASS_TOKEN,
     });
+    this.#suppressSupervisor = dependencies.suppressSupervisor === true;
     this.#providerRecovery = new AlpacaRestRecoveryClient({
       feed: this.#config.feed,
       keyId: env.APCA_API_KEY_ID,
@@ -184,6 +197,17 @@ export class NvdaMarketStream {
         },
         barIntegrity: this.#market.barIntegrity,
         delivery: this.#repository.deliveryHealth(this.#market.streamId),
+        priorityDelivery: {
+          ...this.#repository.priorityDeliveryHealth(),
+          retryAt: [this.#priorityQuoteRetryAt,this.#priorityStateRetryAt].filter(Boolean).sort((a, b) => a - b)[0] ?? null,
+          quoteRetryAt: this.#priorityQuoteRetryAt || null,
+          stateRetryAt: this.#priorityStateRetryAt || null,
+          nextQuoteAt: this.#priorityNextQuoteAt || null,
+          inFlight: this.#priorityQuotePromise != null || this.#priorityStatePromises.size > 0,
+          quoteInFlight: this.#priorityQuotePromise != null,
+          stateInFlight: this.#priorityStatePromises.size > 0,
+          stateInFlightCount: this.#priorityStatePromises.size,
+        },
         lastError: this.#lastError,
         lastErrorAt: this.#lastErrorAt,
       });
@@ -251,11 +275,12 @@ export class NvdaMarketStream {
       if (advanced.emissions.length) this.#commit(advanced.state, advanced.emissions, null);
       this.#repository.prune(Date.now());
     });
+    this.#schedulePriorityProjection();
     this.#scheduleDrain();
   }
 
   #ensureSupervisor() {
-    if (this.#retired || this.#supervisor) return;
+    if (this.#retired || this.#supervisor || this.#suppressSupervisor) return;
     this.#supervisor = new AlpacaStreamSupervisor({
       feed: this.#market.feed,
       symbol: "NVDA",
@@ -286,7 +311,7 @@ export class NvdaMarketStream {
       },
     });
     this.#supervisor.start();
-    void this.ctx.storage.setAlarm(Date.now() + WATCHDOG_ALARM_MS);
+    void this.#setEarlierAlarm(Date.now() + WATCHDOG_ALARM_MS);
   }
 
   #applyProviderEvents(events: import("./contracts.ts").ProviderMarketEvent[]) {
@@ -384,6 +409,7 @@ export class NvdaMarketStream {
     this.#repository.commit({ state, emissions, event });
     this.#market = state;
     this.#publish(emissions);
+    this.#schedulePriorityProjection();
     this.#scheduleDrain();
   }
 
@@ -448,6 +474,75 @@ export class NvdaMarketStream {
     if (this.#repository.readyOutbox(this.#market.streamId, Date.now(), 1).length) {
       await this.ctx.storage.setAlarm(Date.now() + BACKLOG_DRAIN_ALARM_MS);
     }
+  }
+
+  #schedulePriorityProjection() {
+    const now = Date.now();
+    const projection = this.#repository.priorityProjection();
+    if (!projection) return;
+    const quote = projection.requestType === "PRIORITY_QUOTE_PROJECTION";
+    const sequence = quote ? projection.quote.serviceSequence : projection.state.serviceSequence;
+    if (quote ? this.#priorityQuotePromise : this.#priorityStatePromises.has(sequence)) return;
+    if (!quote && this.#priorityStateRetrySequence !== sequence) {
+      this.#priorityStateRetryAt = 0;
+      this.#priorityStateRetrySequence = 0;
+    }
+    const retryAt = quote ? this.#priorityQuoteRetryAt : this.#priorityStateRetryAt;
+    if (now < retryAt) {
+      void this.#setEarlierAlarm(retryAt);
+      return;
+    }
+    if (quote && now < this.#priorityNextQuoteAt) {
+      void this.#setEarlierAlarm(this.#priorityNextQuoteAt);
+      return;
+    }
+    if (quote) {
+      this.#priorityNextQuoteAt = now + PRIORITY_QUOTE_CADENCE_MS;
+    }
+    const delivery = this.#ingestion.sendPriority(projection, now)
+      .then((ack) => {
+        this.#repository.acknowledgePriorityProjection(ack.priorityProjectedSequence);
+        if (quote) this.#priorityQuoteRetryAt = 0;
+        else {
+          this.#priorityStateRetryAt = 0;
+          this.#priorityStateRetrySequence = 0;
+        }
+        // The receiver owns one bounded current row. Quote cadence is measured
+        // from send start, so a slow ACK releases the queued latest quote
+        // immediately. Negative state/epoch controls bypass this cap.
+      })
+      .catch((error) => {
+        const pending = this.#repository.priorityProjection();
+        const pendingSequence = pending?.requestType === "PRIORITY_QUOTE_PROJECTION"
+          ? pending.quote.serviceSequence
+          : pending?.state.serviceSequence;
+        if (pending?.requestType !== projection.requestType || pendingSequence !== sequence) return;
+        this.#recordError(error);
+        const nextRetryAt = Date.now() + PRIORITY_PROJECTION_RETRY_MS;
+        if (quote) {
+          this.#priorityNextQuoteAt = 0;
+          this.#priorityQuoteRetryAt = nextRetryAt;
+        } else {
+          this.#priorityStateRetryAt = nextRetryAt;
+          this.#priorityStateRetrySequence = sequence;
+        }
+        return this.#setEarlierAlarm(nextRetryAt);
+      })
+      .finally(() => {
+        if (quote) this.#priorityQuotePromise = null;
+        else this.#priorityStatePromises.delete(sequence);
+        if (this.#repository.priorityProjection()) {
+          this.#schedulePriorityProjection();
+        }
+      });
+    if (quote) this.#priorityQuotePromise = delivery;
+    else this.#priorityStatePromises.set(sequence, delivery);
+  }
+
+  async #setEarlierAlarm(at: number) {
+    const storage = this.ctx.storage as typeof this.ctx.storage & { getAlarm?: () => Promise<number | null> };
+    const current = typeof storage.getAlarm === "function" ? await storage.getAlarm() : null;
+    if (current == null || current > at) await storage.setAlarm(at);
   }
 
   #snapshot(): PublicMarketSnapshot {

@@ -308,6 +308,41 @@ export const marketStreamIngestCursors = sqliteTable("market_stream_ingest_curso
 ]);
 
 /**
+ * Bounded current-state projection for fail-fast reads while the immutable raw
+ * ledger drains in order. Historical ownership remains with the raw ledger;
+ * this one-row-per-stream table is an explicitly replaceable materialized view.
+ */
+export const marketStreamPriorityCurrent = sqliteTable("market_stream_priority_current", {
+  streamId: text("stream_id").primaryKey(),
+  connectionEpoch: integer("connection_epoch").notNull(),
+  headSequence: integer("head_sequence").notNull(),
+  headState: text("head_state").notNull(),
+  headExecutionEligible: integer("head_execution_eligible").notNull(),
+  headProcessedAt: integer("head_processed_at").notNull(),
+  headAvailableAt: integer("head_available_at").notNull(),
+  liveProofSequence: integer("live_proof_sequence"),
+  quoteSequence: integer("quote_sequence"),
+  quoteSessionDate: text("quote_session_date"),
+  quoteProviderTime: integer("quote_provider_time"),
+  quoteReceivedAt: integer("quote_received_at"),
+  quoteProcessedAt: integer("quote_processed_at"),
+  quoteAvailableAt: integer("quote_available_at"),
+  quotePrice: real("quote_price"),
+  quoteSize: integer("quote_size"),
+  liveProofHash: text("live_proof_hash"),
+  quoteHash: text("quote_hash"),
+  projectionHash: text("projection_hash").notNull(),
+  payloadJson: text("payload_json").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  check("market_stream_priority_epoch_check", sql`${table.connectionEpoch} >= 0`),
+  check("market_stream_priority_head_sequence_check", sql`${table.headSequence} > 0`),
+  check("market_stream_priority_head_state_check", sql`${table.headState} IN ('DISCONNECTED','CONNECTING','AUTHENTICATING','SUBSCRIBING','LIVE','SILENT','BACKOFF','DEGRADED')`),
+  check("market_stream_priority_execution_eligible_check", sql`${table.headExecutionEligible} IN (0,1)`),
+  check("market_stream_priority_quote_shape_check", sql`(${table.quoteSequence} IS NULL AND ${table.liveProofSequence} IS NULL AND ${table.quoteSessionDate} IS NULL AND ${table.quoteProviderTime} IS NULL AND ${table.quoteReceivedAt} IS NULL AND ${table.quoteProcessedAt} IS NULL AND ${table.quoteAvailableAt} IS NULL AND ${table.quotePrice} IS NULL AND ${table.quoteSize} IS NULL AND ${table.liveProofHash} IS NULL AND ${table.quoteHash} IS NULL) OR (${table.headState} = 'LIVE' AND ${table.quoteSequence} = ${table.headSequence} AND ${table.liveProofSequence} > 0 AND ${table.liveProofSequence} < ${table.quoteSequence} AND ${table.quoteSessionDate} IS NOT NULL AND ${table.quoteProviderTime} >= 0 AND ${table.quoteReceivedAt} >= 0 AND ${table.quoteProcessedAt} >= 0 AND ${table.quoteAvailableAt} >= 0 AND ${table.quotePrice} > 0 AND ${table.quoteSize} >= 0 AND ${table.liveProofHash} IS NOT NULL AND ${table.quoteHash} IS NOT NULL)`),
+]);
+
+/**
  * Readiness marker for the controlled 0004 drift bridge. The marker is written
  * only after the legacy columns and quarantine table have been verified, so
  * public reads can fail closed without attempting DDL.

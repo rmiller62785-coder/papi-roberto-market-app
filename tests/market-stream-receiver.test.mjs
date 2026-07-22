@@ -5,8 +5,13 @@ import { Miniflare } from "miniflare";
 import { ensureMarketPersistenceSchema } from "../app/d1-schema.ts";
 import { handleMarketStreamPost } from "../app/api/internal/market-stream/handler.ts";
 import { createMarketStore } from "../app/market-store.ts";
-import { ingestMarketStreamBatch, parseIngestionBatch } from "../app/market-stream-receiver.ts";
-import { readMooStreamHealth } from "../app/moo-system-status.ts";
+import {
+  ingestMarketPriorityProjection,
+  ingestMarketStreamBatch,
+  parseIngestionBatch,
+  parsePriorityProjectionRequest,
+} from "../app/market-stream-receiver.ts";
+import { readMooStreamHealth, readStrictUsSource } from "../app/moo-system-status.ts";
 import { signSitesIngestion } from "../services/market-stream/src/auth.ts";
 import { normalizeAlpacaMessages } from "../services/market-stream/src/ingestor.ts";
 import { advanceMarketWatermark, beginConnectionEpoch, initialMarketStreamState, reduceProviderEvent, setProviderConnectionState } from "../services/market-stream/src/reducer.ts";
@@ -184,6 +189,123 @@ test("D1 receiver makes duplicate delivery idempotent", async () => {
   assert.equal(await scalar("SELECT COUNT(*) AS value FROM market_stream_ingest_emissions WHERE stream_id=?", "duplicate-stream"), 2);
   assert.equal(await scalar("SELECT COUNT(*) AS value FROM market_source_state_events WHERE connection_epoch LIKE ?", "duplicate-stream:%"), 2);
   assert.equal(await scalar("SELECT highest_contiguous_sequence AS value FROM market_stream_ingest_cursors WHERE stream_id=?", "duplicate-stream"), 2);
+});
+
+test("D1 receiver admits a same-epoch LIVE priority quote without skipping the raw cursor", async () => {
+  const streamId = "priority-sip-stream";
+  const projectionBase = BASE + 50_000;
+  const live = setProviderConnectionState(initialMarketStreamState("sip", streamId), "LIVE", projectionBase);
+  const [event] = normalizeAlpacaMessages(JSON.stringify([{
+    T: "q", S: "NVDA", bx: "Q", bp: 200, bs: 2, ax: "P", ap: 200.2, as: 3,
+    c: ["R"], t: new Date(projectionBase + 1_000).toISOString(), z: "C",
+  }]), {
+    feed: "sip", receivedAt: projectionBase + 1_100, processedAt: projectionBase + 1_101,
+    providerEntitlementConfirmed: true,
+  });
+  const quoted = reduceProviderEvent(live.state, event);
+  const raw = {
+    schemaVersion: "aperture-market-stream-v2",
+    streamId,
+    fromSequence: 1,
+    toSequence: 1,
+    emissions: live.emissions,
+  };
+  const projection = {
+    schemaVersion: "aperture-market-stream-v2",
+    requestType: "PRIORITY_QUOTE_PROJECTION",
+    streamId,
+    liveProof: live.emissions[0],
+    quote: quoted.emissions[0],
+  };
+  const rawAck = await ingestMarketStreamBatch(database, raw, projectionBase + 2_000);
+  assert.equal(rawAck.highestContiguousSequence, 1);
+  const ack = await ingestMarketPriorityProjection(database, projection, projectionBase + 2_001);
+  assert.equal(ack.priorityProjectedSequence, 2);
+  assert.equal(ack.requestType, "PRIORITY_QUOTE_PROJECTION");
+  assert.equal(await scalar("SELECT highest_contiguous_sequence AS value FROM market_stream_ingest_cursors WHERE stream_id=?", streamId), 1);
+  assert.equal(await scalar("SELECT COUNT(*) AS value FROM market_stream_ingest_emissions WHERE stream_id=?", streamId), 1);
+  assert.equal(await scalar("SELECT COUNT(*) AS value FROM market_stream_priority_current WHERE stream_id=?", streamId), 1);
+  assert.equal(await scalar("SELECT COUNT(*) AS value FROM market_qualified_observations WHERE connection_epoch=?", `${streamId}:0`), 0,
+    "the bounded current projection does not duplicate the append-only raw ledger");
+  const health = await readMooStreamHealth(database, projectionBase + 2_001);
+  assert.equal(health.state, "LIVE", JSON.stringify(health));
+  assert.equal(health.detailCode, "STREAM_PRIORITY_LIVE");
+  const strictSource = await readStrictUsSource(database, "2026-07-20", projectionBase + 2_001, health);
+  assert.equal(strictSource.state, "LIVE", JSON.stringify(strictSource));
+  assert.equal(strictSource.provider, "Alpaca SIP");
+
+  assert.equal((await ingestMarketPriorityProjection(database, structuredClone(projection), projectionBase + 2_002))
+    .priorityProjectedSequence, 2, "an exact replay is idempotent");
+  assert.equal(await scalar("SELECT COUNT(*) AS value FROM market_stream_priority_current WHERE stream_id=?", streamId), 1);
+  const priorityUrl = "https://example.test/api/internal/market-stream";
+  const prioritySecret = "priority-ingestion-secret-at-least-32-bytes";
+  const priorityAudience = "aperture-sites-market-ingestion";
+  const priorityBody = JSON.stringify(projection);
+  const priorityHeaders = await signSitesIngestion({
+    secret: prioritySecret, audience: priorityAudience, timestamp: projectionBase + 2_003,
+    nonce: "priority-route-dispatch-nonce", method: "POST", url: priorityUrl, body: priorityBody,
+  });
+  const priorityResponse = await handleMarketStreamPost(new Request(priorityUrl, {
+    method: "POST", headers: priorityHeaders, body: priorityBody,
+  }), {
+    DB: database, SITES_INGESTION_SECRET: prioritySecret, SITES_INGESTION_AUDIENCE: priorityAudience,
+  }, projectionBase + 2_003);
+  assert.equal(priorityResponse.status, 200);
+  assert.equal((await priorityResponse.json()).priorityProjectedSequence, 2);
+  const tampered = structuredClone(projection);
+  tampered.quote.sourceEvent.quote.bidCents -= 1;
+  await assert.rejects(ingestMarketPriorityProjection(database, tampered, projectionBase + 2_004),
+    /INGESTION_PRIORITY_PROJECTION_INVALID/,
+    "the projected reducer snapshot must exactly match the signed quote emission");
+  assert.equal(await scalar("SELECT head_sequence AS value FROM market_stream_priority_current WHERE stream_id=?", streamId), 2,
+    "an incoherent quote projection cannot change the bounded current row");
+
+  const silent = setProviderConnectionState(quoted.state, "SILENT", projectionBase + 2_100);
+  const negative = {
+    schemaVersion: "aperture-market-stream-v2",
+    requestType: "PRIORITY_STATE_PROJECTION",
+    streamId,
+    state: silent.emissions[0],
+  };
+  const negativeBody = JSON.stringify(negative);
+  const negativeHeaders = await signSitesIngestion({
+    secret: prioritySecret, audience: priorityAudience, timestamp: projectionBase + 2_101,
+    nonce: "priority-negative-dispatch-nonce", method: "POST", url: priorityUrl, body: negativeBody,
+  });
+  const negativeResponse = await handleMarketStreamPost(new Request(priorityUrl, {
+    method: "POST", headers: negativeHeaders, body: negativeBody,
+  }), {
+    DB: database, SITES_INGESTION_SECRET: prioritySecret, SITES_INGESTION_AUDIENCE: priorityAudience,
+  }, projectionBase + 2_101);
+  assert.equal(negativeResponse.status, 200);
+  assert.equal((await negativeResponse.json()).priorityProjectedSequence, 3);
+  const failedHealth = await readMooStreamHealth(database, projectionBase + 2_101);
+  assert.equal(failedHealth.state, "STALE");
+  assert.equal(failedHealth.projectionState, "SILENT");
+  assert.notEqual((await readStrictUsSource(database, "2026-07-20", projectionBase + 2_101, failedHealth)).state, "LIVE",
+    "a known upstream failure immediately invalidates the bounded current quote");
+  assert.equal(await scalar("SELECT COUNT(*) AS value FROM market_stream_priority_current WHERE stream_id=?", streamId), 1,
+    "state transitions replace one bounded current row");
+  assert.equal(await scalar("SELECT COUNT(*) AS value FROM market_stream_priority_current WHERE stream_id=? AND quote_sequence IS NULL", streamId), 1,
+    "known source failure immediately clears the projected quote");
+
+  const reconnecting = beginConnectionEpoch(silent.state, projectionBase + 2_200);
+  await ingestMarketPriorityProjection(database, {
+    schemaVersion: "aperture-market-stream-v2",
+    requestType: "PRIORITY_STATE_PROJECTION",
+    streamId,
+    state: reconnecting.emissions[0],
+  }, projectionBase + 2_201);
+  const reconnectHealth = await readMooStreamHealth(database, projectionBase + 2_201);
+  assert.equal(reconnectHealth.state, "STALE");
+  assert.equal(reconnectHealth.connectionEpoch, `${streamId}:1`);
+  assert.equal(reconnectHealth.projectionState, "CONNECTING");
+  assert.equal(await scalar("SELECT highest_contiguous_sequence AS value FROM market_stream_ingest_cursors WHERE stream_id=?", streamId), 1,
+    "priority state changes never advance the raw cursor");
+
+  const selfAuthorized = structuredClone(projection);
+  selfAuthorized.liveProof = structuredClone(selfAuthorized.quote);
+  assert.throws(() => parsePriorityProjectionRequest(selfAuthorized), /INGESTION_PRIORITY_PROJECTION_INVALID/);
 });
 
 test("D1 receiver advances a large backlog in bounded pages and replays an old page without gaps", async () => {

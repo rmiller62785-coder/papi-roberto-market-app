@@ -1,6 +1,10 @@
 import { MarketIngestionSchemaUnavailableError, requireMarketIngestionSchema } from "../../../d1-schema.ts";
 import { createMarketStore } from "../../../market-store.ts";
-import { ingestMarketStreamBatch, MarketStreamIngestionError } from "../../../market-stream-receiver.ts";
+import {
+  ingestMarketPriorityProjection,
+  ingestMarketStreamBatch,
+  MarketStreamIngestionError,
+} from "../../../market-stream-receiver.ts";
 import { verifySitesIngestionRequest } from "../../../../services/market-stream/src/auth.ts";
 
 const HEADERS = {
@@ -54,7 +58,13 @@ export async function handleMarketStreamPost(request: Request, runtime: Ingestio
     }
     let payload: unknown;
     try { payload = JSON.parse(verified.body); } catch { throw new MarketStreamIngestionError("INGESTION_JSON_INVALID"); }
-    return Response.json(await ingestMarketStreamBatch(runtime.DB, payload, now), { headers: HEADERS });
+    const requestType = payload != null && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>).requestType
+      : null;
+    const priority = requestType === "PRIORITY_QUOTE_PROJECTION" || requestType === "PRIORITY_STATE_PROJECTION";
+    return Response.json(priority
+      ? await ingestMarketPriorityProjection(runtime.DB, payload, now)
+      : await ingestMarketStreamBatch(runtime.DB, payload, now), { headers: HEADERS });
   } catch (error) {
     if (error instanceof MarketIngestionSchemaUnavailableError) {
       return Response.json({ error: error.code }, { status: error.status, headers: HEADERS });

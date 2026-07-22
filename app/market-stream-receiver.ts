@@ -9,6 +9,8 @@ import {
   type MarketBar,
   type MarketCoverage,
   type MarketStreamEmission,
+  type PriorityProjectionAck,
+  type PriorityProjectionRequest,
   type ProviderMarketEvent,
   type SourceTimestamp,
 } from "../services/market-stream/src/contracts.ts";
@@ -205,6 +207,43 @@ function validEmission(value: unknown, streamId: string, expectedSequence: numbe
   return true;
 }
 
+function validPriorityProjection(value: unknown): value is PriorityProjectionRequest {
+  if (!objectValue(value) || value.schemaVersion !== MARKET_STREAM_SCHEMA || !nonempty(value.streamId) ||
+    !STREAM_ID.test(value.streamId)) return false;
+  if (value.requestType === "PRIORITY_STATE_PROJECTION") {
+    if (!objectValue(value.state) || !safeInteger(value.state.serviceSequence, 1) ||
+      !validEmission(value.state, value.streamId, value.state.serviceSequence, "sip")) return false;
+    const state = value.state as MarketStreamEmission;
+    return state.type === "CONNECTION" && state.sourceEvent == null && state.minute == null &&
+      state.delta.providerState != null;
+  }
+  if (value.requestType !== "PRIORITY_QUOTE_PROJECTION" ||
+    !objectValue(value.liveProof) || !objectValue(value.quote)) return false;
+  const proofSequence = value.liveProof.serviceSequence;
+  const quoteSequence = value.quote.serviceSequence;
+  if (!safeInteger(proofSequence, 1) || !safeInteger(quoteSequence, 1) || proofSequence >= quoteSequence ||
+    !validEmission(value.liveProof, value.streamId, proofSequence, "sip") ||
+    !validEmission(value.quote, value.streamId, quoteSequence, "sip")) return false;
+  const liveProof = value.liveProof as MarketStreamEmission;
+  const quote = value.quote as MarketStreamEmission;
+  const quoteEvent = quote.sourceEvent;
+  const expectedLatestQuote = quoteEvent?.kind === "QUOTE" && quoteEvent.quote ? {
+    ...quoteEvent.quote,
+    eventKey: quoteEvent.eventKey,
+    sourceTimestamp: quoteEvent.sourceTimestamp,
+    sourceObservedAt: quoteEvent.sourceObservedAt,
+    receivedAt: quoteEvent.receivedAt,
+    processedAt: quoteEvent.processedAt,
+    availableAt: quoteEvent.availableAt,
+  } : null;
+  return liveProof.type === "CONNECTION" && liveProof.sourceEvent == null && liveProof.delta.providerState === "LIVE" &&
+    liveProof.coverage.executionEligible && liveProof.coverage.scope === "CONSOLIDATED_SIP" &&
+    quote.type === "EVENT" && quote.sourceEvent?.kind === "QUOTE" && quote.sourceEvent.transport === "WEBSOCKET" &&
+    expectedLatestQuote != null && JSON.stringify(stableValue(quote.delta.latestQuote)) === JSON.stringify(stableValue(expectedLatestQuote)) &&
+    quote.coverage.executionEligible && quote.coverage.scope === "CONSOLIDATED_SIP" &&
+    liveProof.connectionEpoch === quote.connectionEpoch && liveProof.availableAt <= quote.sourceEvent.receivedAt;
+}
+
 export function parseIngestionBatch(value: unknown): IngestionBatch {
   if (!objectValue(value) || value.schemaVersion !== MARKET_STREAM_SCHEMA || !nonempty(value.streamId) ||
     !STREAM_ID.test(value.streamId) || !safeInteger(value.fromSequence, 1) || !safeInteger(value.toSequence, 1) ||
@@ -225,9 +264,14 @@ export function parseIngestionBatch(value: unknown): IngestionBatch {
   return value as unknown as IngestionBatch;
 }
 
-function assertReceiverTimeBounds(batch: IngestionBatch, now: number) {
+export function parsePriorityProjectionRequest(value: unknown): PriorityProjectionRequest {
+  if (!validPriorityProjection(value)) reject("INGESTION_PRIORITY_PROJECTION_INVALID");
+  return value;
+}
+
+function assertEmissionTimeBounds(emissions: MarketStreamEmission[], now: number) {
   const ceiling = now + MAX_PROVIDER_FUTURE_SKEW_MS;
-  for (const emission of batch.emissions) {
+  for (const emission of emissions) {
     const values = [emission.processedAt, emission.availableAt, emission.delta.lastProviderAt, emission.delta.lastAvailableAt];
     if (emission.sourceEvent) {
       values.push(emission.sourceEvent.sourceObservedAt, emission.sourceEvent.receivedAt,
@@ -586,6 +630,175 @@ function observationStatement(database: D1Database, rows: MarketQualifiedObserva
     .bind(JSON.stringify(rows), ...guardValues(binding, expectedCursor));
 }
 
+type PriorityCurrentRow = {
+  stream_id: string;
+  connection_epoch: number;
+  head_sequence: number;
+  head_state: ProviderState;
+  head_execution_eligible: number;
+  head_processed_at: number;
+  head_available_at: number;
+  live_proof_sequence: number | null;
+  quote_sequence: number | null;
+  quote_session_date: string | null;
+  quote_provider_time: number | null;
+  quote_received_at: number | null;
+  quote_processed_at: number | null;
+  quote_available_at: number | null;
+  quote_price: number | null;
+  quote_size: number | null;
+  live_proof_hash: string | null;
+  quote_hash: string | null;
+  projection_hash: string;
+  payload_json: string;
+  updated_at: number;
+};
+
+function priorityHead(request: PriorityProjectionRequest) {
+  return request.requestType === "PRIORITY_QUOTE_PROJECTION" ? request.quote : request.state;
+}
+
+function sameNullable(left: unknown, right: unknown) {
+  return (left ?? null) === (right ?? null);
+}
+
+async function priorityCurrentRow(request: PriorityProjectionRequest, now: number): Promise<PriorityCurrentRow> {
+  const head = priorityHead(request);
+  const projectionHash = await sha256(request);
+  if (request.requestType === "PRIORITY_STATE_PROJECTION") {
+    return {
+      stream_id: request.streamId,
+      connection_epoch: head.connectionEpoch,
+      head_sequence: head.serviceSequence,
+      head_state: head.delta.providerState!,
+      head_execution_eligible: head.coverage.executionEligible ? 1 : 0,
+      head_processed_at: head.processedAt,
+      head_available_at: head.availableAt,
+      live_proof_sequence: null,
+      quote_sequence: null,
+      quote_session_date: null,
+      quote_provider_time: null,
+      quote_received_at: null,
+      quote_processed_at: null,
+      quote_available_at: null,
+      quote_price: null,
+      quote_size: null,
+      live_proof_hash: null,
+      quote_hash: null,
+      projection_hash: projectionHash,
+      payload_json: JSON.stringify(request),
+      updated_at: now,
+    };
+  }
+  const admitted = await observation(request.quote, now, "LIVE");
+  if (!admitted || admitted.qualification !== "STRICT_EXECUTION") reject("INGESTION_PRIORITY_PROJECTION_INVALID");
+  return {
+    stream_id: request.streamId,
+    connection_epoch: request.quote.connectionEpoch,
+    head_sequence: request.quote.serviceSequence,
+    head_state: "LIVE",
+    head_execution_eligible: 1,
+    head_processed_at: request.quote.processedAt,
+    head_available_at: request.quote.availableAt,
+    live_proof_sequence: request.liveProof.serviceSequence,
+    quote_sequence: request.quote.serviceSequence,
+    quote_session_date: admitted.sessionDate,
+    quote_provider_time: admitted.providerTime,
+    quote_received_at: admitted.receivedAt,
+    quote_processed_at: admitted.processedAt,
+    quote_available_at: admitted.availableAt,
+    quote_price: admitted.price,
+    quote_size: admitted.size,
+    live_proof_hash: await sha256(request.liveProof),
+    quote_hash: await sha256(request.quote),
+    projection_hash: projectionHash,
+    payload_json: JSON.stringify(request),
+    updated_at: now,
+  };
+}
+
+function priorityCurrentStatement(database: D1Database, row: PriorityCurrentRow) {
+  const values = [row.stream_id,row.connection_epoch,row.head_sequence,row.head_state,row.head_execution_eligible,row.head_processed_at,row.head_available_at,
+    row.live_proof_sequence,row.quote_sequence,row.quote_session_date,row.quote_provider_time,row.quote_received_at,
+    row.quote_processed_at,row.quote_available_at,row.quote_price,row.quote_size,row.live_proof_hash,row.quote_hash,
+    row.projection_hash,row.payload_json,row.updated_at];
+  return database.prepare(`INSERT INTO market_stream_priority_current (
+    stream_id,connection_epoch,head_sequence,head_state,head_execution_eligible,head_processed_at,head_available_at,
+    live_proof_sequence,quote_sequence,quote_session_date,quote_provider_time,quote_received_at,
+    quote_processed_at,quote_available_at,quote_price,quote_size,live_proof_hash,quote_hash,projection_hash,payload_json,updated_at
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(stream_id) DO UPDATE SET
+    connection_epoch=excluded.connection_epoch,head_sequence=excluded.head_sequence,head_state=excluded.head_state,
+    head_execution_eligible=excluded.head_execution_eligible,
+    head_processed_at=excluded.head_processed_at,head_available_at=excluded.head_available_at,
+    live_proof_sequence=excluded.live_proof_sequence,quote_sequence=excluded.quote_sequence,
+    quote_session_date=excluded.quote_session_date,quote_provider_time=excluded.quote_provider_time,
+    quote_received_at=excluded.quote_received_at,quote_processed_at=excluded.quote_processed_at,
+    quote_available_at=excluded.quote_available_at,quote_price=excluded.quote_price,quote_size=excluded.quote_size,
+    live_proof_hash=excluded.live_proof_hash,quote_hash=excluded.quote_hash,
+    projection_hash=excluded.projection_hash,payload_json=excluded.payload_json,updated_at=excluded.updated_at
+  WHERE excluded.connection_epoch>=market_stream_priority_current.connection_epoch
+    AND excluded.head_sequence>market_stream_priority_current.head_sequence
+    AND (excluded.quote_provider_time IS NULL OR market_stream_priority_current.quote_provider_time IS NULL OR
+      excluded.quote_provider_time>=market_stream_priority_current.quote_provider_time)`).bind(...values);
+}
+
+async function readPriorityCurrent(database: D1Database, streamId: string) {
+  return database.prepare(`SELECT stream_id,connection_epoch,head_sequence,head_state,head_execution_eligible,head_processed_at,head_available_at,
+    live_proof_sequence,quote_sequence,quote_session_date,quote_provider_time,quote_received_at,
+    quote_processed_at,quote_available_at,quote_price,quote_size,live_proof_hash,quote_hash,projection_hash,payload_json,updated_at
+    FROM market_stream_priority_current WHERE stream_id=?`).bind(streamId).first<PriorityCurrentRow>();
+}
+
+function priorityRowMatches(left: PriorityCurrentRow | null, right: PriorityCurrentRow) {
+  if (!left) return false;
+  return Object.keys(right).every((key) => key === "updated_at" ||
+    sameNullable(left[key as keyof PriorityCurrentRow], right[key as keyof PriorityCurrentRow]));
+}
+
+/**
+ * Materialize the latest authenticated SIP state without changing or bypassing
+ * the immutable ordered raw cursor. The table is bounded to one row per stream.
+ */
+export async function ingestMarketPriorityProjection(database: D1Database, value: unknown,
+  now = Date.now()): Promise<PriorityProjectionAck> {
+  const request = parsePriorityProjectionRequest(value);
+  if (!safeInteger(now)) reject("INGESTION_CLOCK_INVALID", 500);
+  const head = priorityHead(request);
+  const emissions = request.requestType === "PRIORITY_QUOTE_PROJECTION"
+    ? [request.liveProof,request.quote]
+    : [request.state];
+  assertEmissionTimeBounds(emissions, now);
+  await requireMarketIngestionSchema(database);
+  const binding = streamBinding(head);
+  if (!bindingMatches(await registeredStream(database, request.streamId), binding) ||
+    emissions.some((emission) => JSON.stringify(streamBinding(emission)) !== JSON.stringify(binding))) {
+    reject("INGESTION_STREAM_BINDING_CONFLICT", 409);
+  }
+
+  const incoming = await priorityCurrentRow(request, now);
+  const previous = await readPriorityCurrent(database, request.streamId);
+  if (previous && (incoming.head_sequence < previous.head_sequence ||
+    incoming.connection_epoch < previous.connection_epoch ||
+    (incoming.quote_provider_time != null && previous.quote_provider_time != null &&
+      incoming.quote_provider_time < previous.quote_provider_time))) {
+    reject("INGESTION_PRIORITY_REGRESSION", 409);
+  }
+  if (previous?.head_sequence === incoming.head_sequence && !priorityRowMatches(previous, incoming)) {
+    reject("INGESTION_PRIORITY_CONFLICT", 409);
+  }
+
+  await priorityCurrentStatement(database, incoming).run();
+  if (!priorityRowMatches(await readPriorityCurrent(database, request.streamId), incoming)) {
+    reject("INGESTION_PRIORITY_CONFLICT", 409);
+  }
+  return {
+    ok: true,
+    requestType: request.requestType,
+    streamId: request.streamId,
+    priorityProjectedSequence: incoming.head_sequence,
+  };
+}
+
 function invalidationStatement(database: D1Database, rows: MarketObservationInvalidation[], binding: StreamBinding,
   expectedCursor: number) {
   return database.prepare(`INSERT INTO market_observation_invalidations (
@@ -686,7 +899,7 @@ async function rejectLedgerConflictsBeforeWrites(database: D1Database, emissions
 export async function ingestMarketStreamBatch(database: D1Database, batchValue: unknown, now = Date.now()): Promise<IngestionAck> {
   const batch = parseIngestionBatch(batchValue);
   if (!safeInteger(now)) reject("INGESTION_CLOCK_INVALID", 500);
-  assertReceiverTimeBounds(batch, now);
+  assertEmissionTimeBounds(batch.emissions, now);
   await requireMarketIngestionSchema(database);
   const initialCursor = await cursor(database, batch.streamId);
   if (batch.fromSequence > initialCursor + 1) reject("INGESTION_SEQUENCE_GAP", 409);

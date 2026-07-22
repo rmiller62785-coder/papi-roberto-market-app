@@ -396,6 +396,8 @@ export function StrictMooJourney({
                     <dl>
                       <div><dt>{copy(lang, "Heartbeat age", "Edad del latido")}</dt><dd>{age(stream?.heartbeatAgeMs, lang)} / {age(stream?.maxHeartbeatAgeMs, lang)}</dd></div>
                       <div><dt>{copy(lang, "Source lag", "Retraso de fuente")}</dt><dd>{age(stream?.sourceLagMs, lang)} / {age(stream?.maxSourceLagMs, lang)}</dd></div>
+                      <div><dt>{copy(lang, "Current projection", "Proyección actual")}</dt><dd>{stream?.currentProjectionSequence?.toLocaleString() ?? "—"}</dd></div>
+                      <div><dt>{copy(lang, "Minimum ordered audit backlog", "Cola mínima de auditoría ordenada")}</dt><dd>{stream?.rawBacklogEvents?.toLocaleString() ?? "—"}</dd></div>
                     </dl>
                   </article>
                   <article className={`state-${presentation.quoteState}`}>

@@ -3,6 +3,7 @@ import {
   type AuthoritativeMinute,
   type MarketStreamEmission,
   type MarketStreamState,
+  type PriorityProjectionRequest,
   type ProviderMarketEvent,
 } from "./contracts.ts";
 
@@ -126,6 +127,23 @@ export class MarketStreamRepository {
           this.storage.sql.exec("INSERT INTO minute_versions(bar_key, revision, minute_start, minute_end, status, available_at, payload) VALUES(?, ?, ?, ?, ?, ?, ?)",
             emission.minute.barKey, emission.minute.revision, emission.minute.minuteStart, emission.minute.minuteEnd, emission.minute.status, emission.minute.availableAt, JSON.stringify(emission.minute));
         }
+        if (emission.type === "CONNECTION" && emission.sourceEvent == null && emission.delta.providerState === "LIVE") {
+          this.storage.sql.exec("INSERT INTO stream_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            "priority_live_proof", payload);
+        }
+        if (emission.feed === "sip" && emission.type === "CONNECTION" && emission.sourceEvent == null &&
+          emission.delta.providerState != null) {
+          this.storage.sql.exec("INSERT INTO stream_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            "priority_state_head", payload);
+        }
+        const selectedQuote = input.state.latestQuote;
+        if (emission.type === "EVENT" && emission.sourceEvent?.kind === "QUOTE" &&
+          emission.sourceEvent.transport === "WEBSOCKET" && emission.coverage.executionEligible &&
+          emission.delta.latestQuote?.eventKey === emission.sourceEvent.eventKey &&
+          selectedQuote?.eventKey === emission.sourceEvent.eventKey) {
+          this.storage.sql.exec("INSERT INTO stream_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            "priority_quote", payload);
+        }
       }
       const retainAfter = Math.max(0, input.state.serviceSequence - 20_000);
       this.storage.sql.exec("DELETE FROM emissions WHERE stream_id = ? AND service_sequence < ?", input.state.streamId, retainAfter);
@@ -168,6 +186,66 @@ export class MarketStreamRepository {
       selected.push({ ...row, emission: parseJson<MarketStreamEmission>(row.payload) });
     }
     return selected;
+  }
+
+  priorityProjection(): PriorityProjectionRequest | null {
+    const state = this.loadState();
+    if (!state || state.feed !== "sip") return null;
+    const stateRow = first(this.storage.sql.exec<{ value: string }>("SELECT value FROM stream_meta WHERE key = ?", "priority_state_head"));
+    const proofRow = first(this.storage.sql.exec<{ value: string }>("SELECT value FROM stream_meta WHERE key = ?", "priority_live_proof"));
+    const quoteRow = first(this.storage.sql.exec<{ value: string }>("SELECT value FROM stream_meta WHERE key = ?", "priority_quote"));
+    if (!stateRow) return null;
+    const stateHead = parseJson<MarketStreamEmission>(stateRow.value);
+    const ackRow = first(this.storage.sql.exec<{ value: string }>("SELECT value FROM stream_meta WHERE key = ?", "priority_projection_ack"));
+    const acknowledged = Number(ackRow?.value ?? 0);
+    if (stateHead.streamId !== state.streamId || stateHead.feed !== "sip" ||
+      stateHead.connectionEpoch !== state.connectionEpoch || stateHead.delta.providerState == null) return null;
+    if (state.providerState === "LIVE" && state.coverage.executionEligible && proofRow && quoteRow) {
+      const liveProof = parseJson<MarketStreamEmission>(proofRow.value);
+      const quote = parseJson<MarketStreamEmission>(quoteRow.value);
+      if (liveProof.streamId === state.streamId && quote.streamId === state.streamId &&
+        liveProof.connectionEpoch === state.connectionEpoch && quote.connectionEpoch === state.connectionEpoch &&
+        liveProof.type === "CONNECTION" && liveProof.sourceEvent == null && liveProof.delta.providerState === "LIVE" &&
+        quote.type === "EVENT" && quote.sourceEvent?.kind === "QUOTE" && quote.sourceEvent.transport === "WEBSOCKET" &&
+        liveProof.serviceSequence < quote.serviceSequence && quote.serviceSequence >= stateHead.serviceSequence &&
+        quote.serviceSequence > acknowledged) {
+        return {
+          schemaVersion: state.schemaVersion,
+          requestType: "PRIORITY_QUOTE_PROJECTION",
+          streamId: state.streamId,
+          liveProof,
+          quote,
+        };
+      }
+    }
+    if (stateHead.serviceSequence <= acknowledged) return null;
+    return {
+      schemaVersion: state.schemaVersion,
+      requestType: "PRIORITY_STATE_PROJECTION",
+      streamId: state.streamId,
+      state: stateHead,
+    };
+  }
+
+  acknowledgePriorityProjection(serviceSequence: number) {
+    const current = first(this.storage.sql.exec<{ value: string }>("SELECT value FROM stream_meta WHERE key = ?", "priority_projection_ack"));
+    const acknowledged = Number(current?.value ?? 0);
+    if (!Number.isSafeInteger(serviceSequence) || serviceSequence <= acknowledged) return;
+    this.storage.sql.exec("INSERT INTO stream_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      "priority_projection_ack", String(serviceSequence));
+  }
+
+  priorityDeliveryHealth() {
+    const projection = this.priorityProjection();
+    const acknowledged = Number(first(this.storage.sql.exec<{ value: string }>(
+      "SELECT value FROM stream_meta WHERE key = ?", "priority_projection_ack"))?.value ?? 0);
+    return {
+      highestAcknowledgedSequence: Number.isSafeInteger(acknowledged) ? acknowledged : 0,
+      pendingSequence: projection?.requestType === "PRIORITY_QUOTE_PROJECTION"
+        ? projection.quote.serviceSequence
+        : projection?.state.serviceSequence ?? null,
+      pendingType: projection?.requestType ?? null,
+    };
   }
 
   acknowledge(streamId: string, sequence: number, at: number) {

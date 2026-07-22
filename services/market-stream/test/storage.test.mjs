@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { normalizeAlpacaMessages } from "../src/ingestor.ts";
 import { NvdaMarketStream } from "../src/index.ts";
-import { advanceMarketWatermark, initialMarketStreamState, reduceProviderEvent } from "../src/reducer.ts";
+import { advanceMarketWatermark, beginConnectionEpoch, initialMarketStreamState, reduceProviderEvent, setProviderConnectionState } from "../src/reducer.ts";
 import {
   DurableSqlNonceStore,
   MarketStreamRepository,
@@ -143,6 +143,72 @@ test("outbox delivery pages are small, byte-bounded, and resume at the exact ack
     Array.from({ length: 8 }, (_, index) => OUTBOX_DELIVERY_MAX_ROWS + index + 1));
 });
 
+test("priority projection pairs the latest SIP quote with an earlier same-epoch LIVE proof", () => {
+  const storage = memoryStorage();
+  const repository = new MarketStreamRepository(storage); repository.initializeSchema();
+  const live = setProviderConnectionState(initialMarketStreamState("sip", "priority-stream"), "LIVE", 1_000);
+  repository.saveInitialState(initialMarketStreamState("sip", "priority-stream"));
+  repository.commit({ state: live.state, emissions: live.emissions, event: null });
+  const [quoteEvent] = normalizeAlpacaMessages(JSON.stringify([{
+    T: "q", S: "NVDA", bx: "Q", bp: 200, bs: 2, ax: "P", ap: 200.2, as: 3,
+    c: ["R"], t: "2026-07-20T13:20:01.000000001Z", z: "C",
+  }]), {
+    feed: "sip", receivedAt: Date.parse("2026-07-20T13:20:01.100Z"),
+    processedAt: Date.parse("2026-07-20T13:20:01.101Z"), providerEntitlementConfirmed: true,
+  });
+  const quoted = reduceProviderEvent(live.state, quoteEvent);
+  repository.commit({ state: quoted.state, emissions: quoted.emissions, event: quoteEvent });
+
+  const projection = repository.priorityProjection();
+  assert.equal(projection.requestType, "PRIORITY_QUOTE_PROJECTION");
+  assert.equal(projection.liveProof.serviceSequence, 1);
+  assert.equal(projection.quote.serviceSequence, 2);
+  assert.equal(projection.quote.sourceEvent.kind, "QUOTE");
+  repository.recordDeliveryFailure({
+    streamId: "priority-stream", fromSequence: 1, toSequence: 2, attempts: 7,
+    errorCode: "INGESTION_HTTP_503_INGESTION_UNAVAILABLE", failedAt: 2_000, nextRetryAt: 62_000,
+  });
+  assert.equal(repository.readyOutbox("priority-stream", 3_000).length, 0,
+    "raw replay is independently blocked by its persisted backoff");
+  assert.equal(repository.priorityProjection().quote.serviceSequence, 2,
+    "raw replay backoff cannot block the priority lane");
+
+  const [lateQuoteEvent] = normalizeAlpacaMessages(JSON.stringify([{
+    T: "q", S: "NVDA", bx: "Q", bp: 199, bs: 1, ax: "P", ap: 199.2, as: 1,
+    c: ["R"], t: "2026-07-20T13:20:00.500000001Z", z: "C",
+  }]), {
+    feed: "sip", receivedAt: Date.parse("2026-07-20T13:20:01.200Z"),
+    processedAt: Date.parse("2026-07-20T13:20:01.201Z"), providerEntitlementConfirmed: true,
+  });
+  const late = reduceProviderEvent(quoted.state, lateQuoteEvent);
+  repository.commit({ state: late.state, emissions: late.emissions, event: lateQuoteEvent });
+  assert.equal(repository.priorityProjection().quote.serviceSequence, 2,
+    "late source-time quote cannot replace the reducer-selected priority quote");
+
+  repository.acknowledgePriorityProjection(2);
+  assert.equal(repository.priorityProjection(), null);
+  assert.equal(repository.deliveryHealth("priority-stream").maximumAttempts, 7,
+    "priority acknowledgement never mutates raw retry state");
+
+  const silent = setProviderConnectionState(late.state, "SILENT", Date.parse("2026-07-20T13:20:02Z"));
+  repository.commit({ state: silent.state, emissions: silent.emissions, event: null });
+  const stateProjection = repository.priorityProjection();
+  assert.equal(stateProjection.requestType, "PRIORITY_STATE_PROJECTION");
+  assert.equal(stateProjection.state.serviceSequence, 4);
+  assert.equal(stateProjection.state.delta.providerState, "SILENT");
+  assert.deepEqual(repository.priorityDeliveryHealth(), {
+    highestAcknowledgedSequence: 2,
+    pendingSequence: 4,
+    pendingType: "PRIORITY_STATE_PROJECTION",
+  });
+  repository.acknowledgePriorityProjection(4);
+
+  const reconnecting = beginConnectionEpoch(silent.state, Date.parse("2026-07-20T13:20:03Z"));
+  repository.commit({ state: reconnecting.state, emissions: reconnecting.emissions, event: null });
+  assert.equal(repository.priorityProjection().state.connectionEpoch, 1,
+    "a new epoch is projected before any new quote can reuse prior-epoch evidence");
+});
+
 test("provider recovery checkpoints survive repository restart and advance page by page", () => {
   const storage = memoryStorage();
   const first = new MarketStreamRepository(storage); first.initializeSchema();
@@ -241,4 +307,110 @@ test("a legacy IEX Durable Object retires under SIP configuration and cannot rea
   assert.equal(response.status, 410);
   assert.deepEqual(await response.json(), { error: "STREAM_INSTANCE_RETIRED" });
   assert.equal(storage.alarmSetCount, 0);
+});
+
+test("a negative state projection bypasses an in-flight quote delivery", async () => {
+  const storage = memoryStorage();
+  const ctx = {
+    storage,
+    blockConcurrencyWhile(callback) { return callback(); },
+    acceptWebSocket() {},
+    getWebSockets() { return []; },
+  };
+  const env = {
+    MARKET_STREAM: {},
+    APCA_API_KEY_ID: "key",
+    APCA_API_SECRET_KEY: "secret",
+    ALPACA_FEED: "sip",
+    SIP_ENTITLED: "true",
+    SITES_INGESTION_URL: "https://aperture-nvda-plan.rmiller62785.chatgpt.site/api/internal/market-stream",
+    SITES_INGESTION_SECRET: "ingestion-secret-32-bytes-minimum-value",
+    SITES_INGESTION_AUDIENCE: "aperture-sites-market-ingestion",
+    SITES_ACCESS_BYPASS_TOKEN: "sites-access-token",
+    STREAM_CONTROL_SECRET: "control-secret-32-bytes-minimum-value",
+    BROWSER_ACCESS_SECRET: "browser-secret-32-bytes-minimum-value",
+    BROWSER_ALLOWED_ORIGINS: "https://aperture-nvda-plan.rmiller62785.chatgpt.site",
+  };
+  const sent = [];
+  let resolveQuote;
+  const quoteDelivery = new Promise((resolve) => { resolveQuote = resolve; });
+  let resolveConnecting;
+  const connectingDelivery = new Promise((resolve) => { resolveConnecting = resolve; });
+  const ingestion = {
+    async send(batch) {
+      return { ok: true, streamId: batch.streamId, highestContiguousSequence: batch.toSequence };
+    },
+    sendPriority(projection) {
+      const label = projection.requestType === "PRIORITY_QUOTE_PROJECTION"
+        ? projection.requestType
+        : `${projection.requestType}:${projection.state.delta.providerState}`;
+      sent.push(label);
+      const sequence = projection.requestType === "PRIORITY_QUOTE_PROJECTION"
+        ? projection.quote.serviceSequence
+        : projection.state.serviceSequence;
+      if (projection.requestType === "PRIORITY_QUOTE_PROJECTION") return quoteDelivery;
+      if (projection.state.delta.providerState === "CONNECTING") return connectingDelivery;
+      return Promise.resolve({ ok: true, requestType: projection.requestType, streamId: projection.streamId,
+        priorityProjectedSequence: sequence });
+    },
+  };
+  const stream = new NvdaMarketStream(ctx, env, { ingestion, suppressSupervisor: true });
+  await stream.fetch(new Request("https://market-stream.internal/health", {
+    headers: { "x-stream-control": env.STREAM_CONTROL_SECRET },
+  }));
+
+  const repository = new MarketStreamRepository(storage);
+  const now = Date.now();
+  const live = setProviderConnectionState(initialMarketStreamState("sip", "priority-bypass-stream"), "LIVE", now - 2_000);
+  repository.commit({ state: live.state, emissions: live.emissions, event: null });
+  const [event] = normalizeAlpacaMessages(JSON.stringify([{
+    T: "q", S: "NVDA", bx: "Q", bp: 200, bs: 2, ax: "P", ap: 200.2, as: 3,
+    c: ["R"], t: new Date(now - 1_000).toISOString(), z: "C",
+  }]), { feed: "sip", receivedAt: now - 900, processedAt: now - 899, providerEntitlementConfirmed: true });
+  const quoted = reduceProviderEvent(live.state, event);
+  repository.commit({ state: quoted.state, emissions: quoted.emissions, event });
+
+  await stream.fetch(new Request("https://market-stream.internal/internal/tick", {
+    headers: { "x-stream-control": env.STREAM_CONTROL_SECRET },
+  }));
+  assert.deepEqual(sent, ["PRIORITY_QUOTE_PROJECTION"]);
+
+  const silent = setProviderConnectionState(quoted.state, "SILENT", now);
+  repository.commit({ state: silent.state, emissions: silent.emissions, event: null });
+  await stream.fetch(new Request("https://market-stream.internal/internal/tick", {
+    headers: { "x-stream-control": env.STREAM_CONTROL_SECRET },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(sent, ["PRIORITY_QUOTE_PROJECTION", "PRIORITY_STATE_PROJECTION:SILENT"],
+    "known source failure cannot wait for the older quote request");
+  assert.equal(repository.priorityDeliveryHealth().highestAcknowledgedSequence, silent.state.serviceSequence);
+
+  resolveQuote({ ok: true, requestType: "PRIORITY_QUOTE_PROJECTION", streamId: quoted.state.streamId,
+    priorityProjectedSequence: quoted.state.serviceSequence });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(repository.priorityDeliveryHealth().highestAcknowledgedSequence, silent.state.serviceSequence,
+    "a late quote acknowledgement cannot regress the newer state control");
+
+  const connecting = beginConnectionEpoch(silent.state, now + 1);
+  repository.commit({ state: connecting.state, emissions: connecting.emissions, event: null });
+  await stream.fetch(new Request("https://market-stream.internal/internal/tick", {
+    headers: { "x-stream-control": env.STREAM_CONTROL_SECRET },
+  }));
+  assert.equal(sent.at(-1), "PRIORITY_STATE_PROJECTION:CONNECTING");
+
+  const disconnected = setProviderConnectionState(connecting.state, "DISCONNECTED", now + 2);
+  repository.commit({ state: disconnected.state, emissions: disconnected.emissions, event: null });
+  await stream.fetch(new Request("https://market-stream.internal/internal/tick", {
+    headers: { "x-stream-control": env.STREAM_CONTROL_SECRET },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(sent.at(-1), "PRIORITY_STATE_PROJECTION:DISCONNECTED",
+    "a newer negative state supersedes an unresolved older state request");
+  assert.equal(repository.priorityDeliveryHealth().highestAcknowledgedSequence, disconnected.state.serviceSequence);
+
+  resolveConnecting({ ok: true, requestType: "PRIORITY_STATE_PROJECTION", streamId: connecting.state.streamId,
+    priorityProjectedSequence: connecting.state.serviceSequence });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(repository.priorityDeliveryHealth().highestAcknowledgedSequence, disconnected.state.serviceSequence,
+    "the superseded state acknowledgement cannot regress the negative control");
 });

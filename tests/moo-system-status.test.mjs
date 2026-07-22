@@ -82,13 +82,15 @@ test("source policy separates required, optional, and monitoring roles", () => {
   assert.equal(status.transport.stream.state, "UNAVAILABLE");
 });
 
-function streamDatabase(stream, source) {
+function streamDatabase(stream, source, priority = null) {
   return {
     prepare(sql) {
       return {
         bind() { return this; },
         async first() {
-          return sql.includes("market_stream_ingest_streams") ? stream : source;
+          if (sql.includes("market_stream_ingest_streams")) return stream;
+          if (sql.includes("market_stream_priority_current")) return priority;
+          return source;
         },
       };
     },
@@ -110,6 +112,54 @@ test("fresh contiguous D1 stream evidence enables the persistent supervisor indi
   assert.equal(status.transport.noteCode, "DURABLE_STREAM_SERVICE_ENABLED");
   assert.equal(status.decisionSnapshot.sources.find((source) => source.id === "US").entitlement, "NOT_ENTITLED",
     "a live IEX transport cannot satisfy the strict SIP source");
+});
+
+test("a signed current-quote projection can keep SIP live while the immutable raw cursor drains", async () => {
+  const nowMs = Date.parse("2026-07-21T13:24:00Z");
+  const health = await readMooStreamHealth(streamDatabase({
+    stream_id: "nvda-sip", provider: "alpaca", feed: "sip", coverage_scope: "CONSOLIDATED_SIP",
+    research_only_required: 0, execution_eligible_allowed: 1, service_sequence: 100, heartbeat_at: nowMs - 2_000,
+  }, null, {
+    connection_epoch: 5, head_sequence: 10_000, head_state: "LIVE", head_execution_eligible: 1,
+    head_processed_at: nowMs - 151, head_available_at: nowMs - 150,
+    projection_hash: "a".repeat(64), updated_at: nowMs - 100,
+  }), nowMs);
+  assert.equal(health.state, "LIVE");
+  assert.equal(health.heartbeatAt, nowMs - 100);
+  assert.equal(health.sourceAvailableAt, nowMs - 150);
+  assert.equal(health.detailCode, "STREAM_PRIORITY_LIVE");
+  assert.equal(health.rawCursorSequence, 100);
+  assert.equal(health.currentProjectionSequence, 10_000);
+  assert.equal(health.rawBacklogEvents, 9_900);
+
+  const stopped = await readMooStreamHealth(streamDatabase({
+    stream_id: "nvda-sip", provider: "alpaca", feed: "sip", coverage_scope: "CONSOLIDATED_SIP",
+    research_only_required: 0, execution_eligible_allowed: 1, service_sequence: 100, heartbeat_at: nowMs - 2_000,
+  }, null, {
+    connection_epoch: 6, head_sequence: 10_001, head_state: "SILENT", head_execution_eligible: 1,
+    head_processed_at: nowMs - 51, head_available_at: nowMs - 50,
+    projection_hash: "b".repeat(64), updated_at: nowMs - 40,
+  }), nowMs);
+  assert.equal(stopped.state, "STALE");
+  assert.equal(stopped.connectionEpoch, "nvda-sip:6");
+  assert.equal(stopped.projectionState, "SILENT");
+});
+
+test("a valid priority projection tolerates bounded Worker-to-receiver clock skew", async () => {
+  const nowMs = Date.parse("2026-07-21T13:24:00Z");
+  const health = await readMooStreamHealth(streamDatabase({
+    stream_id: "nvda-sip", provider: "alpaca", feed: "sip", coverage_scope: "CONSOLIDATED_SIP",
+    research_only_required: 0, execution_eligible_allowed: 1, service_sequence: 100, heartbeat_at: nowMs - 2_000,
+  }, null, {
+    connection_epoch: 5, head_sequence: 10_000, head_state: "LIVE", head_execution_eligible: 1,
+    head_processed_at: nowMs - 6, head_available_at: nowMs - 5,
+    projection_hash: "c".repeat(64), updated_at: nowMs - 10,
+  }), nowMs);
+
+  assert.equal(health.state, "LIVE");
+  assert.equal(health.heartbeatAt, nowMs - 5,
+    "the later independently-valid host timestamp is the conservative check time");
+  assert.equal(health.sourceAvailableAt, nowMs - 5);
 });
 
 test("missing, stale, future, or noncontiguous D1 evidence stays fail closed", async () => {
@@ -172,6 +222,53 @@ test("a fresh exact-session SIP quote satisfies only the required market-data so
   assert.ok(status.validUntil > source.validUntil);
   assert.equal(status.decisionSnapshot.decision, "NO_TRADE");
   assert.ok(status.blockers.includes("TRAINED_MODEL_NOT_PROMOTED"));
+});
+
+test("Strict quote reads stay coherent with the exact current projection head", async () => {
+  const nowMs = Date.parse("2026-07-21T13:24:00Z");
+  const observedAt = nowMs - 250;
+  const streamHealth = {
+    state: "LIVE", streamId: "nvda-sip", provider: "alpaca", feed: "sip", coverageScope: "CONSOLIDATED_SIP",
+    connectionEpoch: "nvda-sip:4", heartbeatAt: nowMs - 100, sourceAvailableAt: nowMs - 90,
+    heartbeatAgeMs: 100, sourceLagMs: 90, rawCursorSequence: 5, currentProjectionSequence: 10,
+    rawBacklogEvents: 5, projectionState: "LIVE",
+    maxHeartbeatAgeMs: 45_000, maxSourceLagMs: 45_000, detailCode: "STREAM_PRIORITY_LIVE",
+  };
+  const freshRaw = {
+    provider: "alpaca", feed: "sip", session_date: "2026-07-21", kind: "QUOTE",
+    qualification: "STRICT_EXECUTION", entitlement: "ENTITLED", coverage: "CONSOLIDATED_SIP",
+    price: 172.5, size: 10, provider_time: observedAt, received_at: observedAt + 10,
+    processed_at: observedAt + 20, available_at: observedAt + 30,
+    connection_epoch: "nvda-sip:4", service_sequence: 6,
+  };
+  const negativeHead = {
+    connection_epoch: 4, head_sequence: 11, head_state: "SILENT", head_execution_eligible: 1,
+    quote_sequence: null,
+  };
+  const afterFailure = await readStrictUsSource(streamDatabase(null, freshRaw, negativeHead),
+    "2026-07-21", nowMs, streamHealth);
+  assert.notEqual(afterFailure.state, "LIVE", "a newer negative head cannot fall back to a still-fresh raw quote");
+
+  const stateOnlyLive = {
+    connection_epoch: 4, head_sequence: 10, head_state: "LIVE", head_execution_eligible: 1,
+    quote_sequence: null,
+  };
+  const noQuote = await readStrictUsSource(streamDatabase(null, freshRaw, stateOnlyLive),
+    "2026-07-21", nowMs, streamHealth);
+  assert.notEqual(noQuote.state, "LIVE", "a LIVE connection head without its exact quote remains fail-closed");
+
+  const rawHealth = { ...streamHealth, currentProjectionSequence: null, rawBacklogEvents: 0, projectionState: null,
+    detailCode: "STREAM_EVENT" };
+  const obsoleteCurrent = {
+    connection_epoch: 4, head_sequence: 4, head_state: "LIVE", head_execution_eligible: 1,
+    quote_sequence: 4, quote_session_date: "2026-07-21", quote_provider_time: observedAt - 1_000,
+    quote_received_at: observedAt - 990, quote_processed_at: observedAt - 980,
+    quote_available_at: observedAt - 970, quote_price: 171, quote_size: 2,
+  };
+  const raw = await readStrictUsSource(streamDatabase(null, freshRaw, obsoleteCurrent),
+    "2026-07-21", nowMs, rawHealth);
+  assert.equal(raw.state, "LIVE");
+  assert.equal(raw.observedAt, observedAt, "raw ownership wins after its cursor overtakes the old current projection");
 });
 
 test("strict SIP quote readiness expires after the bounded transit window while transport stays healthy", async () => {

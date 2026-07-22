@@ -146,8 +146,12 @@ function strictStreamPayload(value: unknown, persistent: boolean, noteCode: unkn
     nullableText(value.connectionEpoch) === false ||
     !nullableTimestamp(value.heartbeatAt) || !nullableTimestamp(value.sourceAvailableAt) ||
     !nullableTimestamp(value.heartbeatAgeMs) || !nullableTimestamp(value.sourceLagMs) ||
+    !nullableTimestamp(value.rawCursorSequence) || !nullableTimestamp(value.currentProjectionSequence) ||
+    !nullableTimestamp(value.rawBacklogEvents) || nullableText(value.projectionState) === false ||
     value.maxHeartbeatAgeMs !== MOO_STREAM_HEARTBEAT_MAX_AGE_MS ||
     value.maxSourceLagMs !== MOO_STREAM_SOURCE_LAG_MAX_MS || typeof value.detailCode !== "string") return false;
+  if (value.rawCursorSequence != null && value.currentProjectionSequence != null &&
+    value.rawBacklogEvents !== Math.max(0, value.currentProjectionSequence - value.rawCursorSequence)) return false;
   if (value.state === "LIVE") {
     return persistent && noteCode === "DURABLE_STREAM_SERVICE_ENABLED" &&
       typeof value.streamId === "string" && value.streamId.length > 0 &&

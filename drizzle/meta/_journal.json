@@ -64,6 +64,13 @@
       "when": 1784739713307,
       "tag": "0010_market_stream_archive_anchor",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1784742781353,
+      "tag": "0011_market_stream_priority_current",
+      "breakpoints": true
     }
   ]
 }

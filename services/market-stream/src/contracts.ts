@@ -224,10 +224,34 @@ export type IngestionBatch = {
   emissions: MarketStreamEmission[];
 };
 
+export type PriorityQuoteProjectionRequest = {
+  schemaVersion: typeof MARKET_STREAM_SCHEMA;
+  requestType: "PRIORITY_QUOTE_PROJECTION";
+  streamId: string;
+  liveProof: MarketStreamEmission;
+  quote: MarketStreamEmission;
+};
+
+export type PriorityStateProjectionRequest = {
+  schemaVersion: typeof MARKET_STREAM_SCHEMA;
+  requestType: "PRIORITY_STATE_PROJECTION";
+  streamId: string;
+  state: MarketStreamEmission;
+};
+
+export type PriorityProjectionRequest = PriorityQuoteProjectionRequest | PriorityStateProjectionRequest;
+
 export type IngestionAck = {
   ok: true;
   streamId: string;
   highestContiguousSequence: number;
+};
+
+export type PriorityProjectionAck = {
+  ok: true;
+  requestType: PriorityProjectionRequest["requestType"];
+  streamId: string;
+  priorityProjectedSequence: number;
 };
 
 export type DurableObjectStubLike = { fetch(request: Request): Promise<Response> };

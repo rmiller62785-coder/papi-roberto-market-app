@@ -94,6 +94,34 @@ test("Sites delivery requires a valid contiguous acknowledgement and rejects non
   await assert.rejects(() => invalid.send(batch), /INGESTION_ACK_INVALID/);
 });
 
+test("independent priority delivery binds acknowledgement type, stream, and exact quote sequence", async () => {
+  const projection = {
+    schemaVersion: "aperture-market-stream-v2",
+    requestType: "PRIORITY_QUOTE_PROJECTION",
+    streamId: "stream-1",
+    liveProof: { streamId: "stream-1", serviceSequence: 98 },
+    quote: { streamId: "stream-1", serviceSequence: 99 },
+  };
+  const input = { url, secret, audience, sitesAccessBypassToken: "sites-access-token" };
+  const missing = new SignedSitesIngestionClient({ ...input, fetcher: async () =>
+    Response.json({ ok: true, streamId: "stream-1", priorityProjectedSequence: 99 }) });
+  await assert.rejects(() => missing.sendPriority(projection), /INGESTION_ACK_INVALID/);
+  const wrong = new SignedSitesIngestionClient({ ...input, fetcher: async () =>
+    Response.json({ ok: true, requestType: "PRIORITY_QUOTE_PROJECTION", streamId: "stream-1", priorityProjectedSequence: 98 }) });
+  await assert.rejects(() => wrong.sendPriority(projection), /INGESTION_ACK_INVALID/);
+  const exact = new SignedSitesIngestionClient({ ...input, fetcher: async () =>
+    Response.json({ ok: true, requestType: "PRIORITY_QUOTE_PROJECTION", streamId: "stream-1", priorityProjectedSequence: 99 }) });
+  assert.equal((await exact.sendPriority(projection)).priorityProjectedSequence, 99);
+
+  const stateProjection = {
+    schemaVersion: "aperture-market-stream-v2", requestType: "PRIORITY_STATE_PROJECTION", streamId: "stream-1",
+    state: { streamId: "stream-1", serviceSequence: 100 },
+  };
+  const state = new SignedSitesIngestionClient({ ...input, fetcher: async () =>
+    Response.json({ ok: true, requestType: "PRIORITY_STATE_PROJECTION", streamId: "stream-1", priorityProjectedSequence: 100 }) });
+  assert.equal((await state.sendPriority(stateProjection)).priorityProjectedSequence, 100);
+});
+
 test("Sites delivery propagates only a bounded allowlisted receiver error code", async () => {
   const batch = { schemaVersion: "aperture-market-stream-v2", streamId: "stream-1", fromSequence: 10, toSequence: 12, emissions: [{}, {}, {}] };
   const input = { url, secret, audience, sitesAccessBypassToken: "sites-access-token" };

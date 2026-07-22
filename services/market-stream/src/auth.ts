@@ -2,6 +2,8 @@ import {
   MARKET_STREAM_SCHEMA,
   type IngestionAck,
   type IngestionBatch,
+  type PriorityProjectionAck,
+  type PriorityProjectionRequest,
 } from "./contracts.ts";
 
 const HEADER_TIMESTAMP = "x-aperture-timestamp";
@@ -262,9 +264,8 @@ export class SignedSitesIngestionClient {
     // unchanged, but call the platform function as a bare global operation.
     this.#fetcher = input.fetcher ?? ((request, init) => fetch(request, init));
   }
-  async send(batch: IngestionBatch, now = Date.now()): Promise<IngestionAck> {
-    if (batch.schemaVersion !== MARKET_STREAM_SCHEMA || !batch.emissions.length) throw new Error("INGESTION_BATCH_INVALID");
-    const body = JSON.stringify(batch);
+  async #post(value: IngestionBatch | PriorityProjectionRequest, now: number) {
+    const body = JSON.stringify(value);
     const nonce = crypto.randomUUID().replaceAll("-", "");
     const headers = await signSitesIngestion({
       secret: this.#secret,
@@ -288,11 +289,35 @@ export class SignedSitesIngestionClient {
       signal: AbortSignal.timeout(8_000),
     });
     if (!response.ok) throw new SitesIngestionDeliveryError(response.status, await receiverErrorCode(response));
-    const ack = await response.json() as Partial<IngestionAck>;
+    return response.json() as Promise<Record<string, unknown>>;
+  }
+
+  async send(batch: IngestionBatch, now = Date.now()): Promise<IngestionAck> {
+    if (batch.schemaVersion !== MARKET_STREAM_SCHEMA || !batch.emissions.length) throw new Error("INGESTION_BATCH_INVALID");
+    const ack = await this.#post(batch, now) as Partial<IngestionAck>;
     if (ack.ok !== true || ack.streamId !== batch.streamId || !Number.isSafeInteger(ack.highestContiguousSequence) ||
       ack.highestContiguousSequence! < batch.fromSequence || ack.highestContiguousSequence! > batch.toSequence) {
       throw new Error("INGESTION_ACK_INVALID");
     }
     return ack as IngestionAck;
+  }
+
+  async sendPriority(projection: PriorityProjectionRequest, now = Date.now()): Promise<PriorityProjectionAck> {
+    const projectedSequence = projection.requestType === "PRIORITY_QUOTE_PROJECTION"
+      ? projection.quote.serviceSequence
+      : projection.state.serviceSequence;
+    const streamMatches = projection.requestType === "PRIORITY_QUOTE_PROJECTION"
+      ? projection.liveProof.streamId === projection.streamId && projection.quote.streamId === projection.streamId
+      : projection.state.streamId === projection.streamId;
+    if (projection.schemaVersion !== MARKET_STREAM_SCHEMA || !streamMatches ||
+      !Number.isSafeInteger(projectedSequence) || projectedSequence < 1) {
+      throw new Error("INGESTION_PRIORITY_PROJECTION_INVALID");
+    }
+    const ack = await this.#post(projection, now) as Partial<PriorityProjectionAck>;
+    if (ack.ok !== true || ack.requestType !== projection.requestType || ack.streamId !== projection.streamId ||
+      ack.priorityProjectedSequence !== projectedSequence) {
+      throw new Error("INGESTION_ACK_INVALID");
+    }
+    return ack as PriorityProjectionAck;
   }
 }

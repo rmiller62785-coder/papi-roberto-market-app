@@ -344,6 +344,35 @@ export const marketPersistenceSchemaSql = [
     highest_contiguous_sequence INTEGER NOT NULL CHECK (highest_contiguous_sequence >= 0),
     updated_at INTEGER NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS market_stream_priority_current (
+    stream_id TEXT PRIMARY KEY NOT NULL,
+    connection_epoch INTEGER NOT NULL CHECK (connection_epoch >= 0),
+    head_sequence INTEGER NOT NULL CHECK (head_sequence > 0),
+    head_state TEXT NOT NULL CHECK (head_state IN ('DISCONNECTED','CONNECTING','AUTHENTICATING','SUBSCRIBING','LIVE','SILENT','BACKOFF','DEGRADED')),
+    head_execution_eligible INTEGER NOT NULL CHECK (head_execution_eligible IN (0,1)),
+    head_processed_at INTEGER NOT NULL,
+    head_available_at INTEGER NOT NULL,
+    live_proof_sequence INTEGER,
+    quote_sequence INTEGER,
+    quote_session_date TEXT,
+    quote_provider_time INTEGER,
+    quote_received_at INTEGER,
+    quote_processed_at INTEGER,
+    quote_available_at INTEGER,
+    quote_price REAL,
+    quote_size INTEGER,
+    live_proof_hash TEXT,
+    quote_hash TEXT,
+    projection_hash TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    CHECK ((quote_sequence IS NULL AND live_proof_sequence IS NULL AND quote_session_date IS NULL AND
+      quote_provider_time IS NULL AND quote_received_at IS NULL AND quote_processed_at IS NULL AND
+      quote_available_at IS NULL AND quote_price IS NULL AND quote_size IS NULL AND live_proof_hash IS NULL AND quote_hash IS NULL) OR
+      (head_state='LIVE' AND quote_sequence=head_sequence AND live_proof_sequence>0 AND live_proof_sequence<quote_sequence AND
+      quote_session_date IS NOT NULL AND quote_provider_time>=0 AND quote_received_at>=0 AND quote_processed_at>=0 AND
+      quote_available_at>=0 AND quote_price>0 AND quote_size>=0 AND live_proof_hash IS NOT NULL AND quote_hash IS NOT NULL))
+  )`,
 ] as const;
 
 export async function ensureMarketPersistenceSchema(database: D1Database) {
@@ -389,7 +418,8 @@ export function requireMarketIngestionSchema(database: D1Database) {
   if (existing) return existing;
   const pending = database.prepare(`SELECT
       source.id,observation.id,invalidation.id,minute.id,nonce.nonce,
-      stream.stream_id,emission.payload_json,cursor.highest_contiguous_sequence
+      stream.stream_id,emission.payload_json,cursor.highest_contiguous_sequence,
+      priority.projection_hash,priority.payload_json
     FROM market_source_state_events AS source
     CROSS JOIN market_qualified_observations AS observation
     CROSS JOIN market_observation_invalidations AS invalidation
@@ -398,6 +428,7 @@ export function requireMarketIngestionSchema(database: D1Database) {
     CROSS JOIN market_stream_ingest_streams AS stream
     CROSS JOIN market_stream_ingest_emissions AS emission
     CROSS JOIN market_stream_ingest_cursors AS cursor
+    CROSS JOIN market_stream_priority_current AS priority
     WHERE 0`).first().then(() => undefined).catch((error) => {
       receiverSchemaReady.delete(key);
       throw new MarketIngestionSchemaUnavailableError(error);
