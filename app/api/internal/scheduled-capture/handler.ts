@@ -97,7 +97,12 @@ export async function handleScheduledCapturePost(
     const store = createD1ScheduledCaptureStore(runtime.DB);
     const capture = dependencies.runCapture({
       scheduledTime,
-      nowMs: now,
+      // Tests may inject a fixed clock, but production must let
+      // runScheduledCapture sample capture time after its internal market
+      // request completes. Pinning nowMs to the bridge-request timestamp can
+      // put freshly normalized provenance a few milliseconds after capturedAt
+      // and correctly trip the point-in-time persistence guard.
+      nowMs: input.now,
       fetchApp: input.fetchApp,
       store,
     });

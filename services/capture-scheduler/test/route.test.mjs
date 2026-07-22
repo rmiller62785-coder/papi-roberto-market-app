@@ -23,6 +23,19 @@ async function request(body = CAPTURE_TRIGGER_BODY, nonce = "route0123456789abcd
   return new Request(URL, { method: "POST", headers, body });
 }
 
+async function requestAt(timestamp, nonce) {
+  const headers = await signCaptureSchedulerRequest({
+    secret: SECRET,
+    audience: AUDIENCE,
+    timestamp,
+    nonce,
+    method: "POST",
+    url: URL,
+    body: CAPTURE_TRIGGER_BODY,
+  });
+  return new Request(URL, { method: "POST", headers, body: CAPTURE_TRIGGER_BODY });
+}
+
 function harness() {
   const admitted = new Set();
   const calls = { ensure: [], capture: [], archive: [], fetch: [] };
@@ -89,6 +102,19 @@ test("signed attempts to select a historical time fail before orchestration", as
   assert.equal(h.calls.ensure.length, 0);
   assert.equal(h.calls.capture.length, 0);
   assert.equal(h.calls.archive.length, 0);
+});
+
+test("production bridge does not pin capture time before internal market normalization", async () => {
+  const h = harness();
+  const liveNow = Date.now();
+  const response = await handleScheduledCapturePost(
+    await requestAt(liveNow, "production0123456789abcdef012345"),
+    h.runtime,
+    { fetchApp: h.fetchApp, dependencies: h.dependencies },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(h.calls.capture.length, 1);
+  assert.equal(h.calls.capture[0].nowMs, undefined);
 });
 
 test("an authenticated trigger nonce is consumed exactly once", async () => {

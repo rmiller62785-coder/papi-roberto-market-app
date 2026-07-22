@@ -1,1 +1,1 @@
-export const BUILD_VERSION = "2026.07.22.1";
+export const BUILD_VERSION = "2026.07.22.2";
