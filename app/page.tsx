@@ -15,7 +15,7 @@ import type { MooSystemStatus } from "./moo-system-status";
 import type { TargetMarketEnvelope } from "./market-contract";
 import { deriveResearchLean } from "./research-lean";
 import { defaultTargetSession, enumerateNearbyTargetSessions } from "./target-session";
-import { previousNasdaqSession } from "./market-session";
+import { isNasdaqSessionDate, previousNasdaqSession } from "./market-session";
 import { BUILD_VERSION } from "./build-version";
 import { isSelectedMarketPayload, isUnavailableDecisionFreezeResponse, selectedSessionOpeningEstimate, type SelectedMarketPayload } from "./selected-market-research";
 import { isMooSystemStatus } from "./moo-status-guard";
@@ -402,7 +402,9 @@ export default function Home() {
     };
   })();
   planningSources.researchPreview = strictResearchPreview;
-  const mooPlanningPreviousSession = previousNasdaqSession(strictTargetSession, { inclusive: false });
+  const mooPlanningPreviousSession = isNasdaqSessionDate(strictTargetSession)
+    ? previousNasdaqSession(strictTargetSession, { inclusive: false })
+    : null;
   const strictPrevious = strictMarketContract?.previousSession.date === mooPlanningPreviousSession
     ? strictMarketContract.previousSession
     : null;

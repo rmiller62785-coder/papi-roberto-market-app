@@ -160,7 +160,7 @@ function commissioningBlockerReason(
         ? copy(lang, "The selected session has not produced a qualifying SIP observation yet.", "La sesión seleccionada aún no ha producido una observación SIP válida.")
       : quoteState === "closed"
           ? copy(lang, "The session is closed. Any retained quote is audit-only and cannot satisfy current execution freshness.", "La sesión está cerrada. Toda cotización conservada sirve solo para auditoría y no puede cumplir la vigencia exigida para ejecución actual.")
-          : copy(lang, "A current consolidated SIP observation has not passed the execution entitlement and freshness checks.", "Una observación SIP consolidada vigente no ha aprobado los controles de autorización y vigencia para ejecución.");
+          : copy(lang, "The entitled SIP source has not produced a current observation that passes point-in-time and freshness checks.", "La fuente SIP autorizada no ha producido una observación vigente que supere los controles de punto en el tiempo y vigencia.");
     return { fields: copy(lang, "Required source / readiness", "Fuente requerida / preparación"), reason };
   }
   if (blocker === "TRAINED_MODEL_NOT_PROMOTED") {
