@@ -7,7 +7,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "test": "node --test --test-isolation=none test/*.test.mjs",
+    "test": "node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "dev": "wrangler dev --config wrangler.example.jsonc",
     "preflight": "node scripts/preflight.mjs wrangler.production.jsonc",
