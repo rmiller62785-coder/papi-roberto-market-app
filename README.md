@@ -4,6 +4,10 @@ A bilingual NVDA market-intelligence dashboard deployed on OpenAI Sites. It comb
 
 Production: <https://aperture-nvda-plan.rmiller62785.chatgpt.site>
 
+## Maintainer start here
+
+Before changing or deploying this repository, read [`HANDOFF.md`](HANDOFF.md). It records the authoritative branch, current production build, deployed Workers, non-regression invariants, known scheduler alert, secret-name inventory, validation matrix, and remaining commissioning work. `AGENTS.md` makes this a required gate for future Codex work.
+
 ## Product boundaries
 
 - The Full Dashboard is non-actionable research and paper decision support.
@@ -62,4 +66,4 @@ Tests cover market calendars and DST, stale/future-skewed data, unfinished candl
 
 Hosting configuration lives in `.openai/hosting.json`. Deploy only a tested, committed source revision. Keep Sites secrets in the hosting environment and never commit credentials.
 
-Repository-specific development and market-data invariants are in `AGENTS.md`.
+Repository-specific development and market-data invariants are in `AGENTS.md`. Current production state and the non-regression handoff are in `HANDOFF.md`.

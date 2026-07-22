@@ -1,5 +1,16 @@
 # NVDA Intelligence Development Rules
 
+## Read-before-change gate
+
+Before any repository change, read `HANDOFF.md` completely and verify the checkout is the authoritative repair branch or a descendant. The handoff records deployed services, known failures, protected fixes, regression tests, and the current commissioning roadmap.
+
+- Do not start from an older `origin/main` when it would discard the repair sequence documented in the handoff.
+- Stop on unexpected tracked changes. Never reset, rebase, or overwrite user work to make the tree appear clean.
+- Do not add generated `.wrangler/`, build output, environment files, or the user-owned `bitcoin-intelligence/` directory.
+- Change the smallest relevant surface and add a regression test when touching a protected behavior.
+- Update `HANDOFF.md` whenever architecture, deployment identity, live blockers, secret names, or operational runbooks change materially.
+- Do not declare a background path commissioned merely because it is deployed; require a successful immutable production checkpoint without browser presence.
+
 ## Objective
 
 Build a point-in-time-correct NVDA opening and intraday decision-support application. The product may describe evidence and uncertainty, but it must not imply certainty or guaranteed trading outcomes.
@@ -40,3 +51,5 @@ For work spanning three or more independent domains:
 ## Verification
 
 Run the production build and relevant automated tests before deployment. Changes involving time or market sessions must cover holidays, early closes, daylight-saving transitions, stale feeds, missing data, duplicate events, and out-of-order messages where applicable.
+
+After deployment, verify the production build identity, Strict status, completed-bar equality, stream state, automation health, and recent errors. A healthy stream does not prove a fresh quote, and a healthy quote does not prove scheduler capture or model readiness.

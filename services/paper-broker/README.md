@@ -1,5 +1,7 @@
 # Aperture NVDA paper broker
 
+Cross-service commissioning status and the rule that this scaffold remains disabled are maintained in [`../../HANDOFF.md`](../../HANDOFF.md). Read it before changing or deploying this Worker.
+
 This independent Cloudflare Worker is a fail-closed scaffold for explicit, owner-confirmed **Alpaca paper** NVDA MOO commands. It cannot target Alpaca's live-trading host, cannot accept arbitrary symbols or order shapes, has no scheduled handler, and never submits automatically.
 
 ## Safety boundary

@@ -1,5 +1,7 @@
 # Aperture NVDA research runner
 
+The production/research boundary, current commissioning status, and non-regression handoff are maintained in [`../HANDOFF.md`](../HANDOFF.md). Read it before changing this runner or publishing artifacts.
+
 This directory is a stdlib-first, offline research plane. It does not connect
 to a broker, place orders, write production model state, or promote a model.
 

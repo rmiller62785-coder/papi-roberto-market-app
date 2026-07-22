@@ -1,5 +1,7 @@
 # Aperture NVDA market stream
 
+Cross-service production status, deployed version identity, non-regression rules, and the incident handoff are maintained in [`../../HANDOFF.md`](../../HANDOFF.md). Read it before changing or deploying this Worker.
+
 Cloudflare Worker + SQLite Durable Object for one NVDA Alpaca feed. The checked-in production configuration uses SIP only after `SIP_ENTITLED=true` confirms the account upgrade and redistribution review. Events remain research-only until Alpaca acknowledges the complete live SIP subscription. REST recovery is retained for reconciliation and never independently qualifies a Strict execution quote.
 
 ## Production prerequisites

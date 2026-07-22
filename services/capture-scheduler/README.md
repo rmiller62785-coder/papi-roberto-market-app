@@ -1,5 +1,7 @@
 # Aperture NVDA capture scheduler
 
+Cross-service production status, the currently unresolved checkpoint alert, non-regression rules, and the incident handoff are maintained in [`../../HANDOFF.md`](../../HANDOFF.md). Read it before changing or deploying this Worker.
+
 This standalone Cloudflare Worker provides the production one-minute cron that
 Sites currently does not provision. It can only POST a fixed, audience-bound
 HMAC trigger to `/api/internal/scheduled-capture`. The trigger contains no date,
