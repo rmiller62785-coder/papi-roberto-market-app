@@ -113,6 +113,18 @@ function commandBlockerLabel(
   if (isUncommissionedFavoredDecision(snapshot, commissioning)) {
     return copy(lang, "Execution is not commissioned", "La ejecución no está comisionada");
   }
+  const activeCommissioningBlocker = commissioning?.blockers[0];
+  const commissioningLabels: Record<string, [string, string]> = {
+    CONSOLIDATED_US_FEED_NOT_ENTITLED: ["Consolidated SIP entitlement required", "Se requiere autorización SIP consolidada"],
+    CONSOLIDATED_US_QUOTE_NOT_CURRENT: ["Current consolidated SIP quote required", "Se requiere una cotización SIP consolidada vigente"],
+    TRAINED_MODEL_NOT_PROMOTED: ["Promoted opening model required", "Se requiere un modelo de apertura promovido"],
+    IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE: ["Immutable decision freeze unavailable", "Cierre de decisión inmutable no disponible"],
+    ACCOUNT_LOCATE_NOT_AVAILABLE: ["Account-specific locate unavailable", "Localización específica de la cuenta no disponible"],
+    SERVER_STATUS_UNAVAILABLE: ["Current server status unavailable", "Estado actual del servidor no disponible"],
+  };
+  if (activeCommissioningBlocker && commissioningLabels[activeCommissioningBlocker]) {
+    return copy(lang, ...commissioningLabels[activeCommissioningBlocker]);
+  }
   return blockerLabel(snapshot, lang);
 }
 
@@ -238,6 +250,9 @@ export function StrictMooJourney({
   });
   const stream = transport?.stream;
   const source = presentation.usSource;
+  const quoteFreshnessWindowMs = source?.observedAt != null && source.validUntil != null
+    ? Math.max(0, source.validUntil - source.observedAt)
+    : null;
   const ticket = favoredTicket(snapshot);
   const predicted = moneyFromCents(snapshot.predictedOfficialOpenCents);
   const currentStage = presentation.stages.find((stage) => stage.current)!;
@@ -375,7 +390,7 @@ export function StrictMooJourney({
                     <p>{source?.provider ?? copy(lang, "Provider not confirmed", "Proveedor no confirmado")} · {source?.coverage?.replaceAll("_", " ") ?? copy(lang, "Consolidated SIP required", "Se requiere SIP consolidado")}</p>
                     <dl>
                       <div><dt>{copy(lang, "Observed", "Observada")}</dt><dd>{etDateTime(source?.observedAt, lang)}</dd></div>
-                      <div><dt>{copy(lang, "Quote age", "Edad de cotización")}</dt><dd>{age(source?.ageMs, lang)} / 2.0 {copy(lang, "sec", "s")}</dd></div>
+                      <div><dt>{copy(lang, "Quote age", "Edad de cotización")}</dt><dd>{age(source?.ageMs, lang)} / {age(quoteFreshnessWindowMs, lang)}</dd></div>
                     </dl>
                   </article>
                   <article className={`state-${presentation.browserState}`}>
