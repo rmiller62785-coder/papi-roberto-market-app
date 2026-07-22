@@ -8,8 +8,8 @@ Read this file completely before changing the application, Workers, storage cont
 - Product: Aperture NVDA, bilingual English/Spanish market intelligence with a separate fail-closed Strict MOO workflow.
 - GitHub: <https://github.com/rmiller62785-coder/papi-roberto-market-app>
 - Authoritative repair branch: `codex/commission-alpaca-sip`
-- Last application commit before this handoff: `95570a02b95ab13fd6e7acba0a71fd71d1e16fed`
-- Last application-code release verified: Sites version 43. A later documentation-only Sites version may carry the same application build.
+- Current repair source commit: `5bdd573e6f67857b2e5288235be964d9043281d8`
+- Last application-code release verified before this repair: Sites version 43. The current repair must be published from its exact final handoff commit.
 - Application build prepared by the current repair: `2026.07.22.7`
 - Sites project: `appgprj_6a5bbe1032d48191a928da44006bb605`
 - Sites bindings: D1 `DB`, private R2 `ARCHIVE`
@@ -87,10 +87,10 @@ The current repair raises the caller timeout to 30 seconds, records an admitted 
 
 - Name: `aperture-nvda-capture-scheduler`
 - Production configuration: `services/capture-scheduler/wrangler.production.jsonc`
-- Verified deployment version: `b5e4de6b-377f-4d1b-a5d0-df5f38e98b6a`
+- Current deployment version: `f8d03455-3e50-4cdf-be44-581c2fa180dd`
 - Cron: `* * * * *`
 - Responsibility: send one fixed, signed trigger to the private Sites receiver. It cannot choose a date, checkpoint, or historical time.
-- Operational state: deployed, but the next checkpoint delivery still required proof as described above.
+- Operational state: repaired Worker deployed; the next exact admitted checkpoint still must produce a terminal snapshot-success ledger row before automation is declared healthy.
 
 ### Paper-broker Worker
 
@@ -259,6 +259,7 @@ For time/session changes, cover holidays, early closes, DST boundaries, stale/mi
 - `b2962c7` — guard Strict MOO cold-start session
 - `e0e7a12` — make prior-session resolution non-throwing
 - `95570a0` — align the Strict banner and freshness presentation with server state
+- `5bdd573` — repair scheduler capture, split operational planes, and add safe research/broker automation
 
 The current repair passed the production build, 457 application tests, 16 Python research tests, 13 capture-scheduler tests plus typecheck/preflight, 30 paper-broker tests plus typecheck/preflight, and ESLint on every changed JS/TS file. The broad repository ESLint invocation can be slow on this Windows junction-backed clone; the changed-file lint is the authoritative current result. Production API/browser checks and independent point-in-time, security, and UX reviews must also pass before release.
 
