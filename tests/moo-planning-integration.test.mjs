@@ -12,8 +12,8 @@ test("Strict MOO uses the served forecast block and an exact prior session", asy
   assert.doesNotMatch(page, /latestStrictCapture|selectedStrictForecast\?\.snapshots/);
   assert.match(page, /Research estimates below[\s\S]+never populate this snapshot/);
   assert.match(page, /mooSystemStatus\.decisionSnapshot/);
-  assert.match(page, /previousNasdaqSession\(strictTargetSession, \{ inclusive: false \}\)/);
-  assert.equal([...page.matchAll(/previousNasdaqSession\([^\n]*\{ inclusive: false \}\)/g)].length, 1);
+  assert.match(page, /previousTargetSession\(strictTargetSession\)/);
+  assert.equal([...page.matchAll(/previousTargetSession\(strictTargetSession\)/g)].length, 1);
   assert.match(page, /=== mooPlanningPreviousSession/);
   assert.match(page, /const mooPlanningInput = \{/);
   assert.match(page, /planning=\{mooPlanningInput\}/);

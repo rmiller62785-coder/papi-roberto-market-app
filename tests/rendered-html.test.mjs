@@ -88,7 +88,7 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(strictJourney, /Any retained quote is audit-only/);
   assert.match(strictJourney, /POR QUÉ LOS CAMPOS ESTRICTOS ESTÁN VACÍOS/);
   assert.match(strictJourney, /commissioning\?\.blockers \?\? \[\]/);
-  assert.match(page, /isNasdaqSessionDate\(strictTargetSession\)[\s\S]*?previousNasdaqSession\(strictTargetSession/);
+  assert.match(page, /previousTargetSession\(strictTargetSession\)/);
   assert.match(strictJourney, /The entitled SIP source has not produced a current observation/);
   assert.doesNotMatch(strictJourney, /execution entitlement and freshness checks/);
   assert.match(strictJourney, /Research estimates cannot fill these strict fields/);

@@ -5,8 +5,15 @@ import {
   classifyTargetSession,
   defaultTargetSession,
   enumerateNearbyTargetSessions,
+  previousTargetSession,
   validateTargetSession,
 } from "../app/target-session.ts";
+
+test("cold and malformed targets have no prior session instead of throwing", () => {
+  assert.equal(previousTargetSession(""), null);
+  assert.equal(previousTargetSession("2026-02-30"), null);
+  assert.equal(previousTargetSession("2026-07-20"), "2026-07-17");
+});
 
 test("the default target is today's open session or the next valid Nasdaq session", () => {
   assert.equal(defaultTargetSession(Date.parse("2026-07-17T13:28:00Z")), "2026-07-17");

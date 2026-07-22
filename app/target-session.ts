@@ -78,6 +78,12 @@ export function validateTargetSession(
   }
 }
 
+/** Non-throwing prior-session lookup for cold UI renders and date controls. */
+export function previousTargetSession(targetDate: string) {
+  if (!validNasdaqSession(targetDate)) return null;
+  return previousNasdaqSession(targetDate, { inclusive: false });
+}
+
 function boundedCount(value: number | undefined, fallback: number) {
   if (value == null) return fallback;
   if (!Number.isFinite(value)) return fallback;
