@@ -139,10 +139,13 @@ function validMinute(value: unknown, feed: "iex" | "sip"): value is Authoritativ
     !["PENDING", "FINAL", "CORRECTED"].includes(String(value.status)) ||
     !safeInteger(value.sourceObservedAt) || !safeInteger(value.receivedAt) || !safeInteger(value.processedAt) ||
     !safeInteger(value.availableAt) || value.sourceObservedAt > value.receivedAt + MAX_PROVIDER_FUTURE_SKEW_MS ||
-    value.receivedAt > value.processedAt || value.processedAt > value.availableAt || value.availableAt < value.minuteEnd ||
+    value.receivedAt > value.processedAt || value.processedAt > value.availableAt ||
     !(value.finalizedAt == null || safeInteger(value.finalizedAt)) ||
     !(value.correctedAt == null || safeInteger(value.correctedAt))) return false;
   if (!["WEBSOCKET", "REST_RECOVERY"].includes(String(value.sourceTransport))) return false;
+  // Alpaca can publish a forming BAR_UPDATE before the minute ends. It is
+  // useful immutable provenance but is never persisted as a completed candle.
+  // Completion remains gated below by receipt/finalization after minuteEnd.
   if (value.status === "PENDING" && (value.finalizedAt != null || value.correctedAt != null)) return false;
   if (value.status === "FINAL" && (value.receivedAt < value.minuteEnd || !safeInteger(value.finalizedAt) || value.finalizedAt < value.minuteEnd ||
     value.finalizedAt > value.processedAt || value.correctedAt != null)) return false;

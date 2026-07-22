@@ -136,6 +136,59 @@ function blockerLabel(snapshot: MooDecisionSnapshot, lang: Language) {
     : snapshot.blockReason.replaceAll("_", " ");
 }
 
+type StrictEmptyReason = {
+  fields: string;
+  reason: string;
+};
+
+function commissioningBlockerReason(
+  blocker: string,
+  quoteState: StrictJourneyState,
+  artifactStoreState: StrictMooCommissioningEvidence["artifactStoreState"] | undefined,
+  lang: Language,
+): StrictEmptyReason {
+  if (blocker === "CONSOLIDATED_US_FEED_NOT_ENTITLED") {
+    const reason = quoteState === "stale"
+      ? copy(lang, "The last consolidated SIP observation is too old for execution.", "La última observación SIP consolidada es demasiado antigua para ejecución.")
+      : quoteState === "pending"
+        ? copy(lang, "The selected session has not produced a qualifying SIP observation yet.", "La sesión seleccionada aún no ha producido una observación SIP válida.")
+      : quoteState === "closed"
+          ? copy(lang, "The session is closed. Any retained quote is audit-only and cannot satisfy current execution freshness.", "La sesión está cerrada. Toda cotización conservada sirve solo para auditoría y no puede cumplir la vigencia exigida para ejecución actual.")
+          : copy(lang, "A current consolidated SIP observation has not passed the execution entitlement and freshness checks.", "Una observación SIP consolidada vigente no ha aprobado los controles de autorización y vigencia para ejecución.");
+    return { fields: copy(lang, "Required source / readiness", "Fuente requerida / preparación"), reason };
+  }
+  if (blocker === "TRAINED_MODEL_NOT_PROMOTED") {
+    return {
+      fields: copy(lang, "Predicted open / confidence / model / feature snapshot / data quality", "Apertura predicha / confianza / modelo / captura de variables / calidad de datos"),
+      reason: copy(lang, "No trained, calibrated point-in-time opening model has been promoted. Research estimates cannot fill these strict fields.", "No se ha promovido un modelo de apertura entrenado, calibrado y de punto en el tiempo. Las estimaciones de investigación no pueden completar estos campos estrictos."),
+    };
+  }
+  if (blocker === "IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE") {
+    return {
+      fields: copy(lang, "Freeze / target / stop / quantity / account / reserve / maximum loss / time stop / fill", "Cierre / objetivo / stop / cantidad / cuenta / reserva / pérdida máxima / límite de tiempo / ejecución"),
+      reason: artifactStoreState === "UNAVAILABLE"
+        ? copy(lang, "The immutable artifact store could not be read, so no frozen strict ticket can be published.", "No se pudo leer el almacén de artefactos inmutables, por lo que no se puede publicar una orden estricta congelada.")
+        : copy(lang, "No validated immutable decision artifact exists for this session. Browser-local paper planner values never become a strict ticket.", "No existe un artefacto de decisión inmutable validado para esta sesión. Los valores del planificador simulado local del navegador nunca se convierten en una orden estricta."),
+    };
+  }
+  if (blocker === "ACCOUNT_LOCATE_NOT_AVAILABLE") {
+    return {
+      fields: copy(lang, "Shortability", "Disponibilidad para corto"),
+      reason: copy(lang, "No account-specific borrow or locate proof is attached to a validated artifact.", "No hay una prueba de préstamo o localización específica de la cuenta adjunta a un artefacto validado."),
+    };
+  }
+  if (blocker === "SERVER_STATUS_UNAVAILABLE") {
+    return {
+      fields: copy(lang, "All strict fields", "Todos los campos estrictos"),
+      reason: copy(lang, "The current server-owned status is unavailable; dated last-good values remain diagnosis-only.", "El estado actual controlado por el servidor no está disponible; los últimos valores fechados válidos quedan solo para diagnóstico."),
+    };
+  }
+  return {
+    fields: copy(lang, "Strict readiness", "Preparación estricta"),
+    reason: copy(lang, `Server blocker: ${blocker.replaceAll("_", " ")}.`, `Bloqueo del servidor: ${blocker.replaceAll("_", " ")}.`),
+  };
+}
+
 function deadlineLabel(deadline: MooDeadline, lang: Language) {
   const labels: Record<MooDeadline["label"], [string, string]> = {
     DECISION_FREEZE: ["Decision freeze", "Cierre de decisión"],
@@ -206,6 +259,33 @@ export function StrictMooJourney({
         : presentation.quoteState === "stale"
           ? copy(lang, "Last SIP observation is too old", "La última observación SIP es demasiado antigua")
           : copy(lang, "No qualifying SIP observation", "Sin observación SIP calificada");
+  const emptyFieldReasons: StrictEmptyReason[] = [];
+  const seenEmptyReasons = new Set<string>();
+  const addEmptyReason = (reason: StrictEmptyReason) => {
+    const key = `${reason.fields}:${reason.reason}`;
+    if (!seenEmptyReasons.has(key)) {
+      seenEmptyReasons.add(key);
+      emptyFieldReasons.push(reason);
+    }
+  };
+  for (const blocker of commissioning?.blockers ?? []) {
+    addEmptyReason(commissioningBlockerReason(blocker, presentation.quoteState, commissioning?.artifactStoreState, lang));
+  }
+  if (!commissioning) {
+    addEmptyReason(commissioningBlockerReason("SERVER_STATUS_UNAVAILABLE", presentation.quoteState, undefined, lang));
+  }
+  if (commissioning && !commissioning.modelPromoted && !commissioning.blockers.includes("TRAINED_MODEL_NOT_PROMOTED")) {
+    addEmptyReason(commissioningBlockerReason("TRAINED_MODEL_NOT_PROMOTED", presentation.quoteState, commissioning.artifactStoreState, lang));
+  }
+  if (commissioning && !commissioning.artifactValidated && !commissioning.blockers.includes("IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE")) {
+    addEmptyReason(commissioningBlockerReason("IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE", presentation.quoteState, commissioning.artifactStoreState, lang));
+  }
+  if (commissioning?.executionMode === "NOT_COMMISSIONED") {
+    addEmptyReason({
+      fields: copy(lang, "Live order / broker fill", "Orden en vivo / ejecución del bróker"),
+      reason: copy(lang, "Execution is not commissioned. This surface cannot submit an order or claim a fill.", "La ejecución no está comisionada. Esta pantalla no puede enviar una orden ni afirmar una ejecución."),
+    });
+  }
 
   return (
     <section className="strict-journey" aria-labelledby="strict-journey-title">
@@ -234,6 +314,13 @@ export function StrictMooJourney({
           <span>{copy(lang, "The immutable freeze store could not be read. Readiness remains blocked even when earlier stages are unavailable.", "No se pudo leer el almacén inmutable de cierres. La preparación permanece bloqueada aunque las etapas anteriores no estén disponibles.")}</span>
         </div>
       ) : null}
+
+      <div className="strict-store-alert strict-empty-reasons" aria-label={copy(lang, "Why strict fields are empty", "Por qué los campos estrictos están vacíos")}>
+        <strong>{copy(lang, "WHY STRICT FIELDS ARE EMPTY", "POR QUÉ LOS CAMPOS ESTRICTOS ESTÁN VACÍOS")}</strong>
+        <span>{emptyFieldReasons.length
+          ? emptyFieldReasons.map(reason => `${reason.fields}: ${reason.reason}`).join(" · ")
+          : copy(lang, "No strict field is missing required server evidence.", "Ningún campo estricto carece de evidencia requerida del servidor.")}</span>
+      </div>
 
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {commandDecisionLabel(snapshot, commissioning, lang)}. {commandBlockerLabel(snapshot, commissioning, lang)}. {stageLabel(currentStage.id, lang)}: {stateLabel(currentStage.state, lang)}.

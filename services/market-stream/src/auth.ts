@@ -10,8 +10,11 @@ const HEADER_AUDIENCE = "x-aperture-audience";
 const HEADER_SIGNATURE = "x-aperture-signature";
 const MAX_CLOCK_SKEW_MS = 60_000;
 const MAX_BODY_BYTES = 512_000;
+const MAX_INGESTION_RESPONSE_BYTES = 4_096;
 const MAX_BROWSER_TOKEN_TTL_MS = 5 * 60_000;
 const NONCE = /^[A-Za-z0-9_-]{16,128}$/;
+const INGESTION_ERROR_CODE = /^INGESTION_[A-Z0-9_]{1,96}$/;
+const SAFE_DELIVERY_ERROR_CODE = /^INGESTION_[A-Z0-9_]{1,160}$/;
 
 export interface NonceStore {
   rememberOnce(scopedNonce: string, expiresAt: number): Promise<boolean>;
@@ -176,6 +179,72 @@ export async function consumeBrowserAccessToken(input: {
   return input.nonces.rememberOnce(`${input.audience}:${origin}:${nonce}`, expiresAt);
 }
 
+export class SitesIngestionDeliveryError extends Error {
+  readonly code: string;
+  readonly status: number;
+  readonly receiverCode: string | null;
+
+  constructor(status: number, receiverCode: string | null = null) {
+    const code = receiverCode ? `INGESTION_HTTP_${status}_${receiverCode}` : `INGESTION_HTTP_${status}`;
+    super(code);
+    this.name = "SitesIngestionDeliveryError";
+    this.code = code;
+    this.status = status;
+    this.receiverCode = receiverCode;
+  }
+}
+
+/** Reduce an arbitrary delivery failure to a bounded, non-sensitive health code. */
+export function ingestionDeliveryErrorCode(error: unknown) {
+  if (error instanceof SitesIngestionDeliveryError) return error.code;
+  if (error instanceof Error && SAFE_DELIVERY_ERROR_CODE.test(error.message)) return error.message;
+  return "INGESTION_DELIVERY_FAILED";
+}
+
+async function boundedResponseText(response: Response, maximumBytes = MAX_INGESTION_RESPONSE_BYTES) {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    return null;
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > maximumBytes) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
+}
+
+async function receiverErrorCode(response: Response) {
+  const body = await boundedResponseText(response).catch(() => null);
+  if (!body) return null;
+  try {
+    const error = (JSON.parse(body) as { error?: unknown }).error;
+    return typeof error === "string" && INGESTION_ERROR_CODE.test(error) ? error : null;
+  } catch {
+    return null;
+  }
+}
+
 export class SignedSitesIngestionClient {
   readonly #url: string;
   readonly #secret: string;
@@ -218,7 +287,7 @@ export class SignedSitesIngestionClient {
       redirect: "manual",
       signal: AbortSignal.timeout(8_000),
     });
-    if (!response.ok) throw new Error(`INGESTION_HTTP_${response.status}`);
+    if (!response.ok) throw new SitesIngestionDeliveryError(response.status, await receiverErrorCode(response));
     const ack = await response.json() as Partial<IngestionAck>;
     if (ack.ok !== true || ack.streamId !== batch.streamId || !Number.isSafeInteger(ack.highestContiguousSequence) ||
       ack.highestContiguousSequence! < batch.fromSequence || ack.highestContiguousSequence! > batch.toSequence) {

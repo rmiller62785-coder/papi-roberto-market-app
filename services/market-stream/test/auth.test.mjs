@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   MemoryNonceStore,
   SignedSitesIngestionClient,
+  SitesIngestionDeliveryError,
+  ingestionDeliveryErrorCode,
   signBrowserAccessToken,
   signSitesIngestion,
   consumeBrowserAccessToken,
@@ -90,6 +92,38 @@ test("Sites delivery requires a valid contiguous acknowledgement and rejects non
   await assert.rejects(() => redirecting.send(batch), /INGESTION_HTTP_302/);
   const invalid = new SignedSitesIngestionClient({ ...input, fetcher: async () => Response.json({ ok: true, streamId: "other", highestContiguousSequence: 1 }) });
   await assert.rejects(() => invalid.send(batch), /INGESTION_ACK_INVALID/);
+});
+
+test("Sites delivery propagates only a bounded allowlisted receiver error code", async () => {
+  const batch = { schemaVersion: "aperture-market-stream-v2", streamId: "stream-1", fromSequence: 10, toSequence: 12, emissions: [{}, {}, {}] };
+  const input = { url, secret, audience, sitesAccessBypassToken: "sites-access-token" };
+  const detail = "sensitive receiver detail and payload must not escape";
+  const rejected = new SignedSitesIngestionClient({
+    ...input,
+    fetcher: async () => Response.json({ error: "INGESTION_EMISSION_INVALID", detail }, { status: 400 }),
+  });
+  await assert.rejects(() => rejected.send(batch), (error) => {
+    assert.ok(error instanceof SitesIngestionDeliveryError);
+    assert.equal(error.status, 400);
+    assert.equal(error.receiverCode, "INGESTION_EMISSION_INVALID");
+    assert.equal(error.code, "INGESTION_HTTP_400_INGESTION_EMISSION_INVALID");
+    assert.equal(error.message.includes(detail), false);
+    assert.equal(ingestionDeliveryErrorCode(error), error.code);
+    return true;
+  });
+
+  for (const body of [
+    JSON.stringify({ error: "INGESTION_EMISSION_INVALID\nsecret" }),
+    JSON.stringify({ error: "INGESTION_EMISSION_INVALID", detail: "x".repeat(5_000) }),
+  ]) {
+    const unsafe = new SignedSitesIngestionClient({ ...input, fetcher: async () => new Response(body, { status: 400 }) });
+    await assert.rejects(() => unsafe.send(batch), (error) => {
+      assert.equal(error.message, "INGESTION_HTTP_400");
+      assert.equal(error.message.includes("secret"), false);
+      return true;
+    });
+  }
+  assert.equal(ingestionDeliveryErrorCode(new Error("provider secret: abc")), "INGESTION_DELIVERY_FAILED");
 });
 
 test("default Sites delivery calls the platform fetch without rebinding it", async () => {

@@ -84,6 +84,13 @@ test("ships the NVDA decision dashboard instead of the starter preview", async (
   assert.match(strictJourney, /ARTIFACT STORAGE UNAVAILABLE/);
   assert.match(strictJourney, /PAPER REVIEW ONLY · NO ORDER/);
   assert.match(strictJourney, /Execution is not commissioned, so no order can be submitted/);
+  assert.match(strictJourney, /WHY STRICT FIELDS ARE EMPTY/);
+  assert.match(strictJourney, /Any retained quote is audit-only/);
+  assert.match(strictJourney, /POR QUÉ LOS CAMPOS ESTRICTOS ESTÁN VACÍOS/);
+  assert.match(strictJourney, /commissioning\?\.blockers \?\? \[\]/);
+  assert.match(strictJourney, /Research estimates cannot fill these strict fields/);
+  assert.match(strictJourney, /Browser-local paper planner values never become a strict ticket/);
+  assert.match(strictJourney, /This surface cannot submit an order or claim a fill/);
   assert.equal([...strictJourney.matchAll(/aria-live=/g)].length, 1);
   assert.match(mooSurface, /Long opening ticket/);
   assert.match(mooSurface, /Short opening ticket/);

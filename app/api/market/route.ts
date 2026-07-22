@@ -2129,7 +2129,12 @@ export async function GET(request?: Request) {
             detail: `Daily: ${yahooDailyStatus}${history.daily.error ? ` (${history.daily.error})` : ""}; minute: ${yahooMinuteStatus}${history.minute.error ? ` (${history.minute.error})` : ""}`,
           },
         ],
-        bars: displayBars,
+        // Strict consumers may render this legacy alias as calculation input.
+        // Keep a still-forming display candle on the research dashboard only;
+        // the separately fetched Strict payload exposes completed candles in
+        // both aliases so its runtime boundary cannot reject an otherwise
+        // coherent current-session response.
+        bars: requestedView === "STRICT" ? analysisBars : displayBars,
         analysisBars,
         daily,
         firstMinuteHistory,

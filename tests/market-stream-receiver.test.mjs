@@ -147,6 +147,18 @@ test("rejects detached bar minutes and incoherent status timestamps", () => {
   assert.throws(() => parseIngestionBatch(timestamp), /INGESTION_EMISSION_INVALID/);
 });
 
+test("accepts a forming provider bar as pending evidence without completing the candle", () => {
+  const value = singleEventFixture("forming-bar-stream", {
+    T: "u", S: "NVDA", o: 200, h: 201, l: 199.5, c: 200.5, v: 1000, n: 50,
+    vw: 200.25, t: "2026-07-20T13:20:00.000000001Z",
+  }, BASE + 30_000);
+  const parsed = parseIngestionBatch(value);
+  const emission = parsed.emissions.at(-1);
+  assert.equal(emission.type, "EVENT");
+  assert.equal(emission.minute.status, "PENDING");
+  assert.equal(emission.minute.availableAt < emission.minute.minuteEnd, true);
+});
+
 const mf = new Miniflare({
   modules: true,
   script: "export default { fetch() { return new Response(); } }",

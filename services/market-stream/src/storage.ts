@@ -61,6 +61,7 @@ export class MarketStreamRepository {
     this.storage.sql.exec("CREATE TABLE IF NOT EXISTS outbox (stream_id TEXT NOT NULL, service_sequence INTEGER NOT NULL, created_at INTEGER NOT NULL, payload TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (stream_id, service_sequence))");
     this.storage.sql.exec("CREATE INDEX IF NOT EXISTS outbox_ready_idx ON outbox(stream_id, next_attempt_at, service_sequence)");
     this.storage.sql.exec("CREATE TABLE IF NOT EXISTS delivery_ack (stream_id TEXT PRIMARY KEY, highest_contiguous_sequence INTEGER NOT NULL, acknowledged_at INTEGER NOT NULL)");
+    this.storage.sql.exec("CREATE TABLE IF NOT EXISTS delivery_failure_state (stream_id TEXT PRIMARY KEY, from_sequence INTEGER NOT NULL, to_sequence INTEGER NOT NULL, error_code TEXT NOT NULL, failed_at INTEGER NOT NULL, next_retry_at INTEGER NOT NULL, attempts INTEGER NOT NULL)");
     this.storage.sql.exec("CREATE TABLE IF NOT EXISTS ingestion_nonces (scope TEXT NOT NULL, nonce TEXT NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY (scope, nonce))");
     this.storage.sql.exec("CREATE INDEX IF NOT EXISTS ingestion_nonces_expiry_idx ON ingestion_nonces(expires_at)");
   }
@@ -166,15 +167,67 @@ export class MarketStreamRepository {
     });
   }
 
-  recordDeliveryFailure(streamId: string, sequence: number, attempts: number, nextAttemptAt: number) {
-    this.storage.sql.exec("UPDATE outbox SET attempts = ?, next_attempt_at = ? WHERE stream_id = ? AND service_sequence = ?", attempts, nextAttemptAt, streamId, sequence);
+  recordDeliveryFailure(input: {
+    streamId: string;
+    fromSequence: number;
+    toSequence: number;
+    attempts: number;
+    errorCode: string;
+    failedAt: number;
+    nextRetryAt: number;
+  }) {
+    this.storage.transactionSync(() => {
+      this.storage.sql.exec(
+        "UPDATE outbox SET attempts = ?, next_attempt_at = ? WHERE stream_id = ? AND service_sequence = ?",
+        input.attempts, input.nextRetryAt, input.streamId, input.fromSequence,
+      );
+      this.storage.sql.exec(
+        "INSERT INTO delivery_failure_state(stream_id, from_sequence, to_sequence, error_code, failed_at, next_retry_at, attempts) VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(stream_id) DO UPDATE SET from_sequence = excluded.from_sequence, to_sequence = excluded.to_sequence, error_code = excluded.error_code, failed_at = excluded.failed_at, next_retry_at = excluded.next_retry_at, attempts = excluded.attempts",
+        input.streamId, input.fromSequence, input.toSequence, input.errorCode, input.failedAt, input.nextRetryAt, input.attempts,
+      );
+    });
   }
 
   deliveryHealth(streamId: string) {
-    const row = first(this.storage.sql.exec<{ backlog: number; oldest: number | null; attempts: number | null }>(
-      "SELECT COUNT(*) AS backlog, MIN(created_at) AS oldest, MAX(attempts) AS attempts FROM outbox WHERE stream_id = ?", streamId,
+    const row = first(this.storage.sql.exec<{
+      backlog: number;
+      oldest: number | null;
+      attempts: number | null;
+      pending_from: number | null;
+      pending_to: number | null;
+    }>(
+      "SELECT COUNT(*) AS backlog, MIN(created_at) AS oldest, MAX(attempts) AS attempts, MIN(service_sequence) AS pending_from, MAX(service_sequence) AS pending_to FROM outbox WHERE stream_id = ?", streamId,
     ));
-    return { highestContiguousAck: this.highestAck(streamId), backlog: row?.backlog ?? 0, oldestPendingAt: row?.oldest ?? null, maximumAttempts: row?.attempts ?? 0 };
+    const next = first(this.storage.sql.exec<{ next_attempt_at: number }>(
+      "SELECT next_attempt_at FROM outbox WHERE stream_id = ? ORDER BY service_sequence ASC LIMIT 1", streamId,
+    ));
+    const failure = first(this.storage.sql.exec<{
+      from_sequence: number;
+      to_sequence: number;
+      error_code: string;
+      failed_at: number;
+      next_retry_at: number;
+      attempts: number;
+    }>(
+      "SELECT from_sequence, to_sequence, error_code, failed_at, next_retry_at, attempts FROM delivery_failure_state WHERE stream_id = ?", streamId,
+    ));
+    return {
+      highestContiguousAck: this.highestAck(streamId),
+      backlog: row?.backlog ?? 0,
+      oldestPendingAt: row?.oldest ?? null,
+      maximumAttempts: row?.attempts ?? 0,
+      pendingFromSequence: row?.pending_from ?? null,
+      pendingToSequence: row?.pending_to ?? null,
+      nextRetryAt: next?.next_attempt_at ?? null,
+      lastFailure: failure ? {
+        fromSequence: failure.from_sequence,
+        toSequence: failure.to_sequence,
+        errorCode: failure.error_code,
+        failedAt: failure.failed_at,
+        nextRetryAt: failure.next_retry_at,
+        attempts: failure.attempts,
+      } : null,
+    };
   }
 
   recoverEmissions(streamId: string, afterSequence: number, limit = 500) {

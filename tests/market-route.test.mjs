@@ -197,6 +197,32 @@ test("Yahoo daily and minute failures degrade independently", async () => {
   }
 });
 
+test("Strict selected-session payload excludes a still-forming display candle", async () => {
+  __resetMarketRouteCachesForTests();
+  delete process.env.APCA_API_KEY_ID;
+  delete process.env.APCA_API_SECRET_KEY;
+  delete process.env.FINNHUB_API_KEY;
+  const now = Date.parse("2026-07-20T12:00:00Z");
+  Date.now = () => now;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    if (url.hostname !== "query1.finance.yahoo.com") throw new Error(`Unexpected request: ${url}`);
+    return json(yahooChart(url.searchParams.get("interval"), now));
+  };
+
+  const latest = await (await GET()).json();
+  assert.equal(latest.bars.length, 1, "research display retains the forming candle");
+  assert.equal(latest.analysisBars.length, 0);
+
+  const strictResponse = await GET(new Request(
+    "https://aperture.test/api/market?targetDate=2026-07-20&view=STRICT",
+  ));
+  assert.equal(strictResponse.status, 200);
+  const strict = await strictResponse.json();
+  assert.equal(strict.bars.length, 0);
+  assert.deepEqual(strict.bars, strict.analysisBars);
+});
+
 test("missing expected prior session never substitutes or mislabels an older or undated close", async () => {
   __resetMarketRouteCachesForTests();
   delete process.env.APCA_API_KEY_ID;

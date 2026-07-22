@@ -79,7 +79,32 @@ test("outbox retry blocks later sequences until the first contiguous item is rea
   const secondPage = repository.recoveryPage("stream-1", firstPage.nextAfterSequence, 1);
   assert.equal(secondPage.emissions[0].serviceSequence, 2);
   assert.equal(secondPage.hasMore, false);
-  repository.recordDeliveryFailure("stream-1", 1, 1, 10_000);
+  repository.recordDeliveryFailure({
+    streamId: "stream-1",
+    fromSequence: 1,
+    toSequence: 2,
+    attempts: 1,
+    errorCode: "INGESTION_HTTP_400_INGESTION_EMISSION_INVALID",
+    failedAt: 9_000,
+    nextRetryAt: 10_000,
+  });
+  assert.deepEqual(repository.deliveryHealth("stream-1"), {
+    highestContiguousAck: 0,
+    backlog: 2,
+    oldestPendingAt: state.lastAvailableAt,
+    maximumAttempts: 1,
+    pendingFromSequence: 1,
+    pendingToSequence: 2,
+    nextRetryAt: 10_000,
+    lastFailure: {
+      fromSequence: 1,
+      toSequence: 2,
+      errorCode: "INGESTION_HTTP_400_INGESTION_EMISSION_INVALID",
+      failedAt: 9_000,
+      nextRetryAt: 10_000,
+      attempts: 1,
+    },
+  });
   assert.equal(repository.readyOutbox("stream-1", 9_999).length, 0);
   assert.equal(repository.readyOutbox("stream-1", 10_000).length, 2);
 });

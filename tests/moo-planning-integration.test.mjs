@@ -22,8 +22,29 @@ test("Strict MOO uses the served forecast block and an exact prior session", asy
   assert.match(page, /let timedOut = false/);
   assert.match(page, /timedOut = true; controller\.abort\(\)/);
   assert.match(page, /forecastEnvelope\?\.targetDate === mooTargetDate/);
-  assert.doesNotMatch(page, /setStrictForecast\(null\)/);
+  assert.match(page, /type MooSessionSelection = \{/);
+  assert.match(page, /mode: "FOLLOW_ACTIVE" \| "AUDIT_PINNED"/);
+  assert.match(page, /selection\.mode === "AUDIT_PINNED" && selection\.date/);
+  assert.match(page, /reconcileMooSessionSelection\(current, clockMs\)/);
+  assert.match(page, /setMooSessionSelection\(\{ date: event\.target\.value, mode: "AUDIT_PINNED" \}\)/);
+  assert.match(page, /Return to active session/);
+  assert.match(page, /Determining active session/);
+  assert.doesNotMatch(page, /defaultTargetSession\(clockMs \?\? lastRefreshAt \?\? 0\)/);
+  assert.match(page, /Volver a la sesión activa/);
+  assert.match(page, /FOLLOWING ACTIVE SESSION · AUTOMATIC ROLLOVER ON/);
+  assert.match(page, /AUDIT DATE PINNED · AUTOMATIC ROLLOVER PAUSED/);
+  assert.match(page, /PINNED AUDIT/);
+  assert.match(page, /AUDITORÍA FIJADA/);
+  assert.match(page, /strictForecastPollRef\.current = \{ sequence: strictForecastPollRef\.current\.sequence \+ 1, controller: null, targetDate: null \}/);
+  assert.match(page, /strictMarketPollRef\.current = \{ sequence: strictMarketPollRef\.current\.sequence \+ 1, controller: null, targetDate: null \}/);
+  assert.match(page, /mooSystemStatusPollRef\.current = \{ sequence: mooSystemStatusPollRef\.current\.sequence \+ 1, controller: null, targetDate: null \}/);
+  assert.match(page, /setStrictForecast\(null\)/);
+  assert.match(page, /setStrictMarket\(null\)/);
+  assert.match(page, /setMooSystemStatus\(null\)/);
   assert.match(page, /enumerateNearbyTargetSessions\(clockMs, \{ past: 5, future: 10 \}\)/);
+  assert.match(page, /function StrictStatusUnavailableNotice/);
+  assert.match(page, /Current server status is not yet available/);
+  assert.equal([...page.matchAll(/<StrictStatusUnavailableNotice lang=\{lang\} message=\{mooSystemStatusError\} \/>/g)].length, 2);
 });
 
 test("paper planner consumes the flat public-safe broker status contract", async () => {

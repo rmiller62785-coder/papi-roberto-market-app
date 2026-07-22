@@ -1,0 +1,17 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "aperture-nvda-capture-scheduler",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-22",
+  "secrets": {
+    "required": [
+      "CAPTURE_SCHEDULER_SECRET",
+      "SITES_ACCESS_BYPASS_TOKEN"
+    ]
+  },
+  "vars": {
+    "CAPTURE_SCHEDULER_URL": "https://aperture-nvda-plan.rmiller62785.chatgpt.site/api/internal/scheduled-capture",
+    "CAPTURE_SCHEDULER_AUDIENCE": "aperture-sites-capture-scheduler"
+  },
+  "triggers": { "crons": ["* * * * *"] }
+}

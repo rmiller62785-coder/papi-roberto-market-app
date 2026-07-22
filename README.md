@@ -18,8 +18,8 @@ Production: <https://aperture-nvda-plan.rmiller62785.chatgpt.site>
 - `app/api/market`: normalized NVDA quote, source health, completed-session history, and minute context.
 - `app/api/forecast`: explicitly non-actionable research evidence and stored research checkpoints.
 - `app/api/moo/status`: server-owned Strict MOO commissioning/readiness snapshot plus a public-safe paper broker reference.
-- `worker/index.ts` + `app/scheduled-capture.ts`: browser-independent scheduled research capture.
-- The Sites Worker minute heartbeat also completes the idempotent historical-schema bootstrap after deploy, including weekends. Public GET routes only verify the readiness marker and never run bootstrap DDL; market capture still exits before provider calls outside its named Eastern windows.
+- `services/capture-scheduler` + `app/api/internal/scheduled-capture`: the deployed, browser-independent one-minute control plane for research checkpoints, outcomes, and R2 archival. The standalone Worker signs a fixed trigger; Sites derives the admitted minute from its own clock and rejects replay, skew, redirects, and caller-selected dates.
+- `worker/index.ts` retains the same scheduled handler for hosting platforms that attach its declared cron, but Aperture production does not depend on that implicit path. Public GET routes only verify the readiness marker and never run bootstrap DDL; market capture exits before provider calls outside its named Eastern windows.
 - D1: research weights, checkpoints, scheduler-owned freezes, automation health, immutable provider observations, completed-minute revisions, session archives, ingestion replay nonces, and contiguous stream acknowledgements. Public GET routes remain read-only.
 - `app/api/internal/market-stream`: audience-bound HMAC receiver for the separate durable stream service. Requests are replay-protected, runtime-validated, recorded idempotently by stream/sequence, and acknowledged only after the immutable prefix is durable.
 - `services/market-stream`: independently deployable Cloudflare Worker + SQLite Durable Object. It owns provider WebSockets, restart recovery, authoritative provider-bar versions, an ordered delivery outbox, and browser fanout. Its production configuration selects paid Alpaca SIP, but every observation remains research-only until the provider confirms the current connection's complete SIP subscription.
@@ -38,6 +38,7 @@ Copy `.env.example` for local development. Secrets stay server-side.
 - `FINNHUB_API_KEY`: fallback quote, company/news, earnings, and cross-market research.
 - `WEIGHTS_ADMIN_EMAILS`: comma-separated allowlist for authenticated production-weight writes.
 - `SITES_INGESTION_AUDIENCE` / `SITES_INGESTION_SECRET`: shared receiver identity and HMAC secret for the durable stream service. Configure these only in Sites and the Worker secret managers.
+- `CAPTURE_SCHEDULER_AUDIENCE` / `CAPTURE_SCHEDULER_SECRET`: shared identity and HMAC secret for the standalone one-minute scheduler and its private Sites receiver. The scheduler also holds the Sites access-bypass token server-side.
 - `DB`: D1 binding declared in `.openai/hosting.json`.
 - `ARCHIVE`: private R2 binding declared in `.openai/hosting.json` for verified immutable market-stream segments.
 
@@ -55,7 +56,7 @@ npm test
 npm run lint
 ```
 
-Tests cover market calendars and DST, stale/future-skewed data, unfinished candles, strict freeze boundaries, source entitlements, broker metadata safety, adaptive polling, server-owned Strict status, risk math, immutable artifacts, D1 as-of persistence, stream authentication/contracts, research isolation, and scheduled capture.
+Tests cover market calendars and DST, stale/future-skewed data, unfinished candles, strict freeze boundaries, source entitlements, broker metadata safety, adaptive polling, server-owned Strict status, risk math, immutable artifacts, D1 as-of persistence, stream authentication/contracts, research isolation, signed scheduler replay/skew controls, and scheduled capture.
 
 ## Deployment
 

@@ -7,7 +7,7 @@ import {
   type PublicMarketSnapshot,
   streamInstanceName,
 } from "./contracts.ts";
-import { SignedSitesIngestionClient, consumeBrowserAccessToken } from "./auth.ts";
+import { SignedSitesIngestionClient, consumeBrowserAccessToken, ingestionDeliveryErrorCode } from "./auth.ts";
 import { originAllowed, validateMarketStreamEnv } from "./config.ts";
 import {
   AlpacaStreamSupervisor,
@@ -426,8 +426,18 @@ export class NvdaMarketStream {
       } catch (error) {
         const first = rows[0];
         const attempts = first.attempts + 1;
-        this.#repository.recordDeliveryFailure(first.stream_id, first.service_sequence, attempts, Date.now() + deliveryBackoffMs(attempts));
-        throw error;
+        const failedAt = Date.now();
+        const errorCode = ingestionDeliveryErrorCode(error);
+        this.#repository.recordDeliveryFailure({
+          streamId: first.stream_id,
+          fromSequence: batch.fromSequence,
+          toSequence: batch.toSequence,
+          attempts,
+          errorCode,
+          failedAt,
+          nextRetryAt: failedAt + deliveryBackoffMs(attempts),
+        });
+        throw new Error(errorCode);
       }
     }
   }

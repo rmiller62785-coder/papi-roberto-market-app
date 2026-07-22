@@ -12,6 +12,7 @@ dependencies = []
 
 [project.scripts]
 aperture-research = "aperture_research.cli:main"
+aperture-proxy-bootstrap = "aperture_research.proxy_cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
