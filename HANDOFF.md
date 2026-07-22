@@ -8,15 +8,15 @@ Read this file completely before changing the application, Workers, storage cont
 - Product: Aperture NVDA, bilingual English/Spanish market intelligence with a separate fail-closed Strict MOO workflow.
 - GitHub: <https://github.com/rmiller62785-coder/papi-roberto-market-app>
 - Authoritative repair branch: `codex/commission-alpaca-sip`
-- Current repair source commit: `5bdd573e6f67857b2e5288235be964d9043281d8`
-- Last application-code release verified before this repair: Sites version 43. The current repair must be published from its exact final handoff commit.
-- Application build prepared by the current repair: `2026.07.22.7`
+- Current production application commit: `eacb2f36d3501c7f2e5c460cba8df28b6605bc7c`
+- Current application release: Sites version 47
+- Current application build: `2026.07.22.8`
 - Sites project: `appgprj_6a5bbe1032d48191a928da44006bb605`
 - Sites bindings: D1 `DB`, private R2 `ARCHIVE`
 - Sites environment revision at the verified deployment: 8
 - Access: public. Do not add email-based viewer gating unless the owner explicitly requests a future access-policy change.
 
-The current repair is developed on `codex/commission-alpaca-sip` and must be fast-forwarded to `origin/main` only after the full validation and independent reviews in this handoff pass. Never force-update or rebase over user work.
+The repair was developed on `codex/commission-alpaca-sip`; that branch and `origin/main` contain application commit `eacb2f36d3501c7f2e5c460cba8df28b6605bc7c` plus any later documentation-only handoff commit. Never force-update or rebase over user work.
 
 The synchronized writable clone used for this repair is:
 
@@ -28,13 +28,15 @@ The parent Codex worktree at `C:\Users\rmill\.codex\worktrees\15fa\Papi Roberto 
 
 ## Verified production snapshot
 
-Snapshot time: 2026-07-22 08:51 ET / 12:51 UTC. This is evidence of the state at that time, not a permanent assertion.
+Snapshot time: 2026-07-22 14:13 ET / 18:13 UTC. This is evidence of the state at that time, not a permanent assertion.
 
-- `/api/version`: `2026.07.22.6`
+- `/api/version`: `2026.07.22.8`
 - Strict U.S. source: `LIVE`, `REALTIME`, `CONSOLIDATED_SIP`, provider `Alpaca SIP`
-- Durable stream supervisor: `LIVE`
+- Durable stream supervisor: `LIVE`, detail `STREAM_PRIORITY_LIVE`
 - Alpaca paper broker reference metadata: `live`
-- Strict market response: 291 completed bars and 291 analysis bars; forming candles were excluded
+- Three consecutive production samples advanced the priority head from `2916926` to `2917339`; quote age remained between 1.0 and 2.6 seconds.
+- The immutable ordered raw cursor independently advanced from `245795` to `245855`. It was not skipped or rewritten by the priority path.
+- The production UI/API exposes both current projection sequence and the minimum ordered audit backlog.
 - Correct current blockers:
   - `TRAINED_MODEL_NOT_PROMOTED`
   - `IMMUTABLE_DECISION_FREEZE_NOT_AVAILABLE`
@@ -42,17 +44,17 @@ Snapshot time: 2026-07-22 08:51 ET / 12:51 UTC. This is evidence of the state at
 - Correct visible stage when the SIP quote is fresh: `Source health READY · 1/1`, followed by `Model readiness · UNAVAILABLE`
 - Correct visible blocker: `Promoted opening model required`
 - Quote freshness is derived from server timestamps and displays the actual five-second policy window
-- Production root returned HTTP 200 with no epoch/1970 date and no browser console warnings or errors
+- Production root returned HTTP 200. Browser-extension visual inspection was unavailable during this release, so no fresh console claim is recorded.
+- Today was already `CROSS_COMPLETE` when the repair went live. A missing 09:24:30 ET artifact cannot be recreated after the fact; today must remain `NO_TRADE` even though the live source is repaired.
 
 ### Unresolved operational alert
 
-The unattended capture system was **not yet proven healthy** at the snapshot time:
+The unattended capture system was **not healthy** at the snapshot time and was not changed by the live-quote priority repair:
 
 - `/api/automation/health` reported `failed`.
 - The append-only last run remained the T-4H failure: `source availability exceeds the scheduled checkpoint cutoff`.
-- The 08:30 ET T-1H checkpoint was reported missed.
-- The next expected checkpoint at the snapshot time was T-30M at 09:00 ET.
-- The deployed scheduler Worker existed and declared the one-minute cron, but the D1 checkpoint ledger had no successful receiver attempt after the earlier T-4H failure.
+- All 2026-07-22 checkpoints were reported missed, and the next expected checkpoint was 2026-07-23 `OVERNIGHT`.
+- The deployed scheduler Worker exists and declares the one-minute cron, but the D1 checkpoint ledger still has no successful terminal snapshot row.
 
 The current repair raises the caller timeout to 30 seconds, records an admitted `started` row before provider work, overlaps market and forecast reads, removes R2 archival from checkpoint minutes, and distinguishes running/stalled/failed/snapshot-success states. After deployment, observe the next exact checkpoint and require a new terminal snapshot-success ledger row before declaring automation healthy. Historical misses remain missed and must never be backfilled.
 
@@ -77,11 +79,12 @@ The current repair raises the caller timeout to 30 seconds, records an admitted 
 
 - Name: `aperture-nvda-market-stream`
 - Production configuration: `services/market-stream/wrangler.production.jsonc`
-- Latest verified deployment version: `2aebf8f5-e022-4b7e-9d00-4a3d3972666e`
+- Latest verified deployment version: `24a7d4e4-82f9-4528-ac3c-2b5dada62ed2`
 - Feed: Alpaca SIP with `SIP_ENTITLED=true`
 - Durable Object: `NvdaMarketStream`
-- Responsibility: provider WebSocket ownership, restart recovery, completed-bar revisions, ordered delivery outbox, and stream health.
+- Responsibility: provider WebSocket ownership, restart recovery, completed-bar revisions, ordered delivery outbox, bounded current-state priority projection, and stream health.
 - The stream can be healthy while a Strict quote is temporarily stale. Do not label that as a disconnected socket or an entitlement failure.
+- The raw append-only replay is materially backlogged. The current projection makes live status operational but is not a substitute for resolving long-term raw-ledger throughput and retention.
 
 ### Capture-scheduler Worker
 
@@ -133,6 +136,11 @@ The current repair raises the caller timeout to 30 seconds, records an admitted 
 18. No LLM, browser, scheduled Worker, or research runner may place unrestricted live trades.
 19. The 45-second Strict status delivery envelope and five-second quote actionability window are separate. A retained last-good audit may display during a retry, but it cannot keep a quote live.
 20. Broker metadata and paper health are outside the `/api/moo/status` critical path and cannot delay or unlock Strict readiness.
+21. The priority projection is an authenticated, replaceable one-row current view. It never advances the immutable raw cursor and never becomes a second append-only ledger.
+22. A current quote projection requires an earlier same-epoch `LIVE` connection proof and an exact reducer-selected websocket SIP quote. The full signed projection payload and nanosecond source timestamp remain reconstructable.
+23. Negative state and new-epoch controls clear the projected quote immediately. Newer controls may supersede unresolved older quote or state requests; sequence and epoch guards reject late regression.
+24. Strict reads bind to the exact current projection head. If health and source reads observe different heads, the source fails closed and cannot fall back to an older raw quote.
+25. Worker and receiver clocks are validated independently against read time. Do not require exact cross-host timestamp ordering within the accepted skew window.
 
 ## Regression map
 
@@ -143,7 +151,7 @@ The current repair raises the caller timeout to 30 seconds, records an admitted 
 | Strict presentation | Five-second quote expiry, 45-second audit envelope, retry state, and current blocker are consistent visually and for screen readers | `app/components/StrictMooJourney.tsx`, `app/page.tsx` | `tests/rendered-html.test.mjs`, `tests/strict-moo-presentation.test.mjs` |
 | Operational planes | Research, unattended automation, and Strict health remain independently visible and bilingual | `app/page.tsx`, `app/globals.css` | `tests/rendered-html.test.mjs`, `tests/polling-policy.test.mjs` |
 | Completed-bar integrity | Strict bars equal analysis bars and exclude forming candles | `app/api/market/route.ts`, `app/market-reducer.ts`, `app/selected-market-research.ts` | `tests/market-route-durable-stream.test.mjs`, `tests/selected-market-research.test.mjs` |
-| Durable ingestion | Immutable ordered events, replay protection, contiguous acknowledgements | `app/api/internal/market-stream/route.ts`, `app/market-stream-receiver.ts`, `services/market-stream/` | stream receiver and service test suites |
+| Durable ingestion | Immutable ordered events, replay protection, contiguous acknowledgements, bounded exact-head current projection, and superseding negative controls | `app/api/internal/market-stream/route.ts`, `app/market-stream-receiver.ts`, `services/market-stream/` | stream receiver and service test suites |
 | Scheduled capture | Exact-minute signed trigger, server-derived time, no backfill | `app/api/internal/scheduled-capture/route.ts`, `app/scheduled-capture.ts`, `services/capture-scheduler/` | scheduler auth, route, bridge, and scheduled-capture tests |
 | Immutable artifacts | Freeze/model/risk/locate contracts remain validated and fail-closed | `app/moo-artifact-store.ts`, `app/moo-feature-snapshot.ts`, `app/moo-model-registry.ts`, `app/moo-risk-policy.ts` | corresponding MOO artifact/model/risk tests |
 | Historical research | Proxy and official datasets remain explicitly separate and chronological | `research/src/aperture_research/` | `research/tests/` |
@@ -260,17 +268,22 @@ For time/session changes, cover holidays, early closes, DST boundaries, stale/mi
 - `e0e7a12` — make prior-session resolution non-throwing
 - `95570a0` — align the Strict banner and freshness presentation with server state
 - `5bdd573` — repair scheduler capture, split operational planes, and add safe research/broker automation
+- `853c896` — bound raw outbox pages and restore ordered SIP ingestion
+- `eacb2f3` — add the bounded live SIP priority projection and exact-head Strict reads
 
-The current repair passed the production build, 457 application tests, 16 Python research tests, 13 capture-scheduler tests plus typecheck/preflight, 30 paper-broker tests plus typecheck/preflight, and ESLint on every changed JS/TS file. The broad repository ESLint invocation can be slow on this Windows junction-backed clone; the changed-file lint is the authoritative current result. Production API/browser checks and independent point-in-time, security, and UX reviews must also pass before release.
+The current repair passed the production build, all 470 repository tests, Worker typecheck/preflight, migration-chain verification, and ESLint on every changed JS/TS file. Fresh point-in-time, security/API-integrity, and operational/failure-mode reviewers reported no remaining findings. Sites version 47 and market-stream Worker `24a7d4e4-82f9-4528-ac3c-2b5dada62ed2` were then verified against the live API.
 
 ## Remaining commissioning roadmap
 
-1. Deploy the scheduler repair and prove it at an exact future checkpoint; do not backfill missed evidence.
-2. Put the Alpaca research workflow on the default branch, configure its two GitHub secrets, and collect immutable nightly proxy artifacts as a separate research plane.
-3. Obtain licensed historical Nasdaq Official Opening Cross/NOII data for a genuine official-open model; Alpaca SIP cannot substitute for it.
-4. Accumulate live point-in-time features and outcomes, compare against simple baselines with costs, calibrate, and pass chronological walk-forward promotion gates.
-5. Add a human-reviewed immutable model promotion workflow and exact-session inference/freeze artifact.
-6. Commission an account-specific risk policy and locate proof.
-7. Keep paper order submission disabled until the explicit paper-broker safety prerequisites are satisfied.
+1. Prove the scheduler at the next exact checkpoint; do not backfill today’s missed evidence. Diagnose the separate `source availability exceeds the scheduled checkpoint cutoff` failure if it repeats.
+2. Move the high-volume immutable raw audit stream to a reviewed Queue/R2 archival design or otherwise raise ordered replay throughput. The public `minimum ordered audit backlog` is currently a lower bound and was still growing at the release snapshot.
+3. Put the Alpaca research workflow on the default branch, configure its two GitHub secrets, and collect immutable nightly proxy artifacts as a separate research plane.
+4. Use Databento’s signup credit, if still offered and license-compatible, for a bounded private historical NVDA `imbalance`/`statistics` research backfill. Credit is not a permanent live entitlement and data must not be publicly redistributed without approval.
+5. Nasdaq sample ITCH days may validate a parser only. They are not continuous history. A genuine official-open model still needs licensed historical Nasdaq Opening Cross/NOII outcomes; Alpaca SIP cannot substitute for them.
+6. If live auction fields are added through IBKR generic tick 225, run TWS/IB Gateway continuously outside Sites, confirm TotalView entitlement and public-display rights, and keep those fields monitoring-only until commissioned.
+7. Accumulate point-in-time features/outcomes, compare against simple baselines with costs, calibrate, and pass chronological walk-forward promotion gates.
+8. Add a human-reviewed immutable model promotion workflow and exact-session inference/freeze artifact.
+9. Commission an account-specific risk policy and locate proof. IBKR shortable/borrow indicators and FINRA/SEC delayed files are context, not a guaranteed locate.
+10. Keep paper order submission disabled until the explicit paper-broker safety prerequisites are satisfied.
 
 Until those steps are complete, Strict correctly remains `NO_TRADE` and `NOT_COMMISSIONED`. Populating research fields is not equivalent to commissioning execution.

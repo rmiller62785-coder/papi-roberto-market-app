@@ -40,6 +40,8 @@ The Sites receiver must verify the audience-bound HMAC with a durable atomic non
 
 It must insert emissions idempotently by `(streamId, serviceSequence)` before advancing the contiguous acknowledgement. The sender retains unacknowledged rows in its SQLite outbox and retries them in order.
 
+The service also sends an independent authenticated priority projection for current SIP state. This is not another history stream: Sites stores exactly one replaceable row per stream while the raw outbox remains immutable and ordered. Quote projections require an earlier same-epoch LIVE proof and an exact reducer-selected websocket quote. Negative provider states and new connection epochs supersede unresolved older requests, clear quote fields, and fail Strict closed immediately. Receiver sequence/epoch/time guards reject late regressions. Current quote cadence is two seconds; raw replay backoff cannot block it.
+
 `SITES_ACCESS_BYPASS_TOKEN` is the Worker-only Sites custom-access token. It only crosses the outer Sites sign-in gate; it does not replace the ingestion HMAC and must never be exposed to browser code or logs.
 
 ### Zero-downtime ingestion HMAC rotation
