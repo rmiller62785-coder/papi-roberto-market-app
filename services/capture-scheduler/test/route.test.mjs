@@ -88,7 +88,7 @@ test("private route derives the current minute server-side and keeps archive wor
   assert.deepEqual(payload.archive, []);
 });
 
-test("a phase-null heartbeat runs the bounded archive maintenance path", async () => {
+test("a phase-null daytime heartbeat leaves archive maintenance off the live-ingestion path", async () => {
   const h = harness();
   h.dependencies.runCapture = async (input) => {
     h.calls.capture.push(input);
@@ -102,9 +102,27 @@ test("a phase-null heartbeat runs the bounded archive maintenance path", async (
   assert.equal(response.status, 200);
   const payload = await response.json();
   assert.equal(h.calls.capture.length, 1);
+  assert.equal(h.calls.archive.length, 0);
+  assert.deepEqual(payload.archive, []);
+});
+
+test("an off-hours phase-null heartbeat archives exactly one bounded segment", async () => {
+  const h = harness();
+  h.dependencies.runCapture = async (input) => {
+    h.calls.capture.push(input);
+    return { phase: null, status: "skipped", reason: "outside Eastern capture windows" };
+  };
+  const offHours = Date.parse("2026-07-23T00:05:10.123Z"); // 20:05 ET
+  const response = await handleScheduledCapturePost(
+    await requestAt(offHours, "archive0123456789abcdef012345678"),
+    h.runtime,
+    { now: offHours, fetchApp: h.fetchApp, dependencies: h.dependencies },
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json();
   assert.equal(h.calls.archive.length, 1);
-  assert.equal(h.calls.archive[0].sealedAt, MINUTE);
-  assert.equal(h.calls.archive[0].maximumRows, 5_000);
+  assert.equal(h.calls.archive[0].sealedAt, Date.parse("2026-07-23T00:05:00Z"));
+  assert.equal(h.calls.archive[0].maximumRows, 500);
   assert.equal(payload.archive.length, 1);
 });
 

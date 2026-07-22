@@ -293,6 +293,7 @@ export const marketStreamIngestEmissions = sqliteTable("market_stream_ingest_emi
   uniqueIndex("market_stream_emission_sequence_idx").on(table.streamId, table.serviceSequence),
   uniqueIndex("market_stream_emission_id_idx").on(table.emissionId),
   index("market_stream_emission_available_idx").on(table.availableAt),
+  index("market_stream_emission_archive_anchor_idx").on(table.createdAt, table.streamId, table.serviceSequence),
   check("market_stream_emission_sequence_check", sql`${table.serviceSequence} > 0`),
   check("market_stream_emission_epoch_check", sql`${table.connectionEpoch} >= 0`),
 ]);

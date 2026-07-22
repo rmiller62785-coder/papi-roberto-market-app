@@ -1,5 +1,9 @@
 import { archiveD1MarketStreamPrefix, type D1MarketArchiveRun } from "../../../d1-market-archive.ts";
 import {
+  SCHEDULED_ARCHIVE_MAXIMUM_ROWS,
+  shouldRunScheduledArchiveMaintenance,
+} from "../../../archive-maintenance.ts";
+import {
   MarketIngestionSchemaUnavailableError,
   ensureMooSafetySchemaOnce,
   requireMarketIngestionSchema,
@@ -107,20 +111,16 @@ export async function handleScheduledCapturePost(
       store,
     });
     // Checkpoint capture owns the latency budget during its narrow ET window.
-    // The every-minute cron archives on the next phase-null invocation instead
-    // of competing with market/forecast reads and immutable D1 writes.
+    // A single small archive segment is admitted only off-hours; the previous
+    // every-minute 4x5,000-row loop starved live SIP ingestion in D1.
     const archiveResults: D1MarketArchiveRun[] = [];
-    if (captureResult.phase == null) {
-      for (let segment = 0; segment < 4; segment += 1) {
-        const result = await dependencies.archivePrefix({
-          database: runtime.DB!,
-          bucket: runtime.ARCHIVE!,
-          sealedAt: scheduledTime,
-          maximumRows: 5_000,
-        });
-        archiveResults.push(result);
-        if (result.status === "EMPTY") break;
-      }
+    if (captureResult.phase == null && shouldRunScheduledArchiveMaintenance(scheduledTime)) {
+      archiveResults.push(await dependencies.archivePrefix({
+        database: runtime.DB!,
+        bucket: runtime.ARCHIVE!,
+        sealedAt: scheduledTime,
+        maximumRows: SCHEDULED_ARCHIVE_MAXIMUM_ROWS,
+      }));
     }
     return Response.json({
       ok: true,

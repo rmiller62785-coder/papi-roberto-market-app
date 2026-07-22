@@ -5,7 +5,12 @@ import { DatabaseSync } from "node:sqlite";
 import { normalizeAlpacaMessages } from "../src/ingestor.ts";
 import { NvdaMarketStream } from "../src/index.ts";
 import { advanceMarketWatermark, initialMarketStreamState, reduceProviderEvent } from "../src/reducer.ts";
-import { DurableSqlNonceStore, MarketStreamRepository } from "../src/storage.ts";
+import {
+  DurableSqlNonceStore,
+  MarketStreamRepository,
+  OUTBOX_DELIVERY_MAX_BYTES,
+  OUTBOX_DELIVERY_MAX_ROWS,
+} from "../src/storage.ts";
 
 function cursor(rows = []) {
   return { *[Symbol.iterator]() { yield* rows; }, toArray() { return rows; } };
@@ -107,6 +112,35 @@ test("outbox retry blocks later sequences until the first contiguous item is rea
   });
   assert.equal(repository.readyOutbox("stream-1", 9_999).length, 0);
   assert.equal(repository.readyOutbox("stream-1", 10_000).length, 2);
+});
+
+test("outbox delivery pages are small, byte-bounded, and resume at the exact acknowledged sequence", () => {
+  const storage = memoryStorage();
+  const repository = new MarketStreamRepository(storage); repository.initializeSchema();
+  let state = initialMarketStreamState("iex", "bounded-stream"); repository.saveInitialState(state);
+  for (let id = 1; id <= OUTBOX_DELIVERY_MAX_ROWS + 8; id += 1) {
+    const base = providerEvent();
+    const event = {
+      ...base,
+      eventKey: `${base.eventKey}:bounded:${id}`,
+      providerEventId: String(id),
+      trade: { ...base.trade, providerTradeId: String(id) },
+    };
+    const accepted = reduceProviderEvent(state, event); state = accepted.state;
+    repository.commit({ state, emissions: accepted.emissions, event });
+  }
+
+  const first = repository.readyOutbox("bounded-stream", Date.now());
+  assert.equal(first.length, OUTBOX_DELIVERY_MAX_ROWS);
+  assert.deepEqual(first.map((row) => row.service_sequence),
+    Array.from({ length: OUTBOX_DELIVERY_MAX_ROWS }, (_, index) => index + 1));
+  assert.ok(first.reduce((bytes, row) => bytes + new TextEncoder().encode(row.payload).byteLength, 0) <=
+    OUTBOX_DELIVERY_MAX_BYTES);
+
+  repository.acknowledge("bounded-stream", OUTBOX_DELIVERY_MAX_ROWS, Date.now());
+  const second = repository.readyOutbox("bounded-stream", Date.now());
+  assert.deepEqual(second.map((row) => row.service_sequence),
+    Array.from({ length: 8 }, (_, index) => OUTBOX_DELIVERY_MAX_ROWS + index + 1));
 });
 
 test("provider recovery checkpoints survive repository restart and advance page by page", () => {

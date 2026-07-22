@@ -54,6 +54,8 @@ test("D1 archival binds coverage and uniqueness to one immutable stream identity
   assert.equal(result.status, "VERIFIED");
   assert.deepEqual([result.fromSequence, result.toSequence, result.rowCount], [1, 2, 2]);
   assert.match(result.objectKey, /stream=nvda-sip/);
+  assert.match(statements[0], /MAX\(to_sequence\)/);
+  assert.match(statements[0], /service_sequence=candidate\.next_sequence/);
   assert.equal(statements.filter((sql) => sql.includes("NOT EXISTS")).every((sql) => sql.includes("segment.stream_id=emission.stream_id")), true);
   assert.match(statements.find((sql) => sql.includes("INSERT INTO market_archive_segments")), /segment_id,stream_id,provider/);
 });

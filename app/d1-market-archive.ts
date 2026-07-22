@@ -88,16 +88,21 @@ export async function archiveD1MarketStreamPrefix(input: {
     throw new TypeError("maximumRows must be between 1 and 5000");
   }
 
-  const first = await input.database.prepare(`SELECT emission.stream_id,emission.service_sequence,
+  const first = await input.database.prepare(`WITH archive_heads AS (
+      SELECT stream_id,MAX(to_sequence) AS to_sequence FROM market_archive_segments
+      WHERE state='VERIFIED' GROUP BY stream_id
+    ), candidates AS (
+      SELECT stream.stream_id,stream.provider,stream.feed,stream.symbol,
+        COALESCE(head.to_sequence,0)+1 AS next_sequence
+      FROM market_stream_ingest_streams AS stream
+      LEFT JOIN archive_heads AS head ON head.stream_id=stream.stream_id
+    ) SELECT emission.stream_id,emission.service_sequence,
       emission.connection_epoch,emission.available_at,emission.payload_hash,emission.payload_json,
-      stream.provider,stream.feed,stream.symbol
-    FROM market_stream_ingest_emissions AS emission
-    JOIN market_stream_ingest_streams AS stream ON stream.stream_id=emission.stream_id
-    WHERE emission.available_at<=? AND NOT EXISTS (
-      SELECT 1 FROM market_archive_segments AS segment
-      WHERE segment.state='VERIFIED' AND segment.stream_id=emission.stream_id
-        AND emission.service_sequence BETWEEN segment.from_sequence AND segment.to_sequence
-    )
+      candidate.provider,candidate.feed,candidate.symbol
+    FROM candidates AS candidate
+    JOIN market_stream_ingest_emissions AS emission ON emission.stream_id=candidate.stream_id
+      AND emission.service_sequence=candidate.next_sequence
+    WHERE emission.available_at<=?
     ORDER BY emission.created_at ASC,emission.stream_id ASC,emission.service_sequence ASC LIMIT 1`)
     .bind(sealedAt).first<LedgerRow>();
   if (!first) return { status: "EMPTY", segmentId: null, objectKey: null, rowCount: 0, fromSequence: null, toSequence: null };

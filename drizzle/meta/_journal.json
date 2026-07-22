@@ -57,6 +57,13 @@
       "when": 1784681301775,
       "tag": "0009_moo_model_archive",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1784739713307,
+      "tag": "0010_market_stream_archive_anchor",
+      "breakpoints": true
     }
   ]
 }

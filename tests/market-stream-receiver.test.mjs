@@ -186,6 +186,45 @@ test("D1 receiver makes duplicate delivery idempotent", async () => {
   assert.equal(await scalar("SELECT highest_contiguous_sequence AS value FROM market_stream_ingest_cursors WHERE stream_id=?", "duplicate-stream"), 2);
 });
 
+test("D1 receiver advances a large backlog in bounded pages and replays an old page without gaps", async () => {
+  const streamId = "bounded-backlog-stream";
+  const connected = beginConnectionEpoch(initialMarketStreamState("iex", streamId), BASE);
+  let state = connected.state;
+  const emissions = [...connected.emissions];
+  for (let id = 1; id <= 25; id += 1) {
+    const receivedAt = BASE + id * 100;
+    const [event] = normalizeAlpacaMessages(JSON.stringify([{
+      T: "t", S: "NVDA", i: 500 + id, x: "Q", p: 200 + id / 100, s: 1,
+      c: ["@"], t: new Date(receivedAt - 10).toISOString(), z: "C",
+    }]), { feed: "iex", receivedAt, processedAt: receivedAt + 1 });
+    const accepted = reduceProviderEvent(state, event);
+    state = accepted.state;
+    emissions.push(...accepted.emissions);
+  }
+
+  const pages = [];
+  for (let index = 0; index < emissions.length; index += 12) {
+    const pageEmissions = emissions.slice(index, index + 12);
+    const page = {
+      schemaVersion: "aperture-market-stream-v2",
+      streamId,
+      fromSequence: pageEmissions[0].serviceSequence,
+      toSequence: pageEmissions.at(-1).serviceSequence,
+      emissions: pageEmissions,
+    };
+    pages.push(page);
+    await ingestMarketStreamBatch(database, page, BASE + 20_000 + index);
+  }
+  await ingestMarketStreamBatch(database, structuredClone(pages[1]), BASE + 30_000);
+
+  assert.equal(await scalar("SELECT COUNT(*) AS value FROM market_stream_ingest_emissions WHERE stream_id=?", streamId), emissions.length);
+  assert.equal(await scalar("SELECT highest_contiguous_sequence AS value FROM market_stream_ingest_cursors WHERE stream_id=?", streamId), emissions.length);
+  const sequences = await database.prepare(`SELECT service_sequence FROM market_stream_ingest_emissions
+    WHERE stream_id=? ORDER BY service_sequence`).bind(streamId).all();
+  assert.deepEqual(sequences.results.map((row) => row.service_sequence),
+    Array.from({ length: emissions.length }, (_, index) => index + 1));
+});
+
 test("D1 receiver requires current-epoch LIVE proof before strict SIP websocket qualification", async () => {
   const streamId = "sip-websocket-strict-stream";
   const priorEpochLive = setProviderConnectionState(initialMarketStreamState("sip", streamId), "LIVE", BASE - 100);

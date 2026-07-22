@@ -3,7 +3,6 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 import { ensureMooSafetySchemaOnce } from "../app/d1-schema";
 import { createD1ScheduledCaptureStore, runScheduledCapture } from "../app/scheduled-capture";
-import { archiveD1MarketStreamPrefix } from "../app/d1-market-archive";
 import type { R2ArchiveBucket } from "../app/r2-market-archive";
 
 interface Env {
@@ -62,23 +61,8 @@ const worker = {
             handler.fetch(new Request(new URL(path, "https://nvda-scheduler.internal")), env, ctx),
           store,
         }))
-        .then(async (result) => {
+        .then((result) => {
           console.log("NVDA scheduled capture", result);
-          // Checkpoint minutes are latency-sensitive, especially the 09:24 ET
-          // decision freeze. Archive work is intentionally shifted to the next
-          // ordinary cron minute so it cannot contend with point-in-time D1
-          // writes or determine capture success.
-          if (result.phase !== null) return;
-          for (let segment = 0; segment < 4; segment += 1) {
-            const archived = await archiveD1MarketStreamPrefix({
-              database: env.DB,
-              bucket: env.ARCHIVE,
-              sealedAt: controller.scheduledTime,
-              maximumRows: 5_000,
-            });
-            console.log("NVDA market archive", archived);
-            if (archived.status === "EMPTY") break;
-          }
         })
         .catch((error) => console.error("NVDA scheduled maintenance failed", error));
     ctx.waitUntil(maintenance);

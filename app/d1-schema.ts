@@ -337,6 +337,8 @@ export const marketPersistenceSchemaSql = [
     ON market_stream_ingest_emissions (emission_id)`,
   `CREATE INDEX IF NOT EXISTS market_stream_emission_available_idx
     ON market_stream_ingest_emissions (available_at)`,
+  `CREATE INDEX IF NOT EXISTS market_stream_emission_archive_anchor_idx
+    ON market_stream_ingest_emissions (created_at,stream_id,service_sequence)`,
   `CREATE TABLE IF NOT EXISTS market_stream_ingest_cursors (
     stream_id TEXT PRIMARY KEY NOT NULL,
     highest_contiguous_sequence INTEGER NOT NULL CHECK (highest_contiguous_sequence >= 0),

@@ -219,7 +219,7 @@ test("the controlled bridge is idempotent and preserves an already-upgraded prod
 });
 
 test("migration journal retains the drift bridge, safety readiness, and immutable model/archive ownership", async () => {
-  const [journalText, migration, snapshotText, streamMigration, streamSnapshotText, safetyMigration, safetySnapshotText, modelArchiveMigration, modelArchiveSnapshotText, drizzleSchema] = await Promise.all([
+  const [journalText, migration, snapshotText, streamMigration, streamSnapshotText, safetyMigration, safetySnapshotText, modelArchiveMigration, modelArchiveSnapshotText, archiveAnchorMigration, archiveAnchorSnapshotText, drizzleSchema] = await Promise.all([
     readFile(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0006_live_market_state.sql", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/meta/0006_snapshot.json", import.meta.url), "utf8"),
@@ -229,10 +229,12 @@ test("migration journal retains the drift bridge, safety readiness, and immutabl
     readFile(new URL("../drizzle/meta/0008_snapshot.json", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0009_moo_model_archive.sql", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/meta/0009_snapshot.json", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/0010_market_stream_archive_anchor.sql", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/meta/0010_snapshot.json", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
   const journal = JSON.parse(journalText);
-  assert.equal(journal.entries.at(-1).tag, "0009_moo_model_archive");
+  assert.equal(journal.entries.at(-1).tag, "0010_market_stream_archive_anchor");
   assert.equal(journal.entries.some((entry) => entry.tag === "0008_moo_safety_schema_state"), true);
   assert.equal(journal.entries.some((entry) => entry.tag.startsWith("0004_")), false);
   assert.equal(journal.entries.some((entry) => entry.tag.startsWith("0005_")), false);
@@ -280,4 +282,7 @@ test("migration journal retains the drift bridge, safety readiness, and immutabl
     assert.match(drizzleSchema, new RegExp(tableName));
   }
   assert.match(modelArchiveMigration, /market_archive_stream_start_idx/);
+  assert.match(archiveAnchorMigration, /market_stream_emission_archive_anchor_idx/);
+  assert.match(archiveAnchorSnapshotText, /market_stream_emission_archive_anchor_idx/);
+  assert.match(drizzleSchema, /market_stream_emission_archive_anchor_idx/);
 });

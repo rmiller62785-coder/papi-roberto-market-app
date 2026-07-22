@@ -28,6 +28,14 @@ type OutboxRow = {
 export type ProviderRecoveryCheckpoint = { startAt: number; throughAt: number };
 export type FullSessionRecoveryProof = ProviderRecoveryCheckpoint & { completed: boolean };
 
+/**
+ * The Sites receiver performs several point-in-time D1 writes per emission.
+ * Keep delivery pages deliberately smaller than the transport/authentication
+ * ceiling so a growing outbox cannot turn one request into a D1 overload.
+ */
+export const OUTBOX_DELIVERY_MAX_ROWS = 12;
+export const OUTBOX_DELIVERY_MAX_BYTES = 24 * 1024;
+
 function first<T>(cursor: SqlCursorLike<T>) {
   return cursor.toArray()[0];
 }
@@ -138,7 +146,12 @@ export class MarketStreamRepository {
     return row?.highest_contiguous_sequence ?? 0;
   }
 
-  readyOutbox(streamId: string, now: number, maximumRows = 50, maximumBytes = 450_000) {
+  readyOutbox(
+    streamId: string,
+    now: number,
+    maximumRows = OUTBOX_DELIVERY_MAX_ROWS,
+    maximumBytes = OUTBOX_DELIVERY_MAX_BYTES,
+  ) {
     const ack = this.highestAck(streamId);
     const rows = this.storage.sql.exec<OutboxRow>(
       "SELECT stream_id, service_sequence, payload, attempts, next_attempt_at FROM outbox WHERE stream_id = ? AND service_sequence > ? ORDER BY service_sequence ASC LIMIT ?",

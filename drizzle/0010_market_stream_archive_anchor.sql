@@ -1,0 +1,1 @@
+CREATE INDEX `market_stream_emission_archive_anchor_idx` ON `market_stream_ingest_emissions` (`created_at`,`stream_id`,`service_sequence`);

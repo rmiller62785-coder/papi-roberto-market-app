@@ -35,6 +35,7 @@ import { AlpacaRestRecoveryClient } from "./provider-rest.ts";
 import { DurableSqlNonceStore, MarketStreamRepository, type DurableSqlStorageLike } from "./storage.ts";
 
 const WATCHDOG_ALARM_MS = 5_000;
+const BACKLOG_DRAIN_ALARM_MS = 250;
 const MAX_SOCKET_BUFFER_BYTES = 1_000_000;
 const PROVIDER_RECOVERY_WINDOWS_PER_TICK = 4;
 const CORRECTION_RECOVERY_SETTLE_MS = 60_000;
@@ -439,6 +440,13 @@ export class NvdaMarketStream {
         });
         throw new Error(errorCode);
       }
+    }
+    // Four successful pages bound one delivery turn. If a contiguous prefix is
+    // still ready, advance the durable alarm instead of waiting for another
+    // provider event or the five-second watchdog. Failures return from the
+    // catch path above and keep their persisted retry deadline authoritative.
+    if (this.#repository.readyOutbox(this.#market.streamId, Date.now(), 1).length) {
+      await this.ctx.storage.setAlarm(Date.now() + BACKLOG_DRAIN_ALARM_MS);
     }
   }
 

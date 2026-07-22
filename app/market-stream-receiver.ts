@@ -464,6 +464,23 @@ async function latestProviderState(
   throughSequence: number,
 ): Promise<ProviderStateEvidence | null> {
   if (throughSequence === 0) return null;
+  // Every admitted emission materializes a source-state row before the cursor
+  // advances. Read the exact cursor row first so hot-path work stays constant
+  // as the immutable ledger grows. The JSON-ledger lookup remains a legacy
+  // fallback for streams admitted before source-state materialization existed.
+  const materialized = await database.prepare(`SELECT detail_code,connection_epoch
+    FROM market_source_state_events WHERE id=?`).bind(`stream-source:${streamId}:${throughSequence}`)
+    .first<{ detail_code: string; connection_epoch: string }>();
+  const detail = /^STREAM_(DISCONNECTED|CONNECTING|AUTHENTICATING|SUBSCRIBING|LIVE|SILENT|BACKOFF|DEGRADED)$/.exec(
+    materialized?.detail_code ?? "",
+  );
+  const epochPrefix = `${streamId}:`;
+  const epochValue = materialized?.connection_epoch?.startsWith(epochPrefix)
+    ? Number(materialized.connection_epoch.slice(epochPrefix.length))
+    : Number.NaN;
+  if (detail && safeInteger(epochValue)) {
+    return { state: detail[1] as ProviderState, connectionEpoch: epochValue };
+  }
   const row = await database.prepare(`SELECT service_sequence,payload_json FROM market_stream_ingest_emissions
     WHERE stream_id=? AND service_sequence<=? AND json_type(payload_json,'$.delta.providerState')='text'
     ORDER BY service_sequence DESC LIMIT 1`).bind(streamId, throughSequence)
@@ -733,10 +750,12 @@ export async function ingestMarketStreamBatch(database: D1Database, batchValue: 
   statements.push(ledgerStatement(database, batch.emissions, hashes, now, binding, initialCursor));
   statements.push(database.prepare(`INSERT INTO market_stream_ingest_cursors (stream_id,highest_contiguous_sequence,updated_at)
     SELECT ?,?,? WHERE ${publicationGuardSql}
-      AND (SELECT COUNT(*) FROM market_stream_ingest_emissions WHERE stream_id=? AND service_sequence BETWEEN 1 AND ?)=?
+      AND (SELECT COUNT(*) FROM market_stream_ingest_emissions
+        WHERE stream_id=? AND service_sequence BETWEEN ? AND ?)=?
     ON CONFLICT(stream_id) DO UPDATE SET highest_contiguous_sequence=excluded.highest_contiguous_sequence,updated_at=excluded.updated_at
     WHERE market_stream_ingest_cursors.highest_contiguous_sequence=?`)
-    .bind(batch.streamId,target,now,...guardValues(binding, initialCursor),batch.streamId,target,target,initialCursor));
+    .bind(batch.streamId,target,now,...guardValues(binding, initialCursor),batch.streamId,
+      initialCursor + 1,target,target - initialCursor,initialCursor));
   await database.batch(statements);
 
   if (!bindingMatches(await registeredStream(database, batch.streamId), binding)) reject("INGESTION_STREAM_BINDING_CONFLICT", 409);
