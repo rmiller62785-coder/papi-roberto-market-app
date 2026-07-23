@@ -69,6 +69,8 @@ type FeaturedCompany = {
   caseStudy?: string;
   evidenceStatus: string;
   evidenceNote: string;
+  evidenceHref?: string;
+  evidenceLinkLabel?: string;
 };
 
 const featuredCompanies: FeaturedCompany[] = [
@@ -85,6 +87,8 @@ const featuredCompanies: FeaturedCompany[] = [
     description: "Engaged during a record grading-backlog surge to identify the active constraint, structure near-term countermeasures, and establish the governance and capacity mechanisms behind recovery.",
     evidenceStatus: "Live evidence checked",
     evidenceNote: "Public operating evidence · not sole-attribution proof",
+    evidenceHref: "https://www.psacard.com/info/backlog-tracker",
+    evidenceLinkLabel: "Official backlog source",
   },
   {
     key: "hopskipdrive",
@@ -99,6 +103,8 @@ const featuredCompanies: FeaturedCompany[] = [
     description: "Designed the operating architecture connecting dispatch, compliance, SOPs, risk, executive governance, technical requirements, and implementation across a 30+ metro footprint.",
     evidenceStatus: "Company sources checked",
     evidenceNote: "Official company context · personal scope labeled separately",
+    evidenceHref: "https://www.hopskipdrive.com/blog/new-2026-2027-product-suite/",
+    evidenceLinkLabel: "Official product source",
   },
   {
     key: "maid-of-the-mist",
@@ -113,6 +119,8 @@ const featuredCompanies: FeaturedCompany[] = [
     description: "Assessed the U.S. operation end to end; recommendations informed guest-planning enhancements, including the Wait Time Trends & Insights capability launched for the 2026 season.",
     evidenceStatus: "News + official source checked",
     evidenceNote: "Feature launch corroborated · contribution attribution bounded",
+    evidenceHref: "https://www.wgrz.com/article/news/local/maid-of-the-mist-announces-launch-date-for-2026/71-302e72a9-f363-43db-ad1d-69884d595407",
+    evidenceLinkLabel: "WGRZ evidence source",
   },
   {
     key: "amazon",
@@ -230,7 +238,14 @@ export default function HomePage() {
                     <h3>{company.title}</h3>
                     <p>{company.description}</p>
                   </div>
-                  <div className="company-evidence-status"><i aria-hidden="true">✓</i><span><strong>{company.evidenceStatus}</strong><small>{company.evidenceNote}</small></span></div>
+                  <div className="company-evidence-status">
+                    <i aria-hidden="true">✓</i>
+                    <span>
+                      <strong>{company.evidenceStatus}</strong>
+                      <small>{company.evidenceNote}</small>
+                      {company.evidenceHref ? <a className="company-evidence-source" href={company.evidenceHref} target="_blank" rel="noreferrer">{company.evidenceLinkLabel} <b aria-hidden="true">↗</b></a> : null}
+                    </span>
+                  </div>
                   {company.key === "psa" ? <LiveBacklog compact /> : null}
                   <div className="company-card-links">
                     <Link href={company.caseStudy!}>View case study <span aria-hidden="true">→</span></Link>
