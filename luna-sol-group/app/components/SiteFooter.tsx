@@ -1,0 +1,30 @@
+import Link from "next/link";
+
+export function SiteFooter() {
+  return (
+    <footer className="site-footer">
+      <div className="shell footer-grid">
+        <div>
+          <div className="footer-brand">Luna Sol Group</div>
+          <p>Operator-led transformation for complex logistics, retail, mobility, and investor-backed businesses.</p>
+        </div>
+        <div>
+          <span className="footer-label">Explore</span>
+          <Link href="/work/psa">Featured work</Link>
+          <Link href="/diagnostic">Executive diagnostic</Link>
+          <Link href="/#capabilities">Capabilities</Link>
+        </div>
+        <div>
+          <span className="footer-label">Connect</span>
+          <a href="mailto:Rmiller62785@gmail.com">Rmiller62785@gmail.com</a>
+          <a href="https://www.linkedin.com/in/rmmba" target="_blank" rel="noreferrer">LinkedIn ↗</a>
+        </div>
+      </div>
+      <div className="shell footer-base">
+        <span>© 2026 Luna Sol Group LLC</span>
+        <span>Founded 2023 · Full-time advisory since January 2026</span>
+        <span>Confidentiality-first · Results shown in anonymized form</span>
+      </div>
+    </footer>
+  );
+}
