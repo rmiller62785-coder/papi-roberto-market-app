@@ -70,6 +70,7 @@ export default function MaidOfTheMistCasePage() {
               <span className="kicker">Guest operations · Bottleneck analysis · Digital planning</span>
               <h1>Moving the decision upstream—<em>before the guest reaches the queue.</em></h1>
               <p>Assessed the U.S. guest operation end to end, identified constraints affecting flow and visibility, and developed operational and digital recommendations for a safer, clearer, more manageable guest experience.</p>
+              <div className="case-source-status motm-source-status"><i aria-hidden="true">✓</i><span><strong>Sources checked</strong><small>WGRZ coverage + official announcement + live customer capability</small></span></div>
               <div className="hero-actions">
                 <a className="button" href="#guest-flow">Explore the guest-flow system <span aria-hidden="true">→</span></a>
                 <Link className="button button-ghost" href="/#contact">Discuss a comparable operation</Link>

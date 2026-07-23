@@ -67,15 +67,8 @@ type FeaturedCompany = {
   title: string;
   description: string;
   caseStudy?: string;
-  summary: {
-    role: string;
-    mandate: string;
-    work: string[];
-    value: string;
-  };
   evidenceStatus: string;
   evidenceNote: string;
-  evidence?: Array<{ label: string; href: string }>;
 };
 
 const featuredCompanies: FeaturedCompany[] = [
@@ -86,21 +79,12 @@ const featuredCompanies: FeaturedCompany[] = [
     width: 449,
     height: 169,
     website: "https://www.psacard.com/",
+    caseStudy: "/work/psa",
     relationship: "Luna Sol advisory engagement · 2026",
     title: "Backlog stabilization and operating roadmap.",
     description: "Engaged during a record grading-backlog surge to identify the active constraint, structure near-term countermeasures, and establish the governance and capacity mechanisms behind recovery.",
-    summary: {
-      role: "Senior operating advisor",
-      mandate: "Diagnose the active constraint during a record grading backlog and translate the fact base into an executable recovery roadmap.",
-      work: ["Backlog and flow diagnosis", "Constraint and capacity analysis", "Near-term countermeasures", "Executive governance and operating cadence"],
-      value: "The public backlog moved from a mid-June peak near 14M into an approximately 11–12M range by July. Public sources establish the timing and scale; the result reflects PSA leadership and operating teams alongside advisory support.",
-    },
     evidenceStatus: "Live evidence checked",
     evidenceNote: "Public operating evidence · not sole-attribution proof",
-    evidence: [
-      { label: "PSA live backlog tracker", href: "https://www.psacard.com/info/backlog-tracker" },
-      { label: "Sports Illustrated backlog update", href: "https://www.si.com/collectibles/psa-bi-weekly-update-shows-11-million-cards-still-backlogged" },
-    ],
   },
   {
     key: "hopskipdrive",
@@ -113,18 +97,8 @@ const featuredCompanies: FeaturedCompany[] = [
     relationship: "Luna Sol consulting engagement · 2026",
     title: "Operational foundation for regulated national scale.",
     description: "Designed the operating architecture connecting dispatch, compliance, SOPs, risk, executive governance, technical requirements, and implementation across a 30+ metro footprint.",
-    summary: {
-      role: "Senior Operations & Technical Project Manager · Consulting",
-      mandate: "Create a scalable operating foundation for technology-enabled student transportation across a safety-critical, regulated, multi-market environment.",
-      work: ["Current-state assessment and operating architecture", "Dispatch, compliance, incident, and risk workflows", "SOP library, vendor governance, and executive KPIs", "Technical requirements, roadmap, and knowledge transfer"],
-      value: "Delivered a connected operating model spanning ten workstreams and a 30+ metro footprint. Public sources provide company context; they are not represented as independent proof of personal contribution.",
-    },
     evidenceStatus: "Company sources checked",
     evidenceNote: "Official company context · personal scope labeled separately",
-    evidence: [
-      { label: "2026–2027 product suite", href: "https://www.hopskipdrive.com/blog/new-2026-2027-product-suite/" },
-      { label: "Six-state expansion announcement", href: "https://www.hopskipdrive.com/blog/hopskipdrive-plans-expansion-across-six-new-states-for-the-2025-2026-school/" },
-    ],
   },
   {
     key: "maid-of-the-mist",
@@ -137,18 +111,8 @@ const featuredCompanies: FeaturedCompany[] = [
     relationship: "Luna Sol senior operations engagement · 2026",
     title: "Guest-flow bottlenecks translated into a public planning tool.",
     description: "Assessed the U.S. operation end to end; recommendations informed guest-planning enhancements, including the Wait Time Trends & Insights capability launched for the 2026 season.",
-    summary: {
-      role: "Senior Operations Consultant",
-      mandate: "Assess guest flow, queues, throughput, capacity, labor, and the digital journey across the U.S. operation.",
-      work: ["End-to-end field observation and process mapping", "Queue, throughput, and capacity analysis", "Bottleneck and demand-pattern diagnosis", "Executive recommendations and implementation sequencing"],
-      value: "The assessment informed guest-planning enhancements, including the publicly launched Wait Time Trends & Insights capability. Public reporting confirms the feature and purpose—not sole ownership of the result.",
-    },
     evidenceStatus: "News + official source checked",
     evidenceNote: "Feature launch corroborated · contribution attribution bounded",
-    evidence: [
-      { label: "WGRZ 2026 launch coverage", href: "https://www.wgrz.com/article/news/local/maid-of-the-mist-announces-launch-date-for-2026/71-302e72a9-f363-43db-ad1d-69884d595407" },
-      { label: "Official Maid announcement", href: "https://www.maidofthemist.com/ready-to-launch-maid-of-the-mist-to-set-sail-on-2026-season/" },
-    ],
   },
   {
     key: "amazon",
@@ -160,12 +124,6 @@ const featuredCompanies: FeaturedCompany[] = [
     relationship: "Former executive operator · Career experience",
     title: "Global last-mile transformation at enterprise scale.",
     description: "Led operating-system, delivery-partner, capacity, and network-economics work across North America, Europe, and Japan before founding Luna Sol.",
-    summary: {
-      role: "Executive product and operations leader",
-      mandate: "Improve the economics, quality, capacity, and controllability of complex last-mile networks operating across regions.",
-      work: ["Global operating-system design", "Delivery-partner and capacity mechanisms", "Network economics and capital allocation", "AI-assisted defect attribution and field adoption"],
-      value: "Selected anonymized career outcomes are presented in the site’s executive proof points. They reflect operator leadership inside Amazon and the work of broad cross-functional teams—not a Luna Sol client engagement.",
-    },
     evidenceStatus: "Experience basis labeled",
     evidenceNote: "Prior employment · not a Luna Sol client",
   },
@@ -179,12 +137,6 @@ const featuredCompanies: FeaturedCompany[] = [
     relationship: "Former operator · Career experience",
     title: "Nearly a decade inside complex retail operations.",
     description: "Built frontline judgment and execution discipline in a high-volume retail environment where customer promise, labor, inventory, and operating cadence converge.",
-    summary: {
-      role: "Retail operations leader",
-      mandate: "Run high-volume frontline operations where customer promise, labor, inventory, safety, and daily execution intersect.",
-      work: ["Frontline operating leadership", "Labor and execution cadence", "Inventory and customer-promise management", "Field problem solving under live demand"],
-      value: "This experience established the frontline operating foundation later applied to enterprise transformation roles. It is explicitly presented as prior employment—not consulting work or a Luna Sol client relationship.",
-    },
     evidenceStatus: "Experience basis labeled",
     evidenceNote: "Prior employment · not a Luna Sol client",
   },
@@ -258,50 +210,46 @@ export default function HomePage() {
         <section className="section featured-work-section" id="featured-work">
           <div className="shell">
             <div className="section-heading compact-heading dark-heading">
-              <div><span className="section-label light">Featured work and operating experience</span><h2>One page. Five operating chapters.</h2></div>
-              <p>Open any project summary for the mandate, role, work delivered, value, and evidence boundary. Company marks still link directly to each organization.</p>
+              <div><span className="section-label light">Featured engagement case studies</span><h2>Three engagements.<br />Three complete case studies.</h2></div>
+              <p>The homepage is the index. Each engagement opens into its own evidence-aware, single-page case study built from the material provided.</p>
             </div>
-            <div className="company-grid project-index">
-              {featuredCompanies.map((company, index) => (
+            <div className="company-grid case-study-grid">
+              {featuredCompanies.filter((company) => company.caseStudy).map((company, index) => (
                 <article className="company-card" key={company.name}>
-                  <div className="company-card-overview">
-                    <div className="company-card-top">
-                      <span>{company.relationship}</span>
-                      <b>0{index + 1}</b>
-                    </div>
-                    <a className="company-logo-link" href={company.website} target="_blank" rel="noreferrer" aria-label={`Visit ${company.name} website`}>
-                      <span className={company.key === "hopskipdrive" ? "company-logo-stage company-logo-lockup" : "company-logo-stage"}>
-                        <img src={company.logo} width={company.width} height={company.height} alt={`${company.name} logo`} />
-                        {company.key === "hopskipdrive" ? <b>HopSkipDrive</b> : null}
-                      </span>
-                    </a>
-                    <div className="company-card-copy">
-                      <h3>{company.title}</h3>
-                      <p>{company.description}</p>
-                    </div>
-                    <div className="company-evidence-status"><i aria-hidden="true">✓</i><span><strong>{company.evidenceStatus}</strong><small>{company.evidenceNote}</small></span></div>
+                  <div className="company-card-top">
+                    <span>{company.relationship}</span>
+                    <b>0{index + 1}</b>
                   </div>
-                  <details className="project-summary-card">
-                    <summary><span>Project summary</span><strong><i aria-hidden="true">+</i> Expand details</strong></summary>
-                    <div className="project-summary-body">
-                      <div className="project-summary-facts">
-                        <section><span>Role</span><strong>{company.summary.role}</strong></section>
-                        <section><span>Mandate</span><p>{company.summary.mandate}</p></section>
-                        <section className="project-work"><span>Work delivered</span><ul>{company.summary.work.map((item) => <li key={item}>{item}</li>)}</ul></section>
-                        <section><span>Value and boundary</span><p>{company.summary.value}</p></section>
-                      </div>
-                      {company.key === "psa" ? <LiveBacklog compact /> : null}
-                      {company.evidence?.length ? (
-                        <div className="project-evidence-links"><span>Evidence and context sources</span><div>{company.evidence.map((source) => <a href={source.href} target="_blank" rel="noreferrer" key={source.href}>{source.label} <i aria-hidden="true">↗</i></a>)}</div></div>
-                      ) : null}
-                      <div className="company-card-links">
-                        {company.caseStudy ? <Link href={company.caseStudy}>Explore full engagement <span aria-hidden="true">→</span></Link> : null}
-                        <a href={company.website} target="_blank" rel="noreferrer">Visit {company.name} <span aria-hidden="true">↗</span></a>
-                      </div>
-                    </div>
-                  </details>
+                  <a className="company-logo-link" href={company.website} target="_blank" rel="noreferrer" aria-label={`Visit ${company.name} website`}>
+                    <span className={company.key === "hopskipdrive" ? "company-logo-stage company-logo-lockup" : "company-logo-stage"}>
+                      <img src={company.logo} width={company.width} height={company.height} alt={`${company.name} logo`} />
+                      {company.key === "hopskipdrive" ? <b>HopSkipDrive</b> : null}
+                    </span>
+                  </a>
+                  <div className="company-card-copy">
+                    <h3>{company.title}</h3>
+                    <p>{company.description}</p>
+                  </div>
+                  <div className="company-evidence-status"><i aria-hidden="true">✓</i><span><strong>{company.evidenceStatus}</strong><small>{company.evidenceNote}</small></span></div>
+                  {company.key === "psa" ? <LiveBacklog compact /> : null}
+                  <div className="company-card-links">
+                    <Link href={company.caseStudy!}>View case study <span aria-hidden="true">→</span></Link>
+                    <a href={company.website} target="_blank" rel="noreferrer">Company site <span aria-hidden="true">↗</span></a>
+                  </div>
                 </article>
               ))}
+            </div>
+            <div className="career-experience">
+              <div className="career-experience-heading"><div><span>Prior operating experience</span><h3>Operator credibility—not client case studies.</h3></div><p>Amazon and Walmart are separated from Luna Sol engagements and labeled as prior employment.</p></div>
+              <div className="career-company-grid">
+                {featuredCompanies.filter((company) => !company.caseStudy).map((company) => (
+                  <article key={company.name}>
+                    <a className="company-logo-link" href={company.website} target="_blank" rel="noreferrer" aria-label={`Visit ${company.name} website`}><span className="company-logo-stage"><img src={company.logo} width={company.width} height={company.height} alt={`${company.name} logo`} /></span></a>
+                    <div><span>{company.relationship}</span><h3>{company.title}</h3><p>{company.description}</p></div>
+                    <a className="career-company-link" href={company.website} target="_blank" rel="noreferrer">Company site ↗</a>
+                  </article>
+                ))}
+              </div>
             </div>
             <div className="portfolio-outcomes" aria-label="Selected operating outcomes">
               {otherWork.map((work) => (
@@ -312,7 +260,7 @@ export default function HomePage() {
                 </article>
               ))}
             </div>
-            <p className="portfolio-disclaimer">Company marks identify the organizations connected to the experience shown. PSA, HopSkipDrive, and Maid of the Mist are consulting or advisory engagements as labeled; public outcomes reflect the collaborative work of each company’s leadership, operating teams, and stakeholders. Amazon and Walmart represent Ryan Miller’s prior employment and operator experience, not Luna Sol client engagements. All marks belong to their respective owners.</p>
+            <p className="portfolio-disclaimer">PSA, HopSkipDrive, and Maid of the Mist are consulting or advisory engagements as labeled and each links to a dedicated case study. Public outcomes reflect the collaborative work of company leadership, operating teams, and stakeholders. Amazon and Walmart represent Ryan Miller’s prior employment, not Luna Sol client engagements. All marks belong to their respective owners.</p>
           </div>
         </section>
 

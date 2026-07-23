@@ -77,6 +77,7 @@ export default function HopSkipDriveCasePage() {
               <span className="kicker">Regulated mobility · Student transportation · National scale</span>
               <h1>Designing the operating system behind <em>safe, scalable growth.</em></h1>
               <p>Built the operational foundation connecting dispatch, compliance, risk, technology, and executive control for a rapidly scaling, technology-enabled student transportation platform.</p>
+              <div className="case-source-status hsd-source-status"><i aria-hidden="true">✓</i><span><strong>Sources checked</strong><small>Official product, expansion, newsroom, and distributed company materials</small></span></div>
               <div className="hero-actions">
                 <a className="button" href="#operating-model">Explore the operating model <span aria-hidden="true">→</span></a>
                 <Link className="button button-ghost" href="/#contact">Discuss a comparable problem</Link>
