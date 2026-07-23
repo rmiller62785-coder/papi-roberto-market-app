@@ -56,11 +56,24 @@ const otherWork = [
   },
 ];
 
-const featuredCompanies = [
+type FeaturedCompany = {
+  key: string;
+  name: string;
+  logo: string;
+  width: number;
+  height: number;
+  website: string;
+  relationship: string;
+  title: string;
+  description: string;
+  caseStudy?: string;
+};
+
+const featuredCompanies: FeaturedCompany[] = [
   {
     key: "psa",
     name: "PSA",
-    logo: "/logos/psa.png",
+    logo: "/psa-logo.png",
     width: 449,
     height: 169,
     website: "https://www.psacard.com/",
@@ -69,9 +82,21 @@ const featuredCompanies = [
     description: "Engaged during a record grading-backlog surge to identify the active constraint, structure near-term countermeasures, and establish the governance and capacity mechanisms behind recovery.",
   },
   {
+    key: "hopskipdrive",
+    name: "HopSkipDrive",
+    logo: "/hopskipdrive-logo.svg",
+    width: 256,
+    height: 256,
+    website: "https://www.hopskipdrive.com/",
+    caseStudy: "/work/hopskipdrive",
+    relationship: "Luna Sol consulting engagement · 2026",
+    title: "Operational foundation for regulated national scale.",
+    description: "Designed the operating architecture connecting dispatch, compliance, SOPs, risk, executive governance, technical requirements, and implementation across a 30+ metro footprint.",
+  },
+  {
     key: "amazon",
     name: "Amazon",
-    logo: "/logos/amazon.svg",
+    logo: "/amazon-logo.svg",
     width: 603,
     height: 182,
     website: "https://www.amazon.com/",
@@ -82,7 +107,7 @@ const featuredCompanies = [
   {
     key: "walmart",
     name: "Walmart",
-    logo: "/logos/walmart.svg",
+    logo: "/walmart-logo.svg",
     width: 1000,
     height: 190,
     website: "https://www.walmart.com/",
@@ -171,8 +196,9 @@ export default function HomePage() {
                     <b>0{index + 1}</b>
                   </div>
                   <a className="company-logo-link" href={company.website} target="_blank" rel="noreferrer" aria-label={`Visit ${company.name} website`}>
-                    <span className="company-logo-stage">
+                    <span className={company.key === "hopskipdrive" ? "company-logo-stage company-logo-lockup" : "company-logo-stage"}>
                       <img src={company.logo} width={company.width} height={company.height} alt={`${company.name} logo`} />
+                      {company.key === "hopskipdrive" ? <b>HopSkipDrive</b> : null}
                     </span>
                   </a>
                   <div className="company-card-copy">
@@ -180,7 +206,10 @@ export default function HomePage() {
                     <p>{company.description}</p>
                   </div>
                   {company.key === "psa" ? <LiveBacklog compact /> : null}
-                  <a className="company-site-link" href={company.website} target="_blank" rel="noreferrer">Visit {company.name} <span aria-hidden="true">↗</span></a>
+                  <div className="company-card-links">
+                    {company.caseStudy ? <Link href={company.caseStudy}>Explore engagement <span aria-hidden="true">→</span></Link> : null}
+                    <a href={company.website} target="_blank" rel="noreferrer">{company.caseStudy ? "Company site" : `Visit ${company.name}`} <span aria-hidden="true">↗</span></a>
+                  </div>
                 </article>
               ))}
             </div>
