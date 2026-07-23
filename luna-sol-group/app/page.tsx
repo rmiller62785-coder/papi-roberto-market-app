@@ -56,6 +56,42 @@ const otherWork = [
   },
 ];
 
+const featuredCompanies = [
+  {
+    key: "psa",
+    name: "PSA",
+    logo: "/logos/psa.png",
+    width: 449,
+    height: 169,
+    website: "https://www.psacard.com/",
+    relationship: "Luna Sol advisory engagement · 2026",
+    title: "Backlog stabilization and operating roadmap.",
+    description: "Engaged during a record grading-backlog surge to identify the active constraint, structure near-term countermeasures, and establish the governance and capacity mechanisms behind recovery.",
+  },
+  {
+    key: "amazon",
+    name: "Amazon",
+    logo: "/logos/amazon.svg",
+    width: 603,
+    height: 182,
+    website: "https://www.amazon.com/",
+    relationship: "Former executive operator · Career experience",
+    title: "Global last-mile transformation at enterprise scale.",
+    description: "Led operating-system, delivery-partner, capacity, and network-economics work across North America, Europe, and Japan before founding Luna Sol.",
+  },
+  {
+    key: "walmart",
+    name: "Walmart",
+    logo: "/logos/walmart.svg",
+    width: 1000,
+    height: 190,
+    website: "https://www.walmart.com/",
+    relationship: "Former operator · Career experience",
+    title: "Nearly a decade inside complex retail operations.",
+    description: "Built frontline judgment and execution discipline in a high-volume retail environment where customer promise, labor, inventory, and operating cadence converge.",
+  },
+];
+
 export default function HomePage() {
   return (
     <>
@@ -69,7 +105,7 @@ export default function HomePage() {
               <h1>Operating problems worth millions need more than <em>recommendations.</em></h1>
               <p className="hero-deck">Luna Sol turns contested signals, cross-functional friction, and stalled transformation into a fact base, an operating system, and measurable control.</p>
               <div className="hero-actions">
-                <Link className="button" href="/work/psa">Explore featured work <span aria-hidden="true">→</span></Link>
+                <Link className="button" href="/#featured-work">Explore featured work <span aria-hidden="true">→</span></Link>
                 <Link className="button button-ghost" href="/diagnostic">Run the executive diagnostic</Link>
               </div>
               <div className="hero-note"><span>Best fit</span> Logistics · Retail · Mobility · Investor-backed operations</div>
@@ -121,48 +157,43 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="section feature-section">
-          <div className="shell feature-grid">
-            <div className="feature-copy">
-              <span className="section-label light">Featured transformation engagement</span>
-              <h2>Stabilizing a record demand surge while designing the system beyond the crisis.</h2>
-              <p>Engaged during PSA’s 2026 grading-backlog surge to identify the active operating constraint, deploy short-term countermeasures, and establish the initiatives, governance, and capacity mechanisms required to continue reducing the queue.</p>
-              <div className="feature-actions">
-                <Link className="button button-light" href="/work/psa">Read the evidence-backed case <span aria-hidden="true">→</span></Link>
-                <a className="text-link light" href="/psa-timeline.png" download>Download the operating timeline</a>
-              </div>
-            </div>
-            <div className="feature-dashboard">
-              <div className="dashboard-label"><span>Operating arc</span><b>May–July 2026</b></div>
-              <div className="arc-value"><span>Peak</span><strong>~14m</strong><i aria-hidden="true">→</i><span>Latest official</span><strong>11m</strong></div>
-              <div className="arc-line" aria-hidden="true"><i /><i /><i /><i /><i /></div>
-              <div className="result-grid">
-                <div><strong>&gt;10%</strong><span>June output vs. prior record</span></div>
-                <div><strong>99.4%</strong><span>reported operational success</span></div>
-              </div>
-              <LiveBacklog compact />
-              <p className="dashboard-note">Public performance reflects the combined work of PSA leadership and operating teams; it is not presented as solely attributable to Luna Sol.</p>
-            </div>
-          </div>
-        </section>
-
-        <section className="section paper work-section" id="work">
+        <section className="section featured-work-section" id="featured-work">
           <div className="shell">
-            <div className="section-heading compact-heading">
-              <div><span className="section-label">Selected operating outcomes</span><h2>What changed. How it changed. Why it held.</h2></div>
-              <p>Sanitized examples from complex operating environments. Each begins with the mechanism—not the headline metric.</p>
+            <div className="section-heading compact-heading dark-heading">
+              <div><span className="section-label light">Featured work and operating experience</span><h2>Where the work happened.<br />What the relationship was.</h2></div>
+              <p>A concise portfolio of advisory work and prior operator experience. Every company mark links to the organization, and every relationship is labeled directly.</p>
             </div>
-            <div className="work-grid">
-              {otherWork.map((work, index) => (
-                <article className="work-card" key={work.title}>
-                  <div className="work-index">0{index + 1}</div>
-                  <span className="section-label">{work.label}</span>
-                  <h3>{work.title}</h3>
-                  <p>{work.detail}</p>
-                  <div className="work-metric"><strong>{work.metric}</strong><span>{work.metricLabel}</span></div>
+            <div className="company-grid">
+              {featuredCompanies.map((company, index) => (
+                <article className="company-card" key={company.name}>
+                  <div className="company-card-top">
+                    <span>{company.relationship}</span>
+                    <b>0{index + 1}</b>
+                  </div>
+                  <a className="company-logo-link" href={company.website} target="_blank" rel="noreferrer" aria-label={`Visit ${company.name} website`}>
+                    <span className="company-logo-stage">
+                      <img src={company.logo} width={company.width} height={company.height} alt={`${company.name} logo`} />
+                    </span>
+                  </a>
+                  <div className="company-card-copy">
+                    <h3>{company.title}</h3>
+                    <p>{company.description}</p>
+                  </div>
+                  {company.key === "psa" ? <LiveBacklog compact /> : null}
+                  <a className="company-site-link" href={company.website} target="_blank" rel="noreferrer">Visit {company.name} <span aria-hidden="true">↗</span></a>
                 </article>
               ))}
             </div>
+            <div className="portfolio-outcomes" aria-label="Selected operating outcomes">
+              {otherWork.map((work) => (
+                <article key={work.title}>
+                  <span>{work.label}</span>
+                  <strong>{work.metric}</strong>
+                  <p>{work.metricLabel}</p>
+                </article>
+              ))}
+            </div>
+            <p className="portfolio-disclaimer">Company marks identify the organizations connected to the experience shown. Amazon and Walmart represent Ryan Miller’s prior employment and operator experience, not Luna Sol client engagements. PSA performance reflects the combined work of PSA leadership and operating teams and is not presented as solely attributable to Luna Sol. All marks belong to their respective owners.</p>
           </div>
         </section>
 

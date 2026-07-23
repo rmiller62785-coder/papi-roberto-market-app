@@ -10,7 +10,7 @@ export function SiteFooter() {
         </div>
         <div>
           <span className="footer-label">Explore</span>
-          <Link href="/work/psa">Featured work</Link>
+          <Link href="/#featured-work">Featured work</Link>
           <Link href="/diagnostic">Executive diagnostic</Link>
           <Link href="/#capabilities">Capabilities</Link>
         </div>
