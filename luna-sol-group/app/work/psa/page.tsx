@@ -43,15 +43,31 @@ const operatingPillars = [
   },
 ];
 
-const results = [
-  ["~14m → ~11–12m", "Reported backlog arc", "June peak to the June 30 and July 14 public checkpoints."],
-  [">10%", "Record throughput", "June output above the prior monthly high, with July projected higher."],
-  ["99.4%", "Operational success rate", "Quality and safety performance reported during accelerated output."],
-  ["5m", "Management threshold", "Target tied to responsible Value-tier reopening."],
+const lunaDeliverables = [
+  "Current-state operating assessment",
+  "Constraint and causal analysis",
+  "Capacity and flow model",
+  "Immediate stabilization countermeasures",
+  "KPI and governance architecture",
+  "Long-term operating roadmap",
+];
+
+const publicOutcomes = [
+  { value: "≈14m → 11m", label: "Backlog arc", source: "Publicly reported · official + independent" },
+  { value: "2.50m", label: "June grading volume", source: "Independent market report · GemRate" },
+  { value: ">10%", label: "Output above prior monthly high", source: "Publicly reported · official" },
+  { value: "492.9k", label: "Cards graded July 1–6", source: "Independent market report · GemRate / SI" },
+  { value: "99.4%", label: "Operational success rate", source: "Publicly reported · official" },
+];
+
+const artifactPreviews = [
+  { title: "Constraint tree", decision: "Where to intervene first", inputs: "Queue, intake, cycle-time, quality, staffing", analysis: "Causal decomposition", output: "Binding-constraint hypothesis", use: "Align the stabilization sequence" },
+  { title: "Capacity + recovery model", decision: "What recovery path is feasible", inputs: "Demand, rated capacity, utilization, rework", analysis: "Flow and sensitivity modeling", output: "Burn rate, capacity gap, threshold date", use: "Compare countermeasures and risk" },
+  { title: "13-week stabilization roadmap", decision: "How to govern execution", inputs: "Workstreams, owners, triggers, dependencies", analysis: "Critical-path and control design", output: "Milestones, KPIs, escalation cadence", use: "Run weekly executive governance" },
 ];
 
 export default function PsaCasePage() {
-  const featuredSources = psaSources.slice(0, 3);
+  const featuredSources = [psaSources[0], psaSources[3], psaSources[8], psaSources[1]];
 
   return (
     <>
@@ -66,8 +82,12 @@ export default function PsaCasePage() {
                 <span><img src="/psa-logo.png" width="449" height="169" alt="PSA logo" /></span>
                 <strong>PSA</strong>
               </a>
-              <h1>From record backlog to a <em>controlled recovery path.</em></h1>
-              <p>Stabilizing a demand shock while protecting quality—and designing the operating system beyond the immediate crisis.</p>
+              <h1>From a record grading backlog to a <em>controlled recovery system.</em></h1>
+              <p>Luna Sol assessed the operating constraint, designed immediate stabilization mechanisms, and developed the capacity, governance, and continuous-improvement roadmap behind recovery.</p>
+              <div className="psa-hero-actions">
+                <a className="button" href="#brief">Explore the engagement <span aria-hidden="true">↓</span></a>
+                <a className="button button-ghost" href="#evidence">View verified evidence</a>
+              </div>
               <div className="editorial-source-check"><i aria-hidden="true">✓</i><span><strong>Evidence checked</strong><small>Official PSA updates plus dated external reporting</small></span></div>
             </div>
             <div className="editorial-hero-feature editorial-live-feature">
@@ -75,11 +95,13 @@ export default function PsaCasePage() {
               <p>Live integration · PSA’s public backlog tracker</p>
             </div>
           </div>
-          <div className="shell editorial-proof-strip" aria-label="Case-study proof points">
-            <div><strong>May 2026</strong><span>Engagement began</span></div>
-            <div><strong>≈14m peak</strong><span>Reported operating high</span></div>
-            <div><strong>~11–12m</strong><span>Public recovery checkpoints</span></div>
+          <div className="shell editorial-proof-strip psa-proof-strip" aria-label="Case-study proof points">
+            <div><strong>≈14m</strong><span>Public peak · independent reporting</span></div>
+            <div><strong>11m</strong><span>July 14 position · official PSA</span></div>
+            <div><strong>2.50m</strong><span>June output · independent GemRate</span></div>
+            <div><strong>99.4%</strong><span>Success rate · official PSA</span></div>
           </div>
+          <p className="shell psa-hero-attribution">Public performance during the engagement period; not presented as solely attributable to Luna Sol.</p>
         </section>
 
         <nav className="editorial-chapter-nav" aria-label="Case-study chapters">
@@ -122,6 +144,9 @@ export default function PsaCasePage() {
             <div className="editorial-section-label"><span>What I designed</span><small>03</small></div>
             <div className="editorial-reading-column editorial-wide-column">
               <h2>Three operating pillars connected immediate recovery to durable control.</h2>
+              <ol className="psa-method-strip" aria-label="Luna operating system">
+                <li><b>01</b><span>Signal integrity</span></li><li><b>02</b><span>Constraint economics</span></li><li><b>03</b><span>Operating architecture</span></li><li><b>04</b><span>Adoption</span></li><li><b>05</b><span>Control</span></li>
+              </ol>
               <div className="editorial-pillar-list">
                 {operatingPillars.map((pillar) => (
                   <article key={pillar.number}>
@@ -146,12 +171,35 @@ export default function PsaCasePage() {
                 <li key={event.date}><b>0{index + 1}</b><time>{event.date}</time><h3>{event.title}</h3><p>{event.detail}</p></li>
               ))}
             </ol>
+            <div className="psa-model-callout">
+              <div><span>Working decision tool</span><h3>PSA Recovery Digital Twin</h3><p>Adjust demand, capacity, utilization, quality loss, aging work, surge capacity, and productivity assumptions to test the recovery mechanics.</p></div>
+              <Link className="button button-light" href="/diagnostic">Launch the model <span aria-hidden="true">→</span></Link>
+            </div>
             <details className="editorial-supporting">
               <summary><span>View the portfolio timeline artifact</span><b>Open +</b></summary>
               <div className="editorial-artifact">
                 <img src="/psa-timeline.png" width="1080" height="1350" alt="Six-stop PSA operating timeline from May 14 through the July 14 backlog update" />
                 <div><span>Downloadable artifact</span><h3>The complete operating timeline.</h3><p>A 1080-pixel editorial timeline for executive review and portfolio use.</p><a className="button button-light" href="/psa-timeline.png" download>Download PNG</a></div>
               </div>
+            </details>
+            <details className="editorial-supporting psa-artifact-drawer">
+              <summary><span>Inspect the sanitized decision artifacts</span><b>Open +</b></summary>
+              <div className="psa-artifact-grid">
+                {artifactPreviews.map((artifact, index) => (
+                  <article key={artifact.title}>
+                    <div><b>0{index + 1}</b><span>Sanitized portfolio reconstruction</span></div>
+                    <h3>{artifact.title}</h3>
+                    <dl>
+                      <div><dt>Decision supported</dt><dd>{artifact.decision}</dd></div>
+                      <div><dt>Inputs</dt><dd>{artifact.inputs}</dd></div>
+                      <div><dt>Analysis</dt><dd>{artifact.analysis}</dd></div>
+                      <div><dt>Output</dt><dd>{artifact.output}</dd></div>
+                      <div><dt>Leadership use</dt><dd>{artifact.use}</dd></div>
+                    </dl>
+                  </article>
+                ))}
+              </div>
+              <p className="psa-artifact-boundary">Portfolio reconstructions communicate the work structure without exposing client-confidential inputs, analysis, or internal documents.</p>
             </details>
           </div>
         </section>
@@ -160,9 +208,16 @@ export default function PsaCasePage() {
           <div className="shell editorial-section-grid">
             <div className="editorial-section-label"><span>Supported impact</span><small>04</small></div>
             <div className="editorial-reading-column editorial-wide-column">
-              <h2>The public record shows movement from crisis toward control.</h2>
-              <div className="editorial-result-grid">
-                {results.map(([value, label, detail]) => <article key={label}><strong>{value}</strong><span>{label}</span><p>{detail}</p></article>)}
+              <h2>One engagement. Two distinct evidence layers.</h2>
+              <div className="psa-impact-ledger">
+                <section>
+                  <header><span>Engagement scope</span><h3>What Luna Sol delivered</h3></header>
+                  <ul>{lunaDeliverables.map((deliverable) => <li key={deliverable}><i aria-hidden="true">✓</i><span><strong>{deliverable}</strong><small>Luna Sol deliverable</small></span></li>)}</ul>
+                </section>
+                <section>
+                  <header><span>Outcome context</span><h3>What PSA publicly reported</h3></header>
+                  <ul>{publicOutcomes.map((outcome) => <li key={outcome.label}><strong>{outcome.value}</strong><span><b>{outcome.label}</b><small>{outcome.source}</small></span></li>)}</ul>
+                </section>
               </div>
               <p className="editorial-attribution"><strong>Attribution:</strong> These figures represent publicly reported PSA performance during the engagement period and reflect the broader work of PSA leadership and operating teams. They are not presented as solely attributable to Luna Sol.</p>
             </div>
@@ -174,6 +229,7 @@ export default function PsaCasePage() {
             <div className="editorial-section-label"><span>Evidence</span><small>05</small></div>
             <div className="editorial-reading-column editorial-wide-column">
               <h2>Primary evidence first. Full source room on demand.</h2>
+              <div className="psa-evidence-meta"><span>Last evidence verification</span><strong>July 23, 2026</strong></div>
               <div className="editorial-source-list">
                 {featuredSources.map((source, index) => (
                   <a href={source.href} target="_blank" rel="noreferrer" key={source.href}><b>0{index + 1}</b><div><span>{source.type} · {source.date}</span><strong>{source.title}</strong></div><i aria-hidden="true">↗</i></a>
@@ -187,15 +243,16 @@ export default function PsaCasePage() {
                   ))}
                 </div>
               </details>
+              <p className="editorial-attribution psa-validation-boundary"><strong>Validation boundary:</strong> No client testimonial is published without explicit approval. Engagement scope and public operating evidence are therefore presented as separate, labeled claims.</p>
             </div>
           </div>
         </section>
         </div>
 
         <section className="editorial-next-case">
-          <div className="shell editorial-next-grid">
-            <div><span>Next case study</span><h2>HopSkipDrive</h2><p>Designing the operating system behind safe, scalable growth.</p><Link href="/work/hopskipdrive">Read the case <span aria-hidden="true">→</span></Link></div>
-            <div><span>Have a comparable operating problem?</span><h2>Start with the constraint.</h2><p>Bring the signal, the stakes, and what the organization has already tried.</p><Link className="button button-light" href="/#contact">Start a confidential conversation</Link></div>
+          <div className="shell editorial-next-grid psa-focused-cta">
+            <div><span>Have a comparable operating constraint?</span><h2>Bring the signal. Leave with the decision path.</h2><p>Start a confidential conversation about the queue, capacity problem, or transformation decision your current dashboards cannot resolve.</p><Link className="button button-light" href="/#contact">Discuss the operating constraint</Link></div>
+            <div><span>Continue the portfolio</span><h2>HopSkipDrive</h2><p>Designing the operating system behind safe, scalable growth.</p><Link href="/work/hopskipdrive">Read the next case <span aria-hidden="true">→</span></Link></div>
           </div>
         </section>
       </main>

@@ -11,7 +11,7 @@ export function SiteFooter() {
         <div>
           <span className="footer-label">Explore</span>
           <Link href="/#featured-work">Featured work</Link>
-          <Link href="/diagnostic">Executive diagnostic</Link>
+          <Link href="/diagnostic">PSA recovery model</Link>
           <Link href="/#capabilities">Capabilities</Link>
         </div>
         <div>

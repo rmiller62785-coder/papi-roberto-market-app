@@ -1,7 +1,7 @@
 export const primaryNav = [
   { href: "/#capabilities", label: "Capabilities" },
   { href: "/#featured-work", label: "Featured work" },
-  { href: "/diagnostic", label: "Diagnostic" },
+  { href: "/diagnostic", label: "Recovery model" },
   { href: "/#principal", label: "Principal" },
 ];
 
@@ -61,6 +61,13 @@ export const psaSources = [
     title: "The Report Card: the shadow-queue risk",
     description: "An outside view of latent demand and why the visible queue alone does not determine when Value tiers can sustainably reopen.",
     href: "https://the-report-card.com/blog/psa-backlog-shadow-queue-2026",
+  },
+  {
+    type: "Independent market data",
+    date: "July 1, 2026",
+    title: "GemRate: June 2026 grading recap",
+    description: "Independent market reporting that PSA graded 2.50 million cards in June, up 21% month over month and 74% year over year.",
+    href: "https://www.gemrate.com/june-2026-recap",
   },
 ];
 

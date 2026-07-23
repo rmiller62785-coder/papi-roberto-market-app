@@ -164,7 +164,7 @@ export default function HomePage() {
               <p className="hero-deck">Luna Sol turns contested signals, cross-functional friction, and stalled transformation into a fact base, an operating system, and measurable control.</p>
               <div className="hero-actions">
                 <Link className="button" href="/#featured-work">Explore featured work <span aria-hidden="true">→</span></Link>
-                <Link className="button button-ghost" href="/diagnostic">Run the executive diagnostic</Link>
+                <Link className="button button-ghost" href="/diagnostic">Model a recovery scenario</Link>
               </div>
               <div className="hero-note"><span>Best fit</span> Logistics · Retail · Mobility · Investor-backed operations</div>
             </div>
@@ -285,7 +285,7 @@ export default function HomePage() {
               <span className="section-label light">Luna OS™</span>
               <h2>One operating thread from signal to sustained value.</h2>
               <p>Every phase produces an executive decision and an operator-owned mechanism. No orphaned analysis. No transformation theater.</p>
-              <Link className="text-link light" href="/diagnostic">Test your operating conditions →</Link>
+              <Link className="text-link light" href="/diagnostic">Test a backlog scenario →</Link>
             </div>
             <ol className="method-list">
               <li><b>01</b><div><strong>Truth</strong><span>Reconcile the signal with physical reality.</span></div></li>
@@ -327,15 +327,15 @@ export default function HomePage() {
         <section className="section diagnostic-callout">
           <div className="shell diagnostic-callout-grid">
             <div>
-              <span className="section-label">Interactive executive tool</span>
-              <h2>Is this a local defect—or an operating-system problem?</h2>
-              <p>Score six operating conditions and receive a decision-ready brief with the likely intervention level, the highest-friction signals, and the first executive move.</p>
+              <span className="section-label">Working case-study integration</span>
+              <h2>Pressure-test the PSA recovery mechanics.</h2>
+              <p>Change demand, capacity, utilization, quality loss, aging work, and productivity assumptions. The model translates them into weekly backlog burn, a target date, a capacity gap, and demand-shock sensitivity.</p>
             </div>
             <div className="diagnostic-preview">
-              <div><span>Signal uncertainty</span><i><b style={{ width: "71%" }} /></i><strong>71</strong></div>
-              <div><span>Cross-functional complexity</span><i><b style={{ width: "82%" }} /></i><strong>82</strong></div>
-              <div><span>Adoption drag</span><i><b style={{ width: "64%" }} /></i><strong>64</strong></div>
-              <Link className="button" href="/diagnostic">Run the 4-minute diagnostic <span aria-hidden="true">→</span></Link>
+              <div><span>Weekly inbound</span><i><b style={{ width: "54%" }} /></i><strong>350k</strong></div>
+              <div><span>Effective output</span><i><b style={{ width: "78%" }} /></i><strong>686k</strong></div>
+              <div><span>Net backlog burn</span><i><b style={{ width: "63%" }} /></i><strong>336k</strong></div>
+              <Link className="button" href="/diagnostic">Open the recovery model <span aria-hidden="true">→</span></Link>
             </div>
           </div>
         </section>
