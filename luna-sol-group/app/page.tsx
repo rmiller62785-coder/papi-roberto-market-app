@@ -94,6 +94,18 @@ const featuredCompanies: FeaturedCompany[] = [
     description: "Designed the operating architecture connecting dispatch, compliance, SOPs, risk, executive governance, technical requirements, and implementation across a 30+ metro footprint.",
   },
   {
+    key: "maid-of-the-mist",
+    name: "Maid of the Mist",
+    logo: "/maid-of-the-mist-logo.svg",
+    width: 229,
+    height: 154,
+    website: "https://www.maidofthemist.com/",
+    caseStudy: "/work/maid-of-the-mist",
+    relationship: "Luna Sol senior operations engagement · 2026",
+    title: "Guest-flow bottlenecks translated into a public planning tool.",
+    description: "Assessed the U.S. operation end to end; recommendations informed guest-planning enhancements, including the Wait Time Trends & Insights capability launched for the 2026 season.",
+  },
+  {
     key: "amazon",
     name: "Amazon",
     logo: "/amazon-logo.svg",
@@ -222,7 +234,7 @@ export default function HomePage() {
                 </article>
               ))}
             </div>
-            <p className="portfolio-disclaimer">Company marks identify the organizations connected to the experience shown. Amazon and Walmart represent Ryan Miller’s prior employment and operator experience, not Luna Sol client engagements. PSA performance reflects the combined work of PSA leadership and operating teams and is not presented as solely attributable to Luna Sol. All marks belong to their respective owners.</p>
+            <p className="portfolio-disclaimer">Company marks identify the organizations connected to the experience shown. PSA, HopSkipDrive, and Maid of the Mist are consulting or advisory engagements as labeled; public outcomes reflect the collaborative work of each company’s leadership, operating teams, and stakeholders. Amazon and Walmart represent Ryan Miller’s prior employment and operator experience, not Luna Sol client engagements. All marks belong to their respective owners.</p>
           </div>
         </section>
 
