@@ -89,6 +89,7 @@ export default function PsaCasePage() {
           </div>
         </nav>
 
+        <div className="editorial-dossier">
         <section className="editorial-section editorial-brief" id="brief">
           <div className="shell editorial-section-grid">
             <div className="editorial-section-label"><span>Executive brief</span><small>01</small></div>
@@ -189,6 +190,7 @@ export default function PsaCasePage() {
             </div>
           </div>
         </section>
+        </div>
 
         <section className="editorial-next-case">
           <div className="shell editorial-next-grid">

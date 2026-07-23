@@ -103,6 +103,7 @@ export default function HopSkipDriveCasePage() {
           <div className="shell"><span>On this page</span><a href="#brief">Brief</a><a href="#challenge">Challenge</a><a href="#approach">Approach</a><a href="#system">Operating model</a><a href="#impact">Value</a><a href="#evidence">Evidence</a></div>
         </nav>
 
+        <div className="editorial-dossier">
         <section className="editorial-section editorial-brief" id="brief">
           <div className="shell editorial-section-grid">
             <div className="editorial-section-label"><span>Executive brief</span><small>01</small></div>
@@ -191,6 +192,7 @@ export default function HopSkipDriveCasePage() {
             </div>
           </div>
         </section>
+        </div>
 
         <section className="editorial-next-case editorial-next-hsd">
           <div className="shell editorial-next-grid">
