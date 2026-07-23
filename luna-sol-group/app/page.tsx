@@ -67,6 +67,15 @@ type FeaturedCompany = {
   title: string;
   description: string;
   caseStudy?: string;
+  summary: {
+    role: string;
+    mandate: string;
+    work: string[];
+    value: string;
+  };
+  evidenceStatus: string;
+  evidenceNote: string;
+  evidence?: Array<{ label: string; href: string }>;
 };
 
 const featuredCompanies: FeaturedCompany[] = [
@@ -80,6 +89,18 @@ const featuredCompanies: FeaturedCompany[] = [
     relationship: "Luna Sol advisory engagement · 2026",
     title: "Backlog stabilization and operating roadmap.",
     description: "Engaged during a record grading-backlog surge to identify the active constraint, structure near-term countermeasures, and establish the governance and capacity mechanisms behind recovery.",
+    summary: {
+      role: "Senior operating advisor",
+      mandate: "Diagnose the active constraint during a record grading backlog and translate the fact base into an executable recovery roadmap.",
+      work: ["Backlog and flow diagnosis", "Constraint and capacity analysis", "Near-term countermeasures", "Executive governance and operating cadence"],
+      value: "The public backlog moved from a mid-June peak near 14M into an approximately 11–12M range by July. Public sources establish the timing and scale; the result reflects PSA leadership and operating teams alongside advisory support.",
+    },
+    evidenceStatus: "Live evidence checked",
+    evidenceNote: "Public operating evidence · not sole-attribution proof",
+    evidence: [
+      { label: "PSA live backlog tracker", href: "https://www.psacard.com/info/backlog-tracker" },
+      { label: "Sports Illustrated backlog update", href: "https://www.si.com/collectibles/psa-bi-weekly-update-shows-11-million-cards-still-backlogged" },
+    ],
   },
   {
     key: "hopskipdrive",
@@ -92,6 +113,18 @@ const featuredCompanies: FeaturedCompany[] = [
     relationship: "Luna Sol consulting engagement · 2026",
     title: "Operational foundation for regulated national scale.",
     description: "Designed the operating architecture connecting dispatch, compliance, SOPs, risk, executive governance, technical requirements, and implementation across a 30+ metro footprint.",
+    summary: {
+      role: "Senior Operations & Technical Project Manager · Consulting",
+      mandate: "Create a scalable operating foundation for technology-enabled student transportation across a safety-critical, regulated, multi-market environment.",
+      work: ["Current-state assessment and operating architecture", "Dispatch, compliance, incident, and risk workflows", "SOP library, vendor governance, and executive KPIs", "Technical requirements, roadmap, and knowledge transfer"],
+      value: "Delivered a connected operating model spanning ten workstreams and a 30+ metro footprint. Public sources provide company context; they are not represented as independent proof of personal contribution.",
+    },
+    evidenceStatus: "Company sources checked",
+    evidenceNote: "Official company context · personal scope labeled separately",
+    evidence: [
+      { label: "2026–2027 product suite", href: "https://www.hopskipdrive.com/blog/new-2026-2027-product-suite/" },
+      { label: "Six-state expansion announcement", href: "https://www.hopskipdrive.com/blog/hopskipdrive-plans-expansion-across-six-new-states-for-the-2025-2026-school/" },
+    ],
   },
   {
     key: "maid-of-the-mist",
@@ -104,6 +137,18 @@ const featuredCompanies: FeaturedCompany[] = [
     relationship: "Luna Sol senior operations engagement · 2026",
     title: "Guest-flow bottlenecks translated into a public planning tool.",
     description: "Assessed the U.S. operation end to end; recommendations informed guest-planning enhancements, including the Wait Time Trends & Insights capability launched for the 2026 season.",
+    summary: {
+      role: "Senior Operations Consultant",
+      mandate: "Assess guest flow, queues, throughput, capacity, labor, and the digital journey across the U.S. operation.",
+      work: ["End-to-end field observation and process mapping", "Queue, throughput, and capacity analysis", "Bottleneck and demand-pattern diagnosis", "Executive recommendations and implementation sequencing"],
+      value: "The assessment informed guest-planning enhancements, including the publicly launched Wait Time Trends & Insights capability. Public reporting confirms the feature and purpose—not sole ownership of the result.",
+    },
+    evidenceStatus: "News + official source checked",
+    evidenceNote: "Feature launch corroborated · contribution attribution bounded",
+    evidence: [
+      { label: "WGRZ 2026 launch coverage", href: "https://www.wgrz.com/article/news/local/maid-of-the-mist-announces-launch-date-for-2026/71-302e72a9-f363-43db-ad1d-69884d595407" },
+      { label: "Official Maid announcement", href: "https://www.maidofthemist.com/ready-to-launch-maid-of-the-mist-to-set-sail-on-2026-season/" },
+    ],
   },
   {
     key: "amazon",
@@ -115,6 +160,14 @@ const featuredCompanies: FeaturedCompany[] = [
     relationship: "Former executive operator · Career experience",
     title: "Global last-mile transformation at enterprise scale.",
     description: "Led operating-system, delivery-partner, capacity, and network-economics work across North America, Europe, and Japan before founding Luna Sol.",
+    summary: {
+      role: "Executive product and operations leader",
+      mandate: "Improve the economics, quality, capacity, and controllability of complex last-mile networks operating across regions.",
+      work: ["Global operating-system design", "Delivery-partner and capacity mechanisms", "Network economics and capital allocation", "AI-assisted defect attribution and field adoption"],
+      value: "Selected anonymized career outcomes are presented in the site’s executive proof points. They reflect operator leadership inside Amazon and the work of broad cross-functional teams—not a Luna Sol client engagement.",
+    },
+    evidenceStatus: "Experience basis labeled",
+    evidenceNote: "Prior employment · not a Luna Sol client",
   },
   {
     key: "walmart",
@@ -126,6 +179,14 @@ const featuredCompanies: FeaturedCompany[] = [
     relationship: "Former operator · Career experience",
     title: "Nearly a decade inside complex retail operations.",
     description: "Built frontline judgment and execution discipline in a high-volume retail environment where customer promise, labor, inventory, and operating cadence converge.",
+    summary: {
+      role: "Retail operations leader",
+      mandate: "Run high-volume frontline operations where customer promise, labor, inventory, safety, and daily execution intersect.",
+      work: ["Frontline operating leadership", "Labor and execution cadence", "Inventory and customer-promise management", "Field problem solving under live demand"],
+      value: "This experience established the frontline operating foundation later applied to enterprise transformation roles. It is explicitly presented as prior employment—not consulting work or a Luna Sol client relationship.",
+    },
+    evidenceStatus: "Experience basis labeled",
+    evidenceNote: "Prior employment · not a Luna Sol client",
   },
 ];
 
@@ -197,31 +258,48 @@ export default function HomePage() {
         <section className="section featured-work-section" id="featured-work">
           <div className="shell">
             <div className="section-heading compact-heading dark-heading">
-              <div><span className="section-label light">Featured work and operating experience</span><h2>Where the work happened.<br />What the relationship was.</h2></div>
-              <p>A concise portfolio of advisory work and prior operator experience. Every company mark links to the organization, and every relationship is labeled directly.</p>
+              <div><span className="section-label light">Featured work and operating experience</span><h2>One page. Five operating chapters.</h2></div>
+              <p>Open any project summary for the mandate, role, work delivered, value, and evidence boundary. Company marks still link directly to each organization.</p>
             </div>
-            <div className="company-grid">
+            <div className="company-grid project-index">
               {featuredCompanies.map((company, index) => (
                 <article className="company-card" key={company.name}>
-                  <div className="company-card-top">
-                    <span>{company.relationship}</span>
-                    <b>0{index + 1}</b>
+                  <div className="company-card-overview">
+                    <div className="company-card-top">
+                      <span>{company.relationship}</span>
+                      <b>0{index + 1}</b>
+                    </div>
+                    <a className="company-logo-link" href={company.website} target="_blank" rel="noreferrer" aria-label={`Visit ${company.name} website`}>
+                      <span className={company.key === "hopskipdrive" ? "company-logo-stage company-logo-lockup" : "company-logo-stage"}>
+                        <img src={company.logo} width={company.width} height={company.height} alt={`${company.name} logo`} />
+                        {company.key === "hopskipdrive" ? <b>HopSkipDrive</b> : null}
+                      </span>
+                    </a>
+                    <div className="company-card-copy">
+                      <h3>{company.title}</h3>
+                      <p>{company.description}</p>
+                    </div>
+                    <div className="company-evidence-status"><i aria-hidden="true">✓</i><span><strong>{company.evidenceStatus}</strong><small>{company.evidenceNote}</small></span></div>
                   </div>
-                  <a className="company-logo-link" href={company.website} target="_blank" rel="noreferrer" aria-label={`Visit ${company.name} website`}>
-                    <span className={company.key === "hopskipdrive" ? "company-logo-stage company-logo-lockup" : "company-logo-stage"}>
-                      <img src={company.logo} width={company.width} height={company.height} alt={`${company.name} logo`} />
-                      {company.key === "hopskipdrive" ? <b>HopSkipDrive</b> : null}
-                    </span>
-                  </a>
-                  <div className="company-card-copy">
-                    <h3>{company.title}</h3>
-                    <p>{company.description}</p>
-                  </div>
-                  {company.key === "psa" ? <LiveBacklog compact /> : null}
-                  <div className="company-card-links">
-                    {company.caseStudy ? <Link href={company.caseStudy}>Explore engagement <span aria-hidden="true">→</span></Link> : null}
-                    <a href={company.website} target="_blank" rel="noreferrer">{company.caseStudy ? "Company site" : `Visit ${company.name}`} <span aria-hidden="true">↗</span></a>
-                  </div>
+                  <details className="project-summary-card">
+                    <summary><span>Project summary</span><strong><i aria-hidden="true">+</i> Expand details</strong></summary>
+                    <div className="project-summary-body">
+                      <div className="project-summary-facts">
+                        <section><span>Role</span><strong>{company.summary.role}</strong></section>
+                        <section><span>Mandate</span><p>{company.summary.mandate}</p></section>
+                        <section className="project-work"><span>Work delivered</span><ul>{company.summary.work.map((item) => <li key={item}>{item}</li>)}</ul></section>
+                        <section><span>Value and boundary</span><p>{company.summary.value}</p></section>
+                      </div>
+                      {company.key === "psa" ? <LiveBacklog compact /> : null}
+                      {company.evidence?.length ? (
+                        <div className="project-evidence-links"><span>Evidence and context sources</span><div>{company.evidence.map((source) => <a href={source.href} target="_blank" rel="noreferrer" key={source.href}>{source.label} <i aria-hidden="true">↗</i></a>)}</div></div>
+                      ) : null}
+                      <div className="company-card-links">
+                        {company.caseStudy ? <Link href={company.caseStudy}>Explore full engagement <span aria-hidden="true">→</span></Link> : null}
+                        <a href={company.website} target="_blank" rel="noreferrer">Visit {company.name} <span aria-hidden="true">↗</span></a>
+                      </div>
+                    </div>
+                  </details>
                 </article>
               ))}
             </div>
