@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { ClientValidation } from "./components/ClientValidation";
 import { InquiryForm } from "./components/InquiryForm";
 import { LiveBacklog } from "./components/LiveBacklog";
 import { SiteFooter } from "./components/SiteFooter";
@@ -279,6 +280,8 @@ export default function HomePage() {
             <p className="portfolio-disclaimer">PSA, HopSkipDrive, and Maid of the Mist are consulting or advisory engagements as labeled and each links to a dedicated case study. Public outcomes reflect the collaborative work of company leadership, operating teams, and stakeholders. Amazon and Walmart represent Ryan Miller’s prior employment, not Luna Sol client engagements. All marks belong to their respective owners.</p>
           </div>
         </section>
+
+        <ClientValidation />
 
         <section className="section method-section" id="method">
           <div className="shell method-grid">
