@@ -152,7 +152,7 @@ export default function AmazonExperiencePage() {
             <span className="section-label light">Continue exploring</span>
             <div className="after-grid">
               <div><b>01</b><h3>Featured work</h3><p>Three complete, evidence-backed Luna Sol client case studies.</p><Link href="/#featured-work">Back to featured work &rarr;</Link></div>
-              <div><b>02</b><h3>Recovery calculator</h3><p>Model a queue-recovery scenario for your own operation, free.</p><Link href="/tools/backlog-recovery-calculator">Open the calculator &rarr;</Link></div>
+              <div><b>02</b><h3>Executive Operations Studio</h3><p>Use the control-tower, portfolio, and WBR mechanisms built from this operating experience.</p><Link href="/tools/executive-operations-studio">Open the working studio &rarr;</Link></div>
               <div><b>03</b><h3>Start a conversation</h3><p>Bring the operating problem your dashboards cannot explain.</p><Link href="/#contact">Contact Luna Sol &rarr;</Link></div>
             </div>
           </div>

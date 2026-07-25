@@ -40,7 +40,7 @@ const decisionSystem = [
     title: "Make the result operable.",
     description: "Translate the chosen path into owners, decision rights, leading indicators, escalation thresholds, and a cadence operators can run under pressure.",
     outputs: ["Operating architecture", "Executive control cadence", "Benefits-verification mechanism"],
-    link: { href: "/#contact", label: "Discuss the operating decision" },
+    link: { href: "/tools/executive-operations-studio", label: "Run the control system" },
   },
 ];
 
@@ -116,8 +116,8 @@ export default function ApproachPage() {
               <span className="section-label">The practical difference</span>
               <h2>A recommendation can be admired. A control system can be run.</h2>
               <p className="principal-lead">The work is complete only when the operating team can see the signal, make the decision, execute the mechanism, and verify the result without depending on the consultant.</p>
-              <p>The Operations Lab exposes the lighter-weight versions of this logic. The case studies show how the same standard is applied to real operating environments.</p>
-              <div className="approach-actions"><Link className="button" href="/tools">Open the Operations Lab</Link><Link className="text-link dark" href="/#featured-work">Explore the case studies →</Link></div>
+              <p>The Executive Operations Studio connects capacity control, transformation portfolio governance, and the weekly business review in one inspectable workflow. The case studies show how the same standard is applied to real operating environments.</p>
+              <div className="approach-actions"><Link className="button" href="/tools/executive-operations-studio">Use the Executive Operations Studio</Link><Link className="text-link dark" href="/#featured-work">Explore the case studies →</Link></div>
             </div>
           </div>
         </section>

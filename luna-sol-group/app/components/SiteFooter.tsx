@@ -15,8 +15,9 @@ export function SiteFooter() {
           <Link href="/approach">Approach</Link>
         </div>
         <div>
-          <span className="footer-label">Operations Lab</span>
-          <Link href="/tools">Operations Lab overview</Link>
+          <span className="footer-label">Operations Products</span>
+          <Link href="/tools/executive-operations-studio">Executive Operations Studio</Link>
+          <Link href="/tools">Products overview</Link>
           <Link href="/tools/backlog-recovery-calculator">Recovery calculator</Link>
           <Link href="/tools/constraint-diagnostic">Constraint hypothesis map</Link>
           <Link href="/diagnostic">PSA case model</Link>
