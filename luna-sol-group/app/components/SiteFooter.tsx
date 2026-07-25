@@ -17,6 +17,7 @@ export function SiteFooter() {
         <div>
           <span className="footer-label">Operations Products</span>
           <Link href="/tools/executive-operations-studio">Executive Operations Studio</Link>
+          <Link href="/tools/implementation-workbench">Implementation Workbench</Link>
           <Link href="/tools">Products overview</Link>
           <Link href="/tools/backlog-recovery-calculator">Recovery calculator</Link>
           <Link href="/tools/constraint-diagnostic">Constraint hypothesis map</Link>
@@ -25,6 +26,7 @@ export function SiteFooter() {
         <div>
           <span className="footer-label">Connect</span>
           <a href="mailto:Rmiller62785@gmail.com">Rmiller62785@gmail.com</a>
+          <Link href="/ops">Operator sign-in</Link>
           <a href="https://www.linkedin.com/in/ryan-miller-90b1181aa/" target="_blank" rel="noreferrer">LinkedIn ↗</a>
         </div>
       </div>

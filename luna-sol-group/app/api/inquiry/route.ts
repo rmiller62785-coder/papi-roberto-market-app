@@ -1,3 +1,6 @@
+import { ensureOpsSchema, getD1 } from "../../../db";
+import { operatorEmail } from "../../operator-auth";
+
 type Inquiry = {
   name?: unknown;
   email?: unknown;
@@ -45,11 +48,27 @@ export async function POST(request: Request) {
   }
 
   const fallback = mailtoFor(inquiry);
+  let captured = false;
+  try {
+    await ensureOpsSchema();
+    const db = getD1();
+    const owner = operatorEmail();
+    const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const recent = await db.prepare("SELECT id FROM ops_items WHERE owner_email = ? AND record_type = 'lead' AND notes LIKE ? AND created_at >= ? LIMIT 1").bind(owner, `%Email: ${inquiry.email}%`, cutoff).first<{ id: number }>();
+    if (!recent) {
+      const now = new Date().toISOString();
+      await db.prepare("INSERT INTO ops_items (owner_email, record_type, title, client, status, priority, due_date, notes, value, link, created_at, updated_at) VALUES (?, 'lead', ?, ?, 'new', 'high', '', ?, 0, ?, ?, ?)").bind(owner, `${inquiry.name}${inquiry.company ? ` · ${inquiry.company}` : ""}`, inquiry.company, `Name: ${inquiry.name}\nEmail: ${inquiry.email}\n\nOperating problem / decision:\n${inquiry.problem}`, `mailto:${inquiry.email}`, now, now).run();
+    }
+    captured = true;
+  } catch {
+    captured = false;
+  }
   const apiKey = process.env.RESEND_API_KEY;
   const to = process.env.CONTACT_TO_EMAIL;
   const from = process.env.CONTACT_FROM_EMAIL;
 
   if (!apiKey || !to || !from) {
+    if (captured) return Response.json({ ok: true, captured: true });
     return Response.json({ ok: false, fallback: true, mailto: fallback }, { status: 503 });
   }
 
@@ -76,8 +95,9 @@ export async function POST(request: Request) {
       }),
     });
     if (!response.ok) throw new Error("Email provider rejected request");
-    return Response.json({ ok: true });
+    return Response.json({ ok: true, captured });
   } catch {
+    if (captured) return Response.json({ ok: true, captured: true, notification: "dashboard" });
     return Response.json({ ok: false, fallback: true, mailto: fallback }, { status: 502 });
   }
 }

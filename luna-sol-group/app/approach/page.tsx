@@ -36,6 +36,14 @@ const decisionSystem = [
   },
   {
     n: "04",
+    eyebrow: "Implementation",
+    title: "Make the change executable.",
+    description: "Convert the chosen path into launch gates, process ownership, decision rights, tested controls, and a handoff the steady-state team can accept.",
+    outputs: ["Launch-readiness decision", "SOP and RACI architecture", "Risk-and-control register"],
+    link: { href: "/tools/implementation-workbench", label: "Build the implementation system" },
+  },
+  {
+    n: "05",
     eyebrow: "Control",
     title: "Make the result operable.",
     description: "Translate the chosen path into owners, decision rights, leading indicators, escalation thresholds, and a cadence operators can run under pressure.",
@@ -72,7 +80,7 @@ export default function ApproachPage() {
         <section className="section paper">
           <div className="shell">
             <div className="section-heading compact-heading">
-              <div><span className="section-label">The decision system</span><h2>Four gates between signal and sustained value.</h2></div>
+              <div><span className="section-label">The decision system</span><h2>Five gates between signal and sustained value.</h2></div>
               <p>Each gate produces an executive decision and an operator-owned mechanism. The tools and case studies on this site demonstrate the same architecture at different levels of fidelity.</p>
             </div>
             <div className="approach-system-grid">
@@ -116,8 +124,8 @@ export default function ApproachPage() {
               <span className="section-label">The practical difference</span>
               <h2>A recommendation can be admired. A control system can be run.</h2>
               <p className="principal-lead">The work is complete only when the operating team can see the signal, make the decision, execute the mechanism, and verify the result without depending on the consultant.</p>
-              <p>The Executive Operations Studio connects capacity control, transformation portfolio governance, and the weekly business review in one inspectable workflow. The case studies show how the same standard is applied to real operating environments.</p>
-              <div className="approach-actions"><Link className="button" href="/tools/executive-operations-studio">Use the Executive Operations Studio</Link><Link className="text-link dark" href="/#featured-work">Explore the case studies →</Link></div>
+              <p>The Implementation Workbench makes an approved change executable. The Executive Operations Studio keeps the resulting operation under control. The case studies show how the same standard is applied to real operating environments.</p>
+              <div className="approach-actions"><Link className="button" href="/tools/executive-operations-studio">Use the Executive Operations Studio</Link><Link className="text-link dark" href="/tools/implementation-workbench">Open the Implementation Workbench →</Link><Link className="text-link dark" href="/#featured-work">Explore the case studies →</Link></div>
             </div>
           </div>
         </section>

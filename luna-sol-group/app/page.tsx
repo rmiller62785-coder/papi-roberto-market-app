@@ -167,7 +167,7 @@ export default function HomePage() {
               <p className="hero-deck">Luna Sol turns contested signals, cross-functional friction, and stalled transformation into a fact base, an operating system, and measurable control.</p>
               <div className="hero-actions">
                 <Link className="button" href="/#featured-work">Explore featured work <span aria-hidden="true">→</span></Link>
-                <Link className="button button-ghost" href="/tools/executive-operations-studio">Use the Executive Operations Studio</Link>
+                <Link className="button button-ghost" href="/tools">Use the operations products</Link>
               </div>
               <div className="hero-note"><span>Best fit</span> Logistics · Retail · Mobility · Investor-backed operations</div>
             </div>
@@ -221,11 +221,11 @@ export default function HomePage() {
         <section className="section home-product-section">
           <div className="shell home-product-grid">
             <div className="home-product-copy">
-              <span className="section-label light">Flagship operating product</span>
-              <h2>A working executive system—not another portfolio claim.</h2>
-              <p>Import operating data, pressure-test a 13-week capacity plan, prioritize a transformation portfolio, and generate a weekly executive review with named decisions and owners.</p>
-              <div className="home-product-capabilities"><span>Control tower</span><span>Capacity model</span><span>Portfolio optimizer</span><span>90-day roadmap</span><span>KPI governance</span><span>WBR export</span></div>
-              <div className="feature-actions"><Link className="button" href="/tools/executive-operations-studio">Open the working studio <span aria-hidden="true">→</span></Link><Link className="text-link light" href="/tools">View all operations products →</Link></div>
+              <span className="section-label light">Working operations products</span>
+              <h2>Control the operation—and make the change executable.</h2>
+              <p>Two connected environments cover the work executives and transformation leaders are expected to install: operating control, portfolio governance, launch readiness, process ownership, and risk closure.</p>
+              <div className="home-product-capabilities"><span>Control tower</span><span>Portfolio optimizer</span><span>Weekly business review</span><span>Launch gates</span><span>SOP + RACI</span><span>Risk controls</span></div>
+              <div className="feature-actions"><Link className="button" href="/tools/executive-operations-studio">Executive Studio <span aria-hidden="true">→</span></Link><Link className="button button-ghost" href="/tools/implementation-workbench">Implementation Workbench</Link><Link className="text-link light" href="/tools">View the product suite →</Link></div>
             </div>
             <div className="home-product-console" aria-label="Executive Operations Studio product preview">
               <header><span>Executive Operations Studio</span><b><i /> Local data mode</b></header>
@@ -313,6 +313,7 @@ export default function HomePage() {
               <div className="method-links">
                 <Link className="text-link light" href="/approach">Explore the decision system →</Link>
                 <Link className="text-link light" href="/tools/executive-operations-studio">Use the Executive Operations Studio →</Link>
+                <Link className="text-link light" href="/tools/implementation-workbench">Build the implementation system →</Link>
               </div>
             </div>
             <ol className="method-list">
