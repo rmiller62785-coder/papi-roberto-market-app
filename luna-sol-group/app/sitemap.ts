@@ -3,7 +3,7 @@ import type { MetadataRoute } from "next";
 const siteUrl = "https://lunasolgroup.com";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const routes = ["", "/work/psa", "/work/hopskipdrive", "/work/maid-of-the-mist", "/diagnostic", "/tools/backlog-recovery-calculator", "/experience/amazon"];
+  const routes = ["", "/work/psa", "/work/hopskipdrive", "/work/maid-of-the-mist", "/diagnostic", "/tools/backlog-recovery-calculator", "/tools/constraint-diagnostic", "/experience/amazon", "/approach"];
 
   return routes.map((route) => ({
     url: `${siteUrl}${route}`,

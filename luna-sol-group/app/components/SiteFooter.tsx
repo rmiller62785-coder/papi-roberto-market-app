@@ -11,8 +11,14 @@ export function SiteFooter() {
         <div>
           <span className="footer-label">Explore</span>
           <Link href="/#featured-work">Featured work</Link>
-          <Link href="/diagnostic">PSA recovery model</Link>
           <Link href="/#capabilities">Capabilities</Link>
+          <Link href="/approach">Approach</Link>
+        </div>
+        <div>
+          <span className="footer-label">Free tools</span>
+          <Link href="/tools/backlog-recovery-calculator">Recovery calculator</Link>
+          <Link href="/tools/constraint-diagnostic">Constraint diagnostic</Link>
+          <Link href="/diagnostic">PSA recovery model</Link>
         </div>
         <div>
           <span className="footer-label">Connect</span>

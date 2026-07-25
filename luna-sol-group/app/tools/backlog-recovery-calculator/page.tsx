@@ -56,6 +56,8 @@ export default function BacklogRecoveryCalculatorPage() {
               <div><b>03</b><h3>Yours to keep or share</h3><p>Nothing is stored unless you choose to send a scenario to Ryan. Bookmark the page and rerun it any time your assumptions change.</p></div>
             </div>
             <p className="diagnostic-case-link"><Link href="/work/psa">See this model applied to the PSA case study <span aria-hidden="true">→</span></Link></p>
+            <p className="diagnostic-case-link"><Link href="/tools/constraint-diagnostic">Not sure what&rsquo;s driving the backlog yet? Start with the constraint diagnostic <span aria-hidden="true">→</span></Link></p>
+            <p className="diagnostic-case-link"><Link href="/approach">Why this tool is scored, not generated <span aria-hidden="true">→</span></Link></p>
           </div>
         </section>
       </main>

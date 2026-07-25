@@ -294,7 +294,10 @@ export default function HomePage() {
               <span className="section-label light">Luna OS™</span>
               <h2>One operating thread from signal to sustained value.</h2>
               <p>Every phase produces an executive decision and an operator-owned mechanism. No orphaned analysis. No transformation theater.</p>
-              <Link className="text-link light" href="/diagnostic">Test a backlog scenario →</Link>
+              <div className="method-links">
+                <Link className="text-link light" href="/diagnostic">Test a backlog scenario →</Link>
+                <Link className="text-link light" href="/approach">Why the tools are built this way →</Link>
+              </div>
             </div>
             <ol className="method-list">
               <li><b>01</b><div><strong>Truth</strong><span>Reconcile the signal with physical reality.</span></div></li>
