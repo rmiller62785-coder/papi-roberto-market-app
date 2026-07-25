@@ -69,6 +69,7 @@ type FeaturedCompany = {
   title: string;
   description: string;
   caseStudy?: string;
+  retrospective?: string;
   evidenceStatus: string;
   evidenceNote: string;
   evidenceHref?: string;
@@ -131,6 +132,7 @@ const featuredCompanies: FeaturedCompany[] = [
     width: 603,
     height: 182,
     website: "https://www.amazon.com/",
+    retrospective: "/experience/amazon",
     relationship: "Former executive operator · Career experience",
     title: "Global last-mile transformation at enterprise scale.",
     description: "Led operating-system, delivery-partner, capacity, and network-economics work across North America, Europe, and Japan before founding Luna Sol.",
@@ -263,7 +265,10 @@ export default function HomePage() {
                   <article key={company.name}>
                     <a className="company-logo-link" href={company.website} target="_blank" rel="noreferrer" aria-label={`Visit ${company.name} website`}><span className="company-logo-stage"><Image src={company.logo} width={company.width} height={company.height} alt={`${company.name} logo`} /></span></a>
                     <div><span>{company.relationship}</span><h3>{company.title}</h3><p>{company.description}</p></div>
-                    <a className="career-company-link" href={company.website} target="_blank" rel="noreferrer">Company site ↗</a>
+                    <div className="career-company-links">
+                      {company.retrospective ? <Link className="career-company-link" href={company.retrospective}>Read the retrospective →</Link> : null}
+                      <a className="career-company-link" href={company.website} target="_blank" rel="noreferrer">Company site ↗</a>
+                    </div>
                   </article>
                 ))}
               </div>
