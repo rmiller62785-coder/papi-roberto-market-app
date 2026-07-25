@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
 const storySteps = [
@@ -155,7 +156,7 @@ export function MarketMap() {
   return (
     <div className="hsd-market-explorer">
       <div className="hsd-map-shell">
-        <img src="/us-map.svg" width="959" height="593" alt="Map of the United States with HopSkipDrive engagement coverage marked" />
+        <Image src="/us-map.svg" width={959} height={593} alt="Map of the United States with HopSkipDrive engagement coverage marked" />
         {markets.map((market, index) => (
           <button
             className={active === index ? "hsd-market-node active" : "hsd-market-node"}

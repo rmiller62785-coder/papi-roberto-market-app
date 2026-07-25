@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { LiveBacklog } from "../../components/LiveBacklog";
 import { SiteFooter } from "../../components/SiteFooter";
@@ -79,7 +80,7 @@ export default function PsaCasePage() {
             <div className="editorial-hero-copy">
               <div className="editorial-case-meta"><span>6-minute case study</span><span>Advisory engagement · 2026</span></div>
               <a className="editorial-company" href="https://www.psacard.com/" target="_blank" rel="noreferrer" aria-label="Visit PSA">
-                <span><img src="/psa-logo.png" width="449" height="169" alt="PSA logo" /></span>
+                <span><Image src="/psa-logo.png" width={830} height={338} alt="PSA logo" priority /></span>
                 <strong>PSA</strong>
               </a>
               <h1>From a record grading backlog to a <em>controlled recovery system.</em></h1>
@@ -178,7 +179,7 @@ export default function PsaCasePage() {
             <details className="editorial-supporting">
               <summary><span>View the portfolio timeline artifact</span><b>Open +</b></summary>
               <div className="editorial-artifact">
-                <img src="/psa-timeline.png" width="1080" height="1350" alt="Six-stop PSA operating timeline from May 14 through the July 14 backlog update" />
+                <Image src="/psa-timeline.png" width={1080} height={1350} alt="Six-stop PSA operating timeline from May 14 through the July 14 backlog update" />
                 <div><span>Downloadable artifact</span><h3>The complete operating timeline.</h3><p>A 1080-pixel editorial timeline for executive review and portfolio use.</p><a className="button button-light" href="/psa-timeline.png" download>Download PNG</a></div>
               </div>
             </details>

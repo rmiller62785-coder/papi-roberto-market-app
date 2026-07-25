@@ -42,7 +42,7 @@ const organizationSchema = {
     jobTitle: "Founder and Principal",
     alumniOf: ["Amazon", "Walmart"],
   },
-  sameAs: ["https://www.linkedin.com/in/rmmba"],
+  sameAs: ["https://www.linkedin.com/in/ryan-miller-90b1181aa/"],
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

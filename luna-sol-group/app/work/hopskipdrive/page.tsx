@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { SiteFooter } from "../../components/SiteFooter";
 import { SiteHeader } from "../../components/SiteHeader";
@@ -80,7 +81,7 @@ export default function HopSkipDriveCasePage() {
             <div className="editorial-hero-copy">
               <div className="editorial-case-meta"><span>6-minute case study</span><span>Consulting engagement · 2026</span></div>
               <a className="editorial-company editorial-company-hsd" href="https://www.hopskipdrive.com/" target="_blank" rel="noreferrer" aria-label="Visit HopSkipDrive">
-                <span><img src="/hopskipdrive-logo.svg" width="256" height="256" alt="HopSkipDrive logo" /></span>
+                <span><Image src="/hopskipdrive-logo.svg" width={256} height={256} alt="HopSkipDrive logo" /></span>
                 <strong>HopSkipDrive</strong>
               </a>
               <h1>The operating system behind <em>safe, scalable growth.</em></h1>
@@ -88,7 +89,7 @@ export default function HopSkipDriveCasePage() {
               <div className="editorial-source-check hsd-source-status"><i aria-hidden="true">✓</i><span><strong>Sources checked</strong><small>Official product, expansion, newsroom, and distributed company materials</small></span></div>
             </div>
             <figure className="editorial-hero-feature editorial-image-feature">
-              <img src="/hopskipdrive-expansion.jpg" width="1200" height="630" alt="A HopSkipDrive CareDriver seated in a vehicle" />
+              <Image src="/hopskipdrive-expansion.jpg" width={1200} height={630} alt="A HopSkipDrive CareDriver seated in a vehicle" priority />
               <figcaption><span>Operating context</span><strong>People, technology, regulation, and live service—moving at once.</strong></figcaption>
             </figure>
           </div>

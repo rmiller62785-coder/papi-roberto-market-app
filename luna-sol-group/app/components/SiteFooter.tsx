@@ -17,7 +17,7 @@ export function SiteFooter() {
         <div>
           <span className="footer-label">Connect</span>
           <a href="mailto:Rmiller62785@gmail.com">Rmiller62785@gmail.com</a>
-          <a href="https://www.linkedin.com/in/rmmba" target="_blank" rel="noreferrer">LinkedIn ↗</a>
+          <a href="https://www.linkedin.com/in/ryan-miller-90b1181aa/" target="_blank" rel="noreferrer">LinkedIn ↗</a>
         </div>
       </div>
       <div className="shell footer-base">

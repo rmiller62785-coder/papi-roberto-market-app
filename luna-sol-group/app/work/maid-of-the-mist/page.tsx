@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { SiteFooter } from "../../components/SiteFooter";
 import { SiteHeader } from "../../components/SiteHeader";
@@ -74,7 +75,7 @@ export default function MaidOfTheMistCasePage() {
             <div className="editorial-hero-copy">
               <div className="editorial-case-meta"><span>5-minute case study</span><span>Senior operations consulting · 2026</span></div>
               <a className="editorial-company editorial-company-motm" href="https://www.maidofthemist.com/" target="_blank" rel="noreferrer" aria-label="Visit Maid of the Mist">
-                <span><img src="/maid-of-the-mist-logo.svg" width="229" height="154" alt="Maid of the Mist logo" /></span>
+                <span><Image src="/maid-of-the-mist-logo.svg" width={229} height={154} alt="Maid of the Mist logo" /></span>
                 <strong>Maid of the Mist</strong>
               </a>
               <h1>Moving the decision upstream—<em>before the guest reaches the queue.</em></h1>
@@ -82,7 +83,7 @@ export default function MaidOfTheMistCasePage() {
               <div className="editorial-source-check motm-source-status"><i aria-hidden="true">✓</i><span><strong>Sources checked</strong><small>WGRZ coverage, official announcement, and live customer capability</small></span></div>
             </div>
             <figure className="editorial-hero-feature editorial-image-feature">
-              <img src="/maid-of-the-mist-2026.jpg" width="1500" height="1000" alt="Maid of the Mist electric vessel James V. Glynn at Niagara Falls" />
+              <Image src="/maid-of-the-mist-2026.jpg" width={1500} height={1000} alt="Maid of the Mist electric vessel James V. Glynn at Niagara Falls" priority />
               <figcaption><span>Operational environment</span><strong>High-volume guest flow inside a safety-critical, capacity-constrained system.</strong></figcaption>
             </figure>
           </div>

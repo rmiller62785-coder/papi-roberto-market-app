@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { InquiryForm } from "./components/InquiryForm";
 import { LiveBacklog } from "./components/LiveBacklog";
@@ -78,8 +79,8 @@ const featuredCompanies: FeaturedCompany[] = [
     key: "psa",
     name: "PSA",
     logo: "/psa-logo.png",
-    width: 449,
-    height: 169,
+    width: 830,
+    height: 338,
     website: "https://www.psacard.com/",
     caseStudy: "/work/psa",
     relationship: "Luna Sol advisory engagement · 2026",
@@ -230,7 +231,7 @@ export default function HomePage() {
                   </div>
                   <a className="company-logo-link" href={company.website} target="_blank" rel="noreferrer" aria-label={`Visit ${company.name} website`}>
                     <span className={company.key === "hopskipdrive" ? "company-logo-stage company-logo-lockup" : "company-logo-stage"}>
-                      <img src={company.logo} width={company.width} height={company.height} alt={`${company.name} logo`} />
+                      <Image src={company.logo} width={company.width} height={company.height} alt={`${company.name} logo`} />
                       {company.key === "hopskipdrive" ? <b>HopSkipDrive</b> : null}
                     </span>
                   </a>
@@ -259,7 +260,7 @@ export default function HomePage() {
               <div className="career-company-grid">
                 {featuredCompanies.filter((company) => !company.caseStudy).map((company) => (
                   <article key={company.name}>
-                    <a className="company-logo-link" href={company.website} target="_blank" rel="noreferrer" aria-label={`Visit ${company.name} website`}><span className="company-logo-stage"><img src={company.logo} width={company.width} height={company.height} alt={`${company.name} logo`} /></span></a>
+                    <a className="company-logo-link" href={company.website} target="_blank" rel="noreferrer" aria-label={`Visit ${company.name} website`}><span className="company-logo-stage"><Image src={company.logo} width={company.width} height={company.height} alt={`${company.name} logo`} /></span></a>
                     <div><span>{company.relationship}</span><h3>{company.title}</h3><p>{company.description}</p></div>
                     <a className="career-company-link" href={company.website} target="_blank" rel="noreferrer">Company site ↗</a>
                   </article>
@@ -319,7 +320,7 @@ export default function HomePage() {
                 <div><strong>DSP 2.0</strong><span>Co-developed foundational partner-model redesign</span></div>
                 <div><strong>103.8 TPH</strong><span>North American manual-sortation benchmark</span></div>
               </div>
-              <a className="text-link dark" href="https://www.linkedin.com/in/rmmba" target="_blank" rel="noreferrer">View Ryan’s LinkedIn profile ↗</a>
+              <a className="text-link dark" href="https://www.linkedin.com/in/ryan-miller-90b1181aa/" target="_blank" rel="noreferrer">View Ryan’s LinkedIn profile ↗</a>
             </div>
           </div>
         </section>
