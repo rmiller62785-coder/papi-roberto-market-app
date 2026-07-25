@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Luna Sol Group">
+  <rect width="64" height="64" rx="32" fill="#0d131b"/>
+  <circle cx="32" cy="32" r="25" fill="none" stroke="#b79054" stroke-width="1.5"/>
+  <text x="32" y="38" text-anchor="middle" fill="#f3efe8" font-family="Georgia,serif" font-size="18" letter-spacing="1">LS</text>
+</svg>

@@ -11,6 +11,7 @@ export const metadata: Metadata = {
   },
   description: "Operator-led diagnostics, transformation design, and deployment for consequential operating problems in logistics, retail, mobility, and investor-backed businesses.",
   alternates: { canonical: "/" },
+  icons: { icon: "/favicon.svg" },
   openGraph: {
     type: "website",
     url: siteUrl,
