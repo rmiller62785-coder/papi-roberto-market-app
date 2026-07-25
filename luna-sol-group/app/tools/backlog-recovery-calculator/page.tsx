@@ -28,7 +28,7 @@ export default function BacklogRecoveryCalculatorPage() {
       <main id="main">
         <section className="subpage-hero diagnostic-hero">
           <div className="shell narrow-shell">
-            <span className="kicker">Free tool &middot; No signup required</span>
+            <span className="kicker">Operations Lab · Queue-flow scenario model</span>
             <h1>Model your own <em>backlog recovery.</em></h1>
             <p>
               The same recovery mechanics behind Luna Sol&rsquo;s PSA case study, generalized for any queue-shaped
@@ -55,9 +55,9 @@ export default function BacklogRecoveryCalculatorPage() {
               <div><b>02</b><h3>Works for any queue</h3><p>Support tickets, insurance claims, order fulfillment, inspections, permit review&mdash;anything with inbound demand and finite capacity.</p></div>
               <div><b>03</b><h3>Yours to keep or share</h3><p>Nothing is stored unless you choose to send a scenario to Ryan. Bookmark the page and rerun it any time your assumptions change.</p></div>
             </div>
-            <p className="diagnostic-case-link"><Link href="/work/psa">See this model applied to the PSA case study <span aria-hidden="true">→</span></Link></p>
-            <p className="diagnostic-case-link"><Link href="/tools/constraint-diagnostic">Not sure what&rsquo;s driving the backlog yet? Start with the constraint diagnostic <span aria-hidden="true">→</span></Link></p>
-            <p className="diagnostic-case-link"><Link href="/approach">Why this tool is scored, not generated <span aria-hidden="true">→</span></Link></p>
+            <p className="diagnostic-case-link"><Link href="/tools/constraint-diagnostic">Still testing the cause? Build the constraint hypothesis first <span aria-hidden="true">→</span></Link></p>
+            <p className="diagnostic-case-link"><Link href="/work/psa">See the case-specific PSA application <span aria-hidden="true">→</span></Link></p>
+            <p className="diagnostic-case-link"><Link href="/tools">Return to the Operations Lab <span aria-hidden="true">→</span></Link></p>
           </div>
         </section>
       </main>

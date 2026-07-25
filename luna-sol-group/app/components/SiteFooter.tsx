@@ -15,10 +15,11 @@ export function SiteFooter() {
           <Link href="/approach">Approach</Link>
         </div>
         <div>
-          <span className="footer-label">Free tools</span>
+          <span className="footer-label">Operations Lab</span>
+          <Link href="/tools">Operations Lab overview</Link>
           <Link href="/tools/backlog-recovery-calculator">Recovery calculator</Link>
-          <Link href="/tools/constraint-diagnostic">Constraint diagnostic</Link>
-          <Link href="/diagnostic">PSA recovery model</Link>
+          <Link href="/tools/constraint-diagnostic">Constraint hypothesis map</Link>
+          <Link href="/diagnostic">PSA case model</Link>
         </div>
         <div>
           <span className="footer-label">Connect</span>

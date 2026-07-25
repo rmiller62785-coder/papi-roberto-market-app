@@ -61,6 +61,7 @@ export function BacklogCalculator() {
   const [leadMessage, setLeadMessage] = useState("");
 
   const model = useMemo(() => {
+    const effectiveTarget = Math.min(scenario.currentBacklog, scenario.targetBacklog);
     const agingFactor = 1 - (scenario.agingMix / 100) * 0.08;
     const effectiveThroughput =
       scenario.ratedCapacity *
@@ -70,15 +71,15 @@ export function BacklogCalculator() {
         agingFactor +
       scenario.surgeCapacity;
     const netBurn = effectiveThroughput - scenario.weeklyInbound;
-    const backlogGap = Math.max(0, scenario.currentBacklog - scenario.targetBacklog);
-    const weeksToTarget = netBurn > 0 ? backlogGap / netBurn : Number.POSITIVE_INFINITY;
+    const backlogGap = Math.max(0, scenario.currentBacklog - effectiveTarget);
+    const weeksToTarget = backlogGap === 0 ? 0 : netBurn > 0 ? backlogGap / netBurn : Number.POSITIVE_INFINITY;
     const requiredThroughput = scenario.weeklyInbound + backlogGap / scenario.targetWeeks;
     const capacityGap = Math.max(0, requiredThroughput - effectiveThroughput);
-    const lowWeeks = netBurn > 0 ? backlogGap / (netBurn * 1.12) : Number.POSITIVE_INFINITY;
-    const highWeeks = netBurn > 0 ? backlogGap / Math.max(0.01, netBurn * 0.88) : Number.POSITIVE_INFINITY;
-    const status = netBurn > backlogGap * 0.02 ? "Recovery" : netBurn >= 0 ? "Stalled" : "Growing";
+    const lowWeeks = backlogGap === 0 ? 0 : netBurn > 0 ? backlogGap / (netBurn * 1.12) : Number.POSITIVE_INFINITY;
+    const highWeeks = backlogGap === 0 ? 0 : netBurn > 0 ? backlogGap / Math.max(0.01, netBurn * 0.88) : Number.POSITIVE_INFINITY;
+    const status = backlogGap === 0 ? "Controlled" : netBurn > 0 ? "Recovery" : Math.abs(netBurn) < 0.01 ? "Stalled" : "Growing";
 
-    return { effectiveThroughput, netBurn, weeksToTarget, requiredThroughput, capacityGap, lowWeeks, highWeeks, status };
+    return { effectiveTarget, effectiveThroughput, netBurn, weeksToTarget, requiredThroughput, capacityGap, lowWeeks, highWeeks, status };
   }, [scenario]);
 
   const update = (key: keyof Scenario, value: number | string) => {
@@ -182,11 +183,11 @@ export function BacklogCalculator() {
         </div>
         <div className="twin-output-grid">
           <div><span>Weeks to threshold</span><strong>{Number.isFinite(model.weeksToTarget) ? Math.ceil(model.weeksToTarget) : "No recovery"}</strong><small>{Number.isFinite(model.weeksToTarget) ? "at current inputs" : "capacity does not exceed inbound"}</small></div>
-          <div><span>Required throughput</span><strong>{formatUnits(model.requiredThroughput, scenario.unitLabel)}/wk</strong><small>To reach {formatUnits(scenario.targetBacklog, scenario.unitLabel)} in {scenario.targetWeeks} weeks</small></div>
+          <div><span>Required throughput</span><strong>{formatUnits(model.requiredThroughput, scenario.unitLabel)}/wk</strong><small>To reach {formatUnits(model.effectiveTarget, scenario.unitLabel)} in {scenario.targetWeeks} weeks</small></div>
           <div><span>Capacity gap</span><strong>{formatUnits(model.capacityGap, scenario.unitLabel)}/wk</strong><small>{model.capacityGap > 0 ? "Additional weekly output required" : "Current scenario clears the target"}</small></div>
-          <div><span>Confidence range</span><strong>{Number.isFinite(model.weeksToTarget) ? `${Math.ceil(model.lowWeeks)}–${Math.ceil(model.highWeeks)} wk` : "Unavailable"}</strong><small>&plusmn;12% variation on modeled throughput</small></div>
+          <div><span>Sensitivity range</span><strong>{Number.isFinite(model.weeksToTarget) ? `${Math.ceil(model.lowWeeks)}–${Math.ceil(model.highWeeks)} wk` : "Unavailable"}</strong><small>&plusmn;12% variation on modeled net throughput</small></div>
         </div>
-        <p className="twin-disclaimer"><strong>Model boundary:</strong> A generic queue-recovery model using the inputs you provide. It has no connection to any client&rsquo;s data and is not a forecast for any specific company.</p>
+        <p className="twin-disclaimer"><strong>Model boundary:</strong> A deterministic queue-flow scenario, not a statistical forecast. Effective throughput applies utilization, productivity gain, rework loss, an explicitly modeled aging drag, and surge capacity to the inputs you provide. It has no connection to any client&rsquo;s data.</p>
 
         <form className="calculator-lead inquiry-form" onSubmit={submitLead}>
           <div className="calculator-lead-head"><strong>Want a second set of eyes on this?</strong><span>Send this scenario to Ryan&mdash;no obligation.</span></div>

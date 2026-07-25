@@ -1,8 +1,8 @@
 export const primaryNav = [
   { href: "/#capabilities", label: "Capabilities" },
   { href: "/#featured-work", label: "Featured work" },
-  { href: "/diagnostic", label: "Recovery model" },
-  { href: "/tools/backlog-recovery-calculator", label: "Free calculator" },
+  { href: "/approach", label: "Approach" },
+  { href: "/tools", label: "Operations lab" },
   { href: "/#principal", label: "Principal" },
 ];
 
@@ -69,53 +69,6 @@ export const psaSources = [
     title: "GemRate: June 2026 grading recap",
     description: "Independent market reporting that PSA graded 2.50 million cards in June, up 21% month over month and 74% year over year.",
     href: "https://www.gemrate.com/june-2026-recap",
-  },
-];
-
-export type TestimonialSlot = {
-  key: string;
-  company: string;
-  logo: string;
-  width: number;
-  height: number;
-  role: string;
-  quote: string | null;
-  attributedName: string | null;
-};
-
-// Luna Sol does not publish a client testimonial without that client's explicit
-// sign-off. These slots stay in the "pending" state — quote/attributedName set
-// to null — until a real, approved quote replaces the placeholder text below.
-export const testimonials: TestimonialSlot[] = [
-  {
-    key: "psa",
-    company: "PSA",
-    logo: "/psa-logo.png",
-    width: 830,
-    height: 338,
-    role: "Backlog stabilization and operating roadmap · 2026",
-    quote: null,
-    attributedName: null,
-  },
-  {
-    key: "hopskipdrive",
-    company: "HopSkipDrive",
-    logo: "/hopskipdrive-logo.svg",
-    width: 256,
-    height: 256,
-    role: "Operating architecture for regulated national scale · 2026",
-    quote: null,
-    attributedName: null,
-  },
-  {
-    key: "maid-of-the-mist",
-    company: "Maid of the Mist",
-    logo: "/maid-of-the-mist-logo.svg",
-    width: 229,
-    height: 154,
-    role: "Guest-flow operational assessment · 2026",
-    quote: null,
-    attributedName: null,
   },
 ];
 

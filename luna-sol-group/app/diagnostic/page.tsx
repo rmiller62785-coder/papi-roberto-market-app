@@ -41,6 +41,7 @@ export default function DiagnosticPage() {
               <div><b>03</b><h3>Choose the mechanism</h3><p>Compare intake controls, surge labor, process gains, and durable capacity before committing resources.</p></div>
             </div>
             <p className="diagnostic-case-link"><Link href="/work/psa">Read the evidence-backed PSA case study <span aria-hidden="true">→</span></Link></p>
+            <p className="diagnostic-case-link"><Link href="/tools">Return to the Operations Lab <span aria-hidden="true">→</span></Link></p>
           </div>
         </section>
       </main>

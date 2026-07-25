@@ -24,7 +24,7 @@ export async function GET() {
   try {
     const response = await fetch(SOURCE_URL, {
       headers: {
-        "user-agent": "Mozilla/5.0 (compatible; LunaSolGroup-EvidenceMonitor/1.0; +https://lunasolgroup.com)",
+        "user-agent": "Mozilla/5.0 (compatible; LunaSolGroup-EvidenceMonitor/1.0; +https://luna-sol-group.rmiller62785.chatgpt.site)",
         accept: "text/html,application/xhtml+xml",
       },
     });

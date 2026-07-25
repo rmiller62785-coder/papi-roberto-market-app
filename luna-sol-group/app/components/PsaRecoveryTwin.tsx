@@ -139,7 +139,7 @@ export function PsaRecoveryTwin({ compact = false }: { compact?: boolean }) {
           </div>
         </div>
         <div className="twin-confidence">
-          <span>Illustrative confidence range</span>
+          <span>Illustrative sensitivity range</span>
           <strong>{Number.isFinite(model.weeksToTarget) ? `${Math.ceil(model.lowWeeks)}–${Math.ceil(model.highWeeks)} weeks` : "Recovery unavailable"}</strong>
           <small>Range applies ±12% variation to modeled net throughput.</small>
         </div>

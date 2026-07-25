@@ -1,6 +1,6 @@
 # LinkedIn distribution pack
 
-Eight ready-to-post drafts, one per artifact already live on lunasolgroup.com. Nothing here
+Eight ready-to-post drafts grounded in the current Luna Sol site. Nothing here
 introduces a new claim — every number and quote is pulled from a page that's already published,
 so posting these doesn't create any new fact-checking exposure.
 
@@ -86,7 +86,7 @@ Ten inputs: current backlog, target threshold, weekly inbound, rated capacity, u
 aging-work mix, surge capacity, planned productivity gain, and target window.
 
 Four outputs: net backlog burn, weeks to threshold, the capacity gap between what you have and what
-you need, and a confidence range.
+you need, and a throughput-sensitivity range.
 
 Nothing is stored unless you choose to send me the scenario. No signup wall.
 
@@ -123,24 +123,23 @@ already in a case study. Draft on request once part 1's engagement is visible.)*
 
 ---
 
-## 6 — Why there are no testimonials on my site (yet)
+## 6 — What “decision-grade” means on this site
 
 **Hook**
-You'll notice something missing from my case studies: quotes. That's on purpose.
+Operational credibility should be designed into the work—not added later as marketing language.
 
 **Body**
-Every number on my site is either publicly sourced and cited, or labeled as my own
-reconstruction. I hold client testimonials to the same standard: I don't publish one without the
-client's explicit sign-off. Not a soft approval — explicit.
+The Luna Sol decision standard has four parts: claim provenance, model transparency, decision
+traceability, and permissioned validation. Public outcomes remain separate from my engagement
+scope. Modeled outputs are labeled as models. And no client quote is published without explicit
+approval.
 
-Right now, that means three case studies with real evidence, real metrics, and a section that
-plainly says "pending approval" instead of a quote I don't have permission to use.
+Technology can accelerate analysis. It does not replace evidence, judgment, attribution, or
+accountability.
 
-I'd rather show you an honest gap than a testimonial you can't verify.
+**CTA** — See the complete decision system: [link to /approach]
 
-**CTA** — See how the case studies are sourced: [link to /#featured-work]
-
-**Asset** — screenshot of the "Client validation" section.
+**Asset** — screenshot of the four-part Decision-grade standard section.
 
 ---
 

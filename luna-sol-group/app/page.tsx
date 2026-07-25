@@ -1,6 +1,5 @@
 import Image from "next/image";
 import Link from "next/link";
-import { ClientValidation } from "./components/ClientValidation";
 import { InquiryForm } from "./components/InquiryForm";
 import { LiveBacklog } from "./components/LiveBacklog";
 import { SiteFooter } from "./components/SiteFooter";
@@ -168,7 +167,7 @@ export default function HomePage() {
               <p className="hero-deck">Luna Sol turns contested signals, cross-functional friction, and stalled transformation into a fact base, an operating system, and measurable control.</p>
               <div className="hero-actions">
                 <Link className="button" href="/#featured-work">Explore featured work <span aria-hidden="true">→</span></Link>
-                <Link className="button button-ghost" href="/diagnostic">Model a recovery scenario</Link>
+                <Link className="button button-ghost" href="/tools">Open the Operations Lab</Link>
               </div>
               <div className="hero-note"><span>Best fit</span> Logistics · Retail · Mobility · Investor-backed operations</div>
             </div>
@@ -286,8 +285,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        <ClientValidation />
-
         <section className="section method-section" id="method">
           <div className="shell method-grid">
             <div className="method-copy">
@@ -295,8 +292,8 @@ export default function HomePage() {
               <h2>One operating thread from signal to sustained value.</h2>
               <p>Every phase produces an executive decision and an operator-owned mechanism. No orphaned analysis. No transformation theater.</p>
               <div className="method-links">
-                <Link className="text-link light" href="/diagnostic">Test a backlog scenario →</Link>
-                <Link className="text-link light" href="/approach">Why the tools are built this way →</Link>
+                <Link className="text-link light" href="/approach">Explore the decision system →</Link>
+                <Link className="text-link light" href="/tools">Open the Operations Lab →</Link>
               </div>
             </div>
             <ol className="method-list">

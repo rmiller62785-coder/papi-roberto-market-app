@@ -4,46 +4,51 @@ import { SiteFooter } from "../components/SiteFooter";
 import { SiteHeader } from "../components/SiteHeader";
 
 export const metadata: Metadata = {
-  title: "Sourced, Not Generative",
-  description: "Why Luna Sol builds transparent, deterministic tools and cites public sources instead of shipping AI-generated chat, case studies, or reviews.",
+  title: "Decision-Grade Operating Intelligence",
+  description: "The Luna Sol decision system: establish operating truth, form a falsifiable constraint hypothesis, test intervention economics, and install durable control.",
   alternates: { canonical: "/approach" },
 };
 
-const pillars = [
+const decisionSystem = [
   {
     n: "01",
-    title: "Live evidence, not static claims.",
-    description: "The PSA case study doesn't just cite sources once and move on—the backlog figure on that page is checked against PSA's own tracker on every visit, with a labeled fallback chain if the live check fails.",
-    outputs: ["Checked against PSA's official tracker", "Falls back to a corroborating source, then a dated checkpoint", "Every state is labeled: live, corroborated, or published"],
-    link: { href: "/work/psa#evidence", label: "See the live evidence room" },
+    eyebrow: "Evidence",
+    title: "Establish operating truth.",
+    description: "Reconcile dashboards, raw workflow evidence, frontline reality, and financial consequence before asking leadership to act.",
+    outputs: ["Claim and source registry", "Signal-integrity audit", "Fact base with confidence labels"],
+    link: { href: "/work/psa#evidence", label: "Inspect a live evidence room" },
   },
   {
     n: "02",
-    title: "Transparent math, not a black box.",
-    description: "The Recovery Calculator and the Constraint Diagnostic are both fixed, published formulas applied to the numbers you enter. No language model sits between your input and the output—so the reasoning is auditable, not just plausible-sounding.",
-    outputs: ["Every output traces to a visible input", "Same inputs always produce the same output", "The formula is described on the page, not hidden"],
-    link: { href: "/tools/constraint-diagnostic", label: "Try the constraint diagnostic" },
+    eyebrow: "Hypothesis",
+    title: "Name what must be tested.",
+    description: "Turn competing explanations into falsifiable hypotheses, then sequence the minimum evidence needed to identify the binding constraint.",
+    outputs: ["Constraint hypothesis map", "Falsification tests", "Decision unlocked by each test"],
+    link: { href: "/tools/constraint-diagnostic", label: "Build a constraint hypothesis" },
   },
   {
     n: "03",
-    title: "Sourced attribution, never an invented quote.",
-    description: "No client testimonial appears on this site without that client's explicit sign-off. Where one hasn't been given, the site says so plainly instead of leaving a gap or, worse, filling it with something that sounds real.",
-    outputs: ["Explicit pending-approval state, not a fabricated quote", "Every public figure links to its original source", "Engagement scope kept separate from publicly reported outcomes"],
-    link: { href: "/#validation", label: "See the client validation policy" },
+    eyebrow: "Economics",
+    title: "Model the intervention path.",
+    description: "Connect demand, effective capacity, quality loss, investment, and timing so leaders can compare mechanisms—not just recommendations.",
+    outputs: ["Scenario and sensitivity model", "Capacity or value gap", "Thresholds for action"],
+    link: { href: "/tools/backlog-recovery-calculator", label: "Model a recovery scenario" },
   },
   {
     n: "04",
-    title: "Tools a client keeps, not a transcript.",
-    description: "The deliverable at the end of an engagement is a working operating mechanism—a control cadence, a capacity model, a governance structure—not a chat log. The free tools on this site are built the same way: something you can use again, not a conversation that ends.",
-    outputs: ["A generalized calculator usable for any queue, not just PSA's", "A constraint diagnostic that names its own next step", "Both free, with no signup wall"],
-    link: { href: "/tools/backlog-recovery-calculator", label: "Try the recovery calculator" },
+    eyebrow: "Control",
+    title: "Make the result operable.",
+    description: "Translate the chosen path into owners, decision rights, leading indicators, escalation thresholds, and a cadence operators can run under pressure.",
+    outputs: ["Operating architecture", "Executive control cadence", "Benefits-verification mechanism"],
+    link: { href: "/#contact", label: "Discuss the operating decision" },
   },
 ];
 
-const contrasts = [
-  { b: "01", h3: "Not a chatbot wrapper", p: "Nothing on this site is a thin interface in front of a general-purpose language model. Every tool computes a result you can trace, not a response you have to take on faith." },
-  { b: "02", h3: "Not AI-generated case studies", p: "PSA, HopSkipDrive, and Maid of the Mist are each backed by dated, linked public sources plus explicitly labeled Luna Sol reconstructions—never a generated narrative standing in for evidence." },
-  { b: "03", h3: "Not synthetic reviews", p: "A testimonial you can't verify is worse than no testimonial. This site would rather show a labeled gap than a quote that sounds convincing and isn't real." },
+const standards = [
+  { b: "01", h3: "Claim provenance", p: "Every material public claim carries a source, date, and attribution boundary. Engagement scope and company-reported outcomes remain visibly separate." },
+  { b: "02", h3: "Model transparency", p: "Inputs, assumptions, formulas, and sensitivity ranges are inspectable. A modeled output is labeled as a model—not presented as observed fact." },
+  { b: "03", h3: "Decision traceability", p: "Analysis is organized around the decision it supports, the evidence that could change it, and the owner accountable for acting." },
+  { b: "04", h3: "Permissioned validation", p: "No client quote is published without explicit approval. An absent testimonial is not turned into a placeholder or synthetic endorsement." },
 ];
 
 export default function ApproachPage() {
@@ -51,19 +56,15 @@ export default function ApproachPage() {
     <>
       <SiteHeader />
       <main id="main">
-        <section className="subpage-hero diagnostic-hero">
+        <section className="subpage-hero diagnostic-hero approach-hero">
           <div className="shell narrow-shell">
-            <span className="kicker">How Luna Sol builds its tools</span>
-            <h1>Sourced, not <em>generative.</em></h1>
-            <p>
-              Everyone offers &ldquo;AI tooling&rdquo; now. What differentiates the tools on this site isn&rsquo;t a
-              better model&mdash;it&rsquo;s that none of them are a black box. Every number traces to a source you
-              can check or a formula you can see. That&rsquo;s a deliberate constraint, not a limitation.
-            </p>
+            <span className="kicker">Luna OS™ · Decision system</span>
+            <h1>Evidence in. <em>Controlled execution out.</em></h1>
+            <p>Luna Sol converts contested operating signals into a decision-ready fact base, a falsifiable constraint hypothesis, an executable intervention, and a control system that holds after the engagement ends.</p>
             <div className="diagnostic-facts">
-              <span><strong>2</strong> Transparent tools, 0 language models</span>
-              <span><strong>16</strong> Cited public sources across the case studies</span>
-              <span><strong>1</strong> Policy: no testimonial without sign-off</span>
+              <span><strong>01</strong> Establish operating truth</span>
+              <span><strong>02</strong> Test the material constraint</span>
+              <span><strong>03</strong> Install durable control</span>
             </div>
           </div>
         </section>
@@ -71,20 +72,17 @@ export default function ApproachPage() {
         <section className="section paper">
           <div className="shell">
             <div className="section-heading compact-heading">
-              <div>
-                <span className="section-label">The four commitments</span>
-                <h2>Verifiable beats impressive.</h2>
-              </div>
-              <p>Each of these is already live on the site&mdash;this page just names the pattern and points to the proof.</p>
+              <div><span className="section-label">The decision system</span><h2>Four gates between signal and sustained value.</h2></div>
+              <p>Each gate produces an executive decision and an operator-owned mechanism. The tools and case studies on this site demonstrate the same architecture at different levels of fidelity.</p>
             </div>
-            <div className="capability-grid">
-              {pillars.map((pillar) => (
-                <article className="capability" key={pillar.n}>
-                  <span className="capability-number">{pillar.n}</span>
-                  <h3>{pillar.title}</h3>
-                  <p>{pillar.description}</p>
-                  <ul>{pillar.outputs.map((output) => <li key={output}>{output}</li>)}</ul>
-                  <Link className="text-link" href={pillar.link.href}>{pillar.link.label} &rarr;</Link>
+            <div className="approach-system-grid">
+              {decisionSystem.map((stage) => (
+                <article className="approach-system-card" key={stage.n}>
+                  <div><b>{stage.n}</b><span>{stage.eyebrow}</span></div>
+                  <h3>{stage.title}</h3>
+                  <p>{stage.description}</p>
+                  <ul>{stage.outputs.map((output) => <li key={output}>{output}</li>)}</ul>
+                  <Link href={stage.link.href}>{stage.link.label} <span aria-hidden="true">→</span></Link>
                 </article>
               ))}
             </div>
@@ -92,32 +90,34 @@ export default function ApproachPage() {
         </section>
 
         <section className="section diagnostic-after">
-          <div className="shell narrow-shell">
-            <span className="section-label light">What this deliberately isn&rsquo;t</span>
-            <div className="after-grid">
-              {contrasts.map((item) => (
-                <div key={item.b}><b>{item.b}</b><h3>{item.h3}</h3><p>{item.p}</p></div>
-              ))}
+          <div className="shell">
+            <div className="section-heading compact-heading dark-heading">
+              <div><span className="section-label light">Decision-grade standard</span><h2>Trust is designed into the work.</h2></div>
+              <p>Technology can accelerate analysis. It does not replace evidence, judgment, attribution, or accountability.</p>
+            </div>
+            <div className="approach-standard-grid">
+              {standards.map((standard) => <article key={standard.b}><b>{standard.b}</b><h3>{standard.h3}</h3><p>{standard.p}</p></article>)}
             </div>
           </div>
         </section>
 
         <section className="section paper2 principal-section">
           <div className="shell principal-grid">
-            <div className="principal-card">
-              <div className="principal-monogram">LS</div>
+            <div className="principal-card approach-control-card">
+              <span>Decision control</span>
               <dl>
-                <div><dt>Standard</dt><dd>Every claim sourced or labeled as reconstruction</dd></div>
-                <div><dt>Tools</dt><dd>Deterministic, published formulas only</dd></div>
-                <div><dt>Testimonials</dt><dd>None without explicit client sign-off</dd></div>
+                <div><dt>Question</dt><dd>What must leadership decide?</dd></div>
+                <div><dt>Evidence</dt><dd>What would change that decision?</dd></div>
+                <div><dt>Mechanism</dt><dd>What must operators run differently?</dd></div>
+                <div><dt>Control</dt><dd>How will leadership know it is holding?</dd></div>
               </dl>
             </div>
             <div className="principal-copy">
-              <span className="section-label">Why it matters</span>
-              <h2>The constraint is the credibility.</h2>
-              <p className="principal-lead">A tool that can&rsquo;t explain its own answer isn&rsquo;t more capable for being harder to audit&mdash;it&rsquo;s just harder to trust with a decision that matters.</p>
-              <p>Building this way is slower than generating a plausible-sounding case study or letting a chatbot answer for the brand. It&rsquo;s also the only version of &ldquo;AI tooling&rdquo; that holds up to the question every serious buyer eventually asks: how do you know that&rsquo;s true?</p>
-              <Link className="text-link dark" href="/#contact">Bring us a problem worth verifying &rarr;</Link>
+              <span className="section-label">The practical difference</span>
+              <h2>A recommendation can be admired. A control system can be run.</h2>
+              <p className="principal-lead">The work is complete only when the operating team can see the signal, make the decision, execute the mechanism, and verify the result without depending on the consultant.</p>
+              <p>The Operations Lab exposes the lighter-weight versions of this logic. The case studies show how the same standard is applied to real operating environments.</p>
+              <div className="approach-actions"><Link className="button" href="/tools">Open the Operations Lab</Link><Link className="text-link dark" href="/#featured-work">Explore the case studies →</Link></div>
             </div>
           </div>
         </section>
