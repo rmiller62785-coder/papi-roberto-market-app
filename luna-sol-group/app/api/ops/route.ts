@@ -21,6 +21,9 @@ type OpsItem = {
   updatedAt: string;
 };
 
+type EventCount = { eventName: string; count: number };
+type DailyCount = { day: string; count: number };
+
 const selectColumns = `id, owner_email AS ownerEmail, record_type AS recordType, title, client, status, priority, due_date AS dueDate, notes, value, link, created_at AS createdAt, updated_at AS updatedAt`;
 
 function text(value: unknown, max = 500) {
@@ -41,8 +44,16 @@ export async function GET() {
   const auth = await authorized();
   if (!auth) return Response.json({ error: "Unauthorized" }, { status: 401 });
   await ensureOpsSchema();
-  const result = await getD1().prepare(`SELECT ${selectColumns} FROM ops_items WHERE owner_email = ? ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, CASE WHEN due_date = '' THEN 1 ELSE 0 END, due_date ASC, updated_at DESC LIMIT 500`).bind(auth.owner).all<OpsItem>();
-  return Response.json({ items: result.results, operator: { name: auth.operator.displayName, email: auth.operator.email } });
+  const db = getD1();
+  const result = await db.prepare(`SELECT ${selectColumns} FROM ops_items WHERE owner_email = ? ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, CASE WHEN due_date = '' THEN 1 ELSE 0 END, due_date ASC, updated_at DESC LIMIT 500`).bind(auth.owner).all<OpsItem>();
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const events = await db.prepare("SELECT event_name AS eventName, COUNT(*) AS count FROM site_events WHERE created_at >= ? GROUP BY event_name ORDER BY count DESC").bind(since).all<EventCount>();
+  const daily = await db.prepare("SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS count FROM site_events WHERE created_at >= ? GROUP BY substr(created_at, 1, 10) ORDER BY day ASC").bind(since).all<DailyCount>();
+  return Response.json({
+    items: result.results,
+    analytics: { windowDays: 30, events: events.results, daily: daily.results },
+    operator: { name: auth.operator.displayName, email: auth.operator.email },
+  });
 }
 
 export async function POST(request: Request) {

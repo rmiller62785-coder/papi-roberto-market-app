@@ -14,16 +14,17 @@ function field(value: unknown, max: number) {
 }
 
 function mailtoFor(inquiry: { name: string; email: string; company: string; problem: string }) {
-  const subject = `Luna Sol inquiry — ${inquiry.company || inquiry.name}`;
+  const subject = `Luna Sol inquiry — ${inquiry.company || inquiry.name || "operating scenario"}`;
   const body = [
-    `Name: ${inquiry.name}`,
+    `Name: ${inquiry.name || "Not provided"}`,
     `Email: ${inquiry.email}`,
     `Company: ${inquiry.company || "Not provided"}`,
     "",
     "Operating problem / decision:",
     inquiry.problem,
   ].join("\n");
-  return `mailto:Rmiller62785@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  const contactEmail = process.env.CONTACT_TO_EMAIL || "Rmiller62785@gmail.com";
+  return `mailto:${contactEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
 export async function POST(request: Request) {
@@ -43,7 +44,7 @@ export async function POST(request: Request) {
     problem: field(input.problem, 2400),
   };
   const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inquiry.email);
-  if (!inquiry.name || !emailLooksValid || inquiry.problem.length < 20) {
+  if (!emailLooksValid || inquiry.problem.length < 20) {
     return Response.json({ ok: false, error: "Please complete the required fields." }, { status: 422 });
   }
 
@@ -57,7 +58,10 @@ export async function POST(request: Request) {
     const recent = await db.prepare("SELECT id FROM ops_items WHERE owner_email = ? AND record_type = 'lead' AND notes LIKE ? AND created_at >= ? LIMIT 1").bind(owner, `%Email: ${inquiry.email}%`, cutoff).first<{ id: number }>();
     if (!recent) {
       const now = new Date().toISOString();
-      await db.prepare("INSERT INTO ops_items (owner_email, record_type, title, client, status, priority, due_date, notes, value, link, created_at, updated_at) VALUES (?, 'lead', ?, ?, 'new', 'high', '', ?, 0, ?, ?, ?)").bind(owner, `${inquiry.name}${inquiry.company ? ` · ${inquiry.company}` : ""}`, inquiry.company, `Name: ${inquiry.name}\nEmail: ${inquiry.email}\n\nOperating problem / decision:\n${inquiry.problem}`, `mailto:${inquiry.email}`, now, now).run();
+      const leadTitle = inquiry.name
+        ? `${inquiry.name}${inquiry.company ? ` · ${inquiry.company}` : ""}`
+        : inquiry.company || inquiry.email;
+      await db.prepare("INSERT INTO ops_items (owner_email, record_type, title, client, status, priority, due_date, notes, value, link, created_at, updated_at) VALUES (?, 'lead', ?, ?, 'new', 'high', '', ?, 0, ?, ?, ?)").bind(owner, leadTitle, inquiry.company, `Name: ${inquiry.name || "Not provided"}\nEmail: ${inquiry.email}\n\nOperating problem / decision:\n${inquiry.problem}`, `mailto:${inquiry.email}`, now, now).run();
     }
     captured = true;
   } catch {
@@ -83,7 +87,7 @@ export async function POST(request: Request) {
         from,
         to: [to],
         reply_to: inquiry.email,
-        subject: `Luna Sol inquiry — ${inquiry.company || inquiry.name}`,
+        subject: `Luna Sol inquiry — ${inquiry.company || inquiry.name || "operating scenario"}`,
         text: [
           `Name: ${inquiry.name}`,
           `Email: ${inquiry.email}`,

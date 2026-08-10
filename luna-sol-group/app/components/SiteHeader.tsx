@@ -8,7 +8,7 @@ export function SiteHeader() {
   return (
     <header className="site-header">
       <div className="shell header-inner">
-        <Link className="brand" href="/" aria-label="Luna Sol Group home">
+        <Link className="brand" href="/" aria-label="Luna Sol Group home" prefetch={false}>
           <span className="brand-mark" aria-hidden="true">LS</span>
           <span>
             <strong>Luna Sol Group</strong>
@@ -16,7 +16,7 @@ export function SiteHeader() {
           </span>
         </Link>
         <nav className="desktop-nav" aria-label="Primary navigation">
-          {primaryNav.map((item) => <Link key={item.href} href={item.href}>{item.label}</Link>)}
+          {primaryNav.map((item) => <Link key={item.href} href={item.href} prefetch={false}>{item.label}</Link>)}
         </nav>
         <a
           className="button button-small header-cta"
@@ -29,8 +29,8 @@ export function SiteHeader() {
         <details className="mobile-menu">
           <summary aria-label="Open navigation">Menu</summary>
           <div>
-            {primaryNav.map((item) => <Link key={item.href} href={item.href}>{item.label}</Link>)}
-            <Link href="/#contact">Start a conversation</Link>
+            {primaryNav.map((item) => <Link key={item.href} href={item.href} prefetch={false}>{item.label}</Link>)}
+            <Link href="/#contact" prefetch={false}>Start a conversation</Link>
           </div>
         </details>
       </div>

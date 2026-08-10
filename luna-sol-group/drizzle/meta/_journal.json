@@ -8,6 +8,13 @@
       "when": 1784987803607,
       "tag": "0000_uneven_garia",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786370351858,
+      "tag": "0001_wealthy_mantis",
+      "breakpoints": true
     }
   ]
 }

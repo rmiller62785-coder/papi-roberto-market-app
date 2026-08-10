@@ -29,6 +29,15 @@ export async function ensureOpsSchema() {
     db.prepare("CREATE INDEX IF NOT EXISTS ops_items_owner_idx ON ops_items (owner_email)"),
     db.prepare("CREATE INDEX IF NOT EXISTS ops_items_owner_type_idx ON ops_items (owner_email, record_type)"),
     db.prepare("CREATE INDEX IF NOT EXISTS ops_items_owner_due_idx ON ops_items (owner_email, due_date)"),
+    db.prepare(`CREATE TABLE IF NOT EXISTS site_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_name TEXT NOT NULL,
+      path TEXT NOT NULL,
+      props TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    db.prepare("CREATE INDEX IF NOT EXISTS site_events_name_idx ON site_events (event_name)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS site_events_created_idx ON site_events (created_at)"),
   ]).then(() => undefined).catch((error: unknown) => {
     schemaReady = null;
     throw error;

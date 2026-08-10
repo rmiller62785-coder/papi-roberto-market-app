@@ -3,6 +3,7 @@ export const primaryNav = [
   { href: "/#featured-work", label: "Featured work" },
   { href: "/approach", label: "Approach" },
   { href: "/tools", label: "Products" },
+  { href: "/insights", label: "Insights" },
   { href: "/#principal", label: "Principal" },
 ];
 

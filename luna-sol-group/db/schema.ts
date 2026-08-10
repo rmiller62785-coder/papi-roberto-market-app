@@ -20,3 +20,14 @@ export const opsItems = sqliteTable("ops_items", {
   index("ops_items_owner_type_idx").on(table.ownerEmail, table.recordType),
   index("ops_items_owner_due_idx").on(table.ownerEmail, table.dueDate),
 ]);
+
+export const siteEvents = sqliteTable("site_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  eventName: text("event_name").notNull(),
+  path: text("path").notNull(),
+  props: text("props").notNull().default("{}"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("site_events_name_idx").on(table.eventName),
+  index("site_events_created_idx").on(table.createdAt),
+]);

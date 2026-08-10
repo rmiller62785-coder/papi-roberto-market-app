@@ -3,7 +3,13 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
-type View = "overview" | "pipeline" | "delivery" | "evidence";
+type View = "overview" | "pipeline" | "delivery" | "evidence" | "analytics";
+
+type Analytics = {
+  windowDays: number;
+  events: Array<{ eventName: string; count: number }>;
+  daily: Array<{ day: string; count: number }>;
+};
 
 type OpsItem = {
   id: number;
@@ -41,6 +47,7 @@ function dueState(date: string) {
 
 export function FirmOS({ operatorName, operatorEmail, signOutHref }: { operatorName: string; operatorEmail: string; signOutHref: string }) {
   const [items, setItems] = useState<OpsItem[]>([]);
+  const [analytics, setAnalytics] = useState<Analytics>({ windowDays: 30, events: [], daily: [] });
   const [view, setView] = useState<View>("overview");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -54,6 +61,7 @@ export function FirmOS({ operatorName, operatorEmail, signOutHref }: { operatorN
       if (!response.ok) throw new Error("Unable to load workspace");
       const result = await response.json();
       setItems(result.items || []);
+      setAnalytics(result.analytics || { windowDays: 30, events: [], daily: [] });
       setMessage("");
     } catch {
       setMessage("The private workspace could not be loaded. Refresh or sign in again.");
@@ -78,6 +86,24 @@ export function FirmOS({ operatorName, operatorEmail, signOutHref }: { operatorN
     const next = [...active].filter((item) => item.dueDate).sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 8);
     return { active, engagements, leads, overdue, atRisk, pipelineValue, next };
   }, [items]);
+
+  const analyticsModel = useMemo(() => {
+    const count = (name: string) => analytics.events.find((event) => event.eventName === name)?.count ?? 0;
+    const loaded = count("calculator_loaded");
+    const shared = count("scenario_link_copied");
+    const downloaded = count("artifact_downloaded");
+    const submitted = count("inquiry_submitted");
+    return {
+      loaded,
+      shared,
+      downloaded,
+      submitted,
+      noRecovery: count("no_recovery_shown"),
+      shareRate: loaded ? Math.round(((shared + downloaded) / loaded) * 100) : 0,
+      inquiryRate: loaded ? Math.round((submitted / loaded) * 100) : 0,
+      maxDaily: Math.max(1, ...analytics.daily.map((point) => point.count)),
+    };
+  }, [analytics]);
 
   const filtered = useMemo(() => {
     const source = view === "pipeline" ? items.filter((item) => ["lead", "engagement"].includes(item.recordType)) : view === "delivery" ? items.filter((item) => ["task", "decision", "deliverable", "risk"].includes(item.recordType)) : view === "evidence" ? items.filter((item) => item.recordType === "evidence") : items;
@@ -127,9 +153,9 @@ export function FirmOS({ operatorName, operatorEmail, signOutHref }: { operatorN
     <div className="firmos-layout">
       <aside className="firmos-sidebar"><nav>{([[
         "overview", "Command Center", "Portfolio and next decisions",
-      ], ["pipeline", "Pipeline", "Leads and engagements"], ["delivery", "Delivery", "Tasks, decisions, risks"], ["evidence", "Evidence", "Sources and verification"]] as const).map(([id, label, detail]) => <button type="button" key={id} aria-current={view === id ? "page" : undefined} onClick={() => { setView(id); setTypeFilter("all"); }}><b>{label}</b><span>{detail}</span></button>)}</nav><div className="firmos-sidebar-status"><i /><span>Private workspace</span><small>Authenticated · durable records</small></div></aside>
+      ], ["pipeline", "Pipeline", "Leads and engagements"], ["delivery", "Delivery", "Tasks, decisions, risks"], ["evidence", "Evidence", "Sources and verification"], ["analytics", "Product analytics", "Anonymous calculator funnel"]] as const).map(([id, label, detail]) => <button type="button" key={id} aria-current={view === id ? "page" : undefined} onClick={() => { setView(id); setTypeFilter("all"); }}><b>{label}</b><span>{detail}</span></button>)}</nav><div className="firmos-sidebar-status"><i /><span>Private workspace</span><small>Authenticated · durable records</small></div></aside>
       <main className="firmos-main">
-        <section className="firmos-welcome"><div><span>{view === "overview" ? "Executive command center" : view}</span><h1>{view === "overview" ? "One operating view of the firm." : view === "pipeline" ? "From inquiry to active engagement." : view === "delivery" ? "Execution, decisions, and control." : "A claim is only as current as its source."}</h1></div><div className="firmos-save-state"><i className={saving ? "is-saving" : ""} /><span>{saving ? "Saving changes" : "All changes persisted"}</span></div></section>
+        <section className="firmos-welcome"><div><span>{view === "overview" ? "Executive command center" : view}</span><h1>{view === "overview" ? "One operating view of the firm." : view === "pipeline" ? "From inquiry to active engagement." : view === "delivery" ? "Execution, decisions, and control." : view === "analytics" ? "See which operating decisions create action." : "A claim is only as current as its source."}</h1></div><div className="firmos-save-state"><i className={saving ? "is-saving" : ""} /><span>{saving ? "Saving changes" : "All changes persisted"}</span></div></section>
 
         {view === "overview" ? <>
           <section className="firmos-kpis"><article><span>Active engagements</span><strong>{model.engagements.length}</strong><small>{model.active.length} open records total</small></article><article><span>Open leads</span><strong>{model.leads.length}</strong><small>{formatValue(model.pipelineValue)} modeled pipeline</small></article><article><span>Overdue commitments</span><strong className={model.overdue.length ? "is-alert" : ""}>{model.overdue.length}</strong><small>Open records past due</small></article><article><span>High-priority controls</span><strong>{model.atRisk.length}</strong><small>Risks, decisions, and tasks</small></article></section>
@@ -137,7 +163,13 @@ export function FirmOS({ operatorName, operatorEmail, signOutHref }: { operatorN
           <div className="firmos-overview-grid"><section><header><span>Engagement portfolio</span><a href="#capture">Add record ↓</a></header><div className="firmos-engagements">{model.engagements.map((item) => <article key={item.id}><div><span>{item.status}</span><b className={`priority-${item.priority}`}>{item.priority}</b></div><h3>{item.title}</h3><p>{item.notes || "No engagement note added."}</p><small>{item.client}</small></article>)}{model.engagements.length === 0 ? <p className="firmos-none">No active engagements.</p> : null}</div></section><section><header><span>Next commitments</span><b>{model.next.length}</b></header><div className="firmos-next">{model.next.map((item) => <article key={item.id}><i className={dueState(item.dueDate)} /><div><strong>{item.title}</strong><span>{item.client || item.recordType}</span></div><time>{item.dueDate}</time></article>)}{model.next.length === 0 ? <p className="firmos-none">No dated commitments.</p> : null}</div></section></div>
         </> : null}
 
-        {view !== "overview" ? <section className="firmos-records"><header><div><span>{view} register</span><strong>{filtered.length} records</strong></div><div className="firmos-filters"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search title, client, or note" /><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="all">All record types</option>{types.map((type) => <option key={type}>{type}</option>)}</select></div></header><div className="firmos-table-wrap"><table><thead><tr><th>Type</th><th>Record / client</th><th>Status</th><th>Priority</th><th>Due</th><th>Value</th><th>Link</th><th></th></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td><span className={`record-type type-${item.recordType}`}>{item.recordType}</span></td><td><strong>{item.title}</strong><small>{item.client || item.notes.slice(0, 80) || "No client"}</small></td><td><select value={item.status} onChange={(event) => void update(item.id, { status: event.target.value })}>{[...new Set([item.status, ...statuses])].map((status) => <option key={status}>{status}</option>)}</select></td><td><select value={item.priority} onChange={(event) => void update(item.id, { priority: event.target.value })}>{priorities.map((priority) => <option key={priority}>{priority}</option>)}</select></td><td><input type="date" value={item.dueDate.match(/^\d{4}-\d{2}-\d{2}$/) ? item.dueDate : ""} onChange={(event) => void update(item.id, { dueDate: event.target.value })} /><small className={`due-${dueState(item.dueDate)}`}>{dueState(item.dueDate)}</small></td><td>{item.value ? formatValue(item.value) : "—"}</td><td>{item.link ? <a href={item.link} target={item.link.startsWith("http") ? "_blank" : undefined} rel="noreferrer">Open ↗</a> : "—"}</td><td><button type="button" onClick={() => void remove(item.id)}>×</button></td></tr>)}</tbody></table>{filtered.length === 0 ? <p className="firmos-none">No records match this view.</p> : null}</div></section> : null}
+        {view === "analytics" ? <section className="firmos-analytics">
+          <div className="firmos-analytics-kpis"><article><span>Calculator opens</span><strong>{analyticsModel.loaded}</strong><small>Last {analytics.windowDays} days</small></article><article><span>Portable artifacts</span><strong>{analyticsModel.shared + analyticsModel.downloaded}</strong><small>{analyticsModel.shareRate}% of opens shared or downloaded</small></article><article><span>No-recovery states</span><strong>{analyticsModel.noRecovery}</strong><small>Scenarios exposing a control gap</small></article><article><span>Inquiry conversion</span><strong>{analyticsModel.inquiryRate}%</strong><small>{analyticsModel.submitted} completed handoffs</small></article></div>
+          <div className="firmos-analytics-grid"><article><header><span>Decision-tool activity</span><strong>Daily events · {analytics.windowDays} days</strong></header><div className="firmos-event-bars" aria-label="Daily anonymous product events">{analytics.daily.length ? analytics.daily.map((point) => <div key={point.day} title={`${point.day}: ${point.count} events`}><i style={{ height: `${Math.max(8, (point.count / analyticsModel.maxDaily) * 100)}%` }} /><small>{point.day.slice(5)}</small></div>) : <p>No product events recorded yet.</p>}</div></article><article><header><span>Funnel register</span><strong>Events, not identities</strong></header><div className="firmos-event-list">{analytics.events.length ? analytics.events.map((event) => <div key={event.eventName}><span>{event.eventName.replaceAll("_", " ")}</span><strong>{event.count}</strong></div>) : <p>No product events recorded yet.</p>}</div></article></div>
+          <aside className="firmos-analytics-boundary"><strong>Privacy boundary</strong><p>This view stores event names, calculator-path context, and non-identifying model state only. It does not create visitor profiles or store lead-form names, emails, companies, messages, or scenario URLs.</p></aside>
+        </section> : null}
+
+        {view !== "overview" && view !== "analytics" ? <section className="firmos-records"><header><div><span>{view} register</span><strong>{filtered.length} records</strong></div><div className="firmos-filters"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search title, client, or note" /><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="all">All record types</option>{types.map((type) => <option key={type}>{type}</option>)}</select></div></header><div className="firmos-table-wrap"><table><thead><tr><th>Type</th><th>Record / client</th><th>Status</th><th>Priority</th><th>Due</th><th>Value</th><th>Link</th><th></th></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td><span className={`record-type type-${item.recordType}`}>{item.recordType}</span></td><td><strong>{item.title}</strong><small>{item.client || item.notes.slice(0, 80) || "No client"}</small></td><td><select value={item.status} onChange={(event) => void update(item.id, { status: event.target.value })}>{[...new Set([item.status, ...statuses])].map((status) => <option key={status}>{status}</option>)}</select></td><td><select value={item.priority} onChange={(event) => void update(item.id, { priority: event.target.value })}>{priorities.map((priority) => <option key={priority}>{priority}</option>)}</select></td><td><input type="date" value={item.dueDate.match(/^\d{4}-\d{2}-\d{2}$/) ? item.dueDate : ""} onChange={(event) => void update(item.id, { dueDate: event.target.value })} /><small className={`due-${dueState(item.dueDate)}`}>{dueState(item.dueDate)}</small></td><td>{item.value ? formatValue(item.value) : "—"}</td><td>{item.link ? <a href={item.link} target={item.link.startsWith("http") ? "_blank" : undefined} rel="noreferrer">Open ↗</a> : "—"}</td><td><button type="button" onClick={() => void remove(item.id)}>×</button></td></tr>)}</tbody></table>{filtered.length === 0 ? <p className="firmos-none">No records match this view.</p> : null}</div></section> : null}
 
         <section className="firmos-capture" id="capture"><header><span>Quick capture</span><h2>Add the record while the decision is still fresh.</h2></header><form onSubmit={create}><label><span>Record type</span><select name="recordType" required defaultValue="task">{types.map((type) => <option key={type}>{type}</option>)}</select></label><label className="capture-title"><span>Title</span><input name="title" required maxLength={220} placeholder="Decision, task, risk, evidence source, or opportunity" /></label><label><span>Client / account</span><input name="client" maxLength={160} /></label><label><span>Status</span><select name="status" defaultValue="open">{statuses.map((status) => <option key={status}>{status}</option>)}</select></label><label><span>Priority</span><select name="priority" defaultValue="medium">{priorities.map((priority) => <option key={priority}>{priority}</option>)}</select></label><label><span>Due date</span><input name="dueDate" type="date" /></label><label><span>Value / pipeline</span><input name="value" type="number" min="0" step="1000" placeholder="0" /></label><label><span>Link</span><input name="link" type="url" placeholder="https://" /></label><label className="capture-notes"><span>Notes, next action, or evidence boundary</span><textarea name="notes" rows={3} maxLength={4000} /></label><button type="submit" disabled={saving}>{saving ? "Saving…" : "Add to Firm OS"}</button></form><p aria-live="polite">{message}</p></section>
       </main>

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://luna-sol-group.rmiller62785.chatgpt.site";
+const contactEmail = process.env.NEXT_PUBLIC_CONTACT_EMAIL || "Rmiller62785@gmail.com";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -35,7 +36,7 @@ const organizationSchema = {
   name: "Luna Sol Group",
   url: siteUrl,
   foundingDate: "2023",
-  email: "Rmiller62785@gmail.com",
+  email: contactEmail,
   description: "Operator-led diagnostics, transformation design, and deployment for complex operating systems.",
   founder: {
     "@type": "Person",

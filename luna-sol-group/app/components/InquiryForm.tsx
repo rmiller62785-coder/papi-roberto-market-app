@@ -5,6 +5,7 @@ import { FormEvent, useState } from "react";
 type FormStatus = "idle" | "sending" | "sent" | "fallback" | "error";
 
 export function InquiryForm() {
+  const contactEmail = process.env.NEXT_PUBLIC_CONTACT_EMAIL || "Rmiller62785@gmail.com";
   const [status, setStatus] = useState<FormStatus>("idle");
   const [message, setMessage] = useState("");
 
@@ -74,7 +75,7 @@ export function InquiryForm() {
         <button className="button" type="submit" disabled={status === "sending"}>
           {status === "sending" ? "Sending…" : "Send confidential inquiry"} <span aria-hidden="true">→</span>
         </button>
-        <a href="mailto:Rmiller62785@gmail.com">Or email Ryan directly</a>
+        <a href={`mailto:${contactEmail}`}>Or email Ryan directly</a>
       </div>
       <p className={`form-status ${status}`} aria-live="polite">{message}</p>
     </form>
