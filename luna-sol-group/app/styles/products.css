@@ -1,0 +1,40 @@
+/* Public decision-product hierarchy */
+.product-suite-section { background: var(--carbon-900); }
+.product-suite-grid { gap: 0; border-top: 1px solid var(--rule-dark); border-left: 1px solid var(--rule-dark); }
+.product-suite-card { border: 0; border-right: 1px solid var(--rule-dark); border-bottom: 1px solid var(--rule-dark); border-radius: 0; background: transparent; }
+.product-suite-card > p { color: #a9b1ab; font-size: 13px; }
+.product-suite-card > header span, .product-suite-card > header small { font-size: 10px; }
+.product-module-rail span { min-height: 82px; font-size: 10px; }
+.product-output-list { border-radius: 6px; }.product-output-list > span, .product-output-list li { font-size: 10px; }
+.lab-card { padding: 28px; }
+.lab-card > p, .lab-card dd { font-size: 12px; line-height: 1.65; }
+
+.diagnostic-shell, .calculator-shell, .constraint-shell { border-radius: 14px; }
+.calculator-input-panel, .calculator-output-panel { border-radius: 10px; }
+.calculator-field label, .calculator-field span, .calculator-microcopy, .constraint-field label { font-size: 11px; }
+.calculator-field input, .constraint-field input, .constraint-field select { min-height: 44px; font-size: 14px; }
+.calculator-preset-button, .calculator-action, .constraint-action { min-height: 44px; }
+
+/* Private Firm OS: instrument grade, not miniature */
+.firmos-app { background: var(--carbon-950); }
+.firmos-header { min-height: 72px; background: rgba(10,14,18,.96); }
+.firmos-brand strong { font-size: 13px; }.firmos-brand small { font-size: 10px; }
+.firmos-sidebar { background: var(--carbon-900); }
+.firmos-sidebar nav button { min-height: 58px; border-radius: 6px; }
+.firmos-sidebar button b { font-size: 12px; }.firmos-sidebar button span { font-size: 10px; }
+.firmos-sidebar-status span { font-size: 10px; }.firmos-sidebar-status small { font-size: 9px; }
+.firmos-welcome > div:first-child > span, .firmos-save-state { font-size: 10px; }
+.firmos-kpis span, .firmos-analytics-kpis span { font-size: 10px; }.firmos-kpis small, .firmos-analytics-kpis small { font-size: 10px; }
+.firmos-overview-grid > section, .firmos-records, .firmos-capture { border-radius: 8px; }
+.firmos-overview-grid > section > header, .firmos-records > header span, .firmos-records > header strong { font-size: 10px; }
+.firmos-engagements article > div span, .firmos-engagements article > div b, .firmos-engagements > article > small { font-size: 9px; }
+.firmos-engagements p { font-size: 11px; }.firmos-next strong { font-size: 11px; }.firmos-next span, .firmos-next time { font-size: 9px; }
+.firmos-records th { font-size: 9px; }.firmos-records td { font-size: 10px; }.firmos-records td strong { font-size: 11px; }.firmos-records td small { font-size: 9px; }
+.firmos-filters input, .firmos-filters select, .firmos-records select, .firmos-records input[type="date"] { min-height: 36px; font-size: 11px; }
+.firmos-capture label span { font-size: 9px; }.firmos-capture input, .firmos-capture select, .firmos-capture textarea { min-height: 42px; font-size: 12px; }
+.firmos-analytics-grid header span { font-size: 10px; }.firmos-analytics-grid header strong { font-size: 13px; }.firmos-event-list span { font-size: 10px; }
+
+@media (max-width: 760px) {
+  .product-suite-card { padding: 24px; }
+  .firmos-sidebar nav button { min-height: 48px; }
+}

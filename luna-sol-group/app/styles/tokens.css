@@ -1,0 +1,43 @@
+:root {
+  --carbon-950: #0a0e12;
+  --carbon-900: #11171d;
+  --carbon-800: #1b242c;
+  --paper-50: #fcfbf7;
+  --paper-100: #f4f1e9;
+  --paper-200: #e6e0d4;
+  --ink-900: #171a17;
+  --ink-700: #404640;
+  --ink-500: #687068;
+  --rule-light: #d5cfc3;
+  --rule-dark: rgba(255, 255, 255, .14);
+  --brass-700: #765326;
+  --brass-600: #8f6936;
+  --brass-400: #c5a56e;
+  --evidence-600: #2e6e4c;
+  --risk-600: #a6473b;
+  --focus-dark: #f0d8a8;
+  --focus-light: #6d4d1f;
+  --header-height: 73px;
+  --chapter-nav-height: 55px;
+  --motion-fast: 140ms;
+  --motion-base: 220ms;
+  --motion-slow: 420ms;
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --max: 1240px;
+  --radius: 14px;
+
+  --ink: var(--carbon-950);
+  --ink-2: var(--carbon-900);
+  --ink-3: var(--carbon-800);
+  --paper: var(--paper-100);
+  --paper-2: var(--paper-200);
+  --white: var(--paper-50);
+  --gold: var(--brass-600);
+  --gold-light: var(--brass-400);
+  --text: var(--paper-50);
+  --muted: #aeb4af;
+  --dark-muted: var(--ink-500);
+  --line: var(--rule-dark);
+  --dark-line: var(--rule-light);
+  --success: #78a88a;
+}

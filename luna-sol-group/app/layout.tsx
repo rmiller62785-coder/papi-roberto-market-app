@@ -1,5 +1,11 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./styles/tokens.css";
+import "./styles/foundations.css";
+import "./styles/home.css";
+import "./styles/editorial.css";
+import "./styles/products.css";
+import "./styles/motion.css";
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://luna-sol-group.rmiller62785.chatgpt.site";
 const contactEmail = process.env.NEXT_PUBLIC_CONTACT_EMAIL || "Rmiller62785@gmail.com";
@@ -17,15 +23,15 @@ export const metadata: Metadata = {
     type: "website",
     url: siteUrl,
     siteName: "Luna Sol Group",
-    title: "Luna Sol Group | Operations Product Suite",
-    description: "Working systems for executive operating control, implementation readiness, portfolio governance, process ownership, and risk closure.",
-    images: [{ url: "/og-product-suite.png", width: 1729, height: 910, alt: "Luna Sol Group operations product suite" }],
+    title: "Luna Sol Group | Operating Transformation",
+    description: "Find the operating constraint. Build the system that clears it.",
+    images: [{ url: "/og-evidence-room.jpg", width: 1200, height: 630, alt: "Luna Sol Group operating transformation with founder Ryan Miller" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Luna Sol Group | Operations Product Suite",
-    description: "Working systems for executive operating control, implementation readiness, portfolio governance, process ownership, and risk closure.",
-    images: ["/og-product-suite.png"],
+    title: "Luna Sol Group | Operating Transformation",
+    description: "Find the operating constraint. Build the system that clears it.",
+    images: ["/og-evidence-room.jpg"],
   },
   robots: { index: true, follow: true },
 };

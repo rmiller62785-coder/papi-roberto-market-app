@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { primaryNav } from "../content";
+import { MobileNav } from "./MobileNav";
 
 export function SiteHeader() {
   const calendarUrl = process.env.NEXT_PUBLIC_CALENDAR_URL || "/#contact";
@@ -12,7 +13,7 @@ export function SiteHeader() {
           <span className="brand-mark" aria-hidden="true">LS</span>
           <span>
             <strong>Luna Sol Group</strong>
-            <small>Operator-led transformation</small>
+            <small>Operating transformation</small>
           </span>
         </Link>
         <nav className="desktop-nav" aria-label="Primary navigation">
@@ -24,15 +25,9 @@ export function SiteHeader() {
           target={isExternalCalendar ? "_blank" : undefined}
           rel={isExternalCalendar ? "noreferrer" : undefined}
         >
-          Start a conversation <span aria-hidden="true">↗</span>
+          Discuss a decision <span aria-hidden="true">↗</span>
         </a>
-        <details className="mobile-menu">
-          <summary aria-label="Open navigation">Menu</summary>
-          <div>
-            {primaryNav.map((item) => <Link key={item.href} href={item.href} prefetch={false}>{item.label}</Link>)}
-            <Link href="/#contact" prefetch={false}>Start a conversation</Link>
-          </div>
-        </details>
+        <MobileNav />
       </div>
     </header>
   );

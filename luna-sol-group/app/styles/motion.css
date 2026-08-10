@@ -1,0 +1,30 @@
+@keyframes section-enter {
+  from { opacity: .35; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    [data-reveal] {
+      animation: section-enter linear both;
+      animation-timeline: view();
+      animation-range: entry 4% cover 25%;
+    }
+  }
+}
+
+@media (hover: hover) {
+  .case-index-logo, .insight-preview-list article, .about-record-grid article { transition: transform var(--motion-base) var(--ease-out), background var(--motion-base), border-color var(--motion-base); }
+  .case-index-logo:hover, .case-index-logo:focus-visible { transform: translateY(-2px); border-color: var(--brass-600); }
+  .insight-preview-list article:hover, .insight-preview-list article:focus-within { background: rgba(255,255,255,.5); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

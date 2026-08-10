@@ -1,386 +1,171 @@
 import Image from "next/image";
 import Link from "next/link";
+import { HomeCaseIndex } from "./components/HomeCaseIndex";
 import { InquiryForm } from "./components/InquiryForm";
-import { LiveBacklog } from "./components/LiveBacklog";
 import { SiteFooter } from "./components/SiteFooter";
 import { SiteHeader } from "./components/SiteHeader";
 
-const enterpriseProof = [
-  { value: "$2.5B+", label: "annual savings generated through global delivery transformation" },
-  { value: "$550M+", label: "delivery losses eliminated through operating redesign and prediction" },
-  { value: "$300M", label: "capital program directed across North America, Europe, and Japan" },
-  { value: "35%", label: "operational defect reduction across a global last-mile network" },
-];
-
-const capabilities = [
+const offers = [
   {
     n: "01",
-    title: "Establish operating truth",
-    description: "Reconcile dashboards, workflow evidence, frontline reality, and financial consequences into one decision-grade fact base.",
-    deliverables: ["Signal audit", "Constraint tree", "Value-at-stake bridge"],
+    title: "Constraint Diagnostic Sprint",
+    use: "Dashboards disagree, performance is moving, and leadership needs the real mechanism—not another opinion.",
+    produces: ["Decision-grade fact base", "Constraint hypothesis", "Value-at-stake view", "30-day action path"],
+    decision: "What is actually limiting performance, and what evidence will disprove it?",
   },
   {
     n: "02",
-    title: "Redesign the operating system",
-    description: "Translate the root constraint into workflows, decision rights, technology, incentives, and an executable transformation portfolio.",
-    deliverables: ["Target operating model", "Decision architecture", "Sequenced roadmap"],
+    title: "Operating System Build",
+    use: "Growth has outrun the workflows, decision rights, controls, or technology required to carry it safely.",
+    produces: ["Target operating model", "Decision architecture", "SOP + RACI system", "Implementation roadmap"],
+    decision: "What must change across work, governance, technology, and accountability?",
   },
   {
     n: "03",
-    title: "Deploy until the result holds",
-    description: "Install the management cadence, field mechanisms, adoption engine, and controls that move performance after the recommendation is delivered.",
-    deliverables: ["Control tower", "Field enablement", "Benefits verification"],
+    title: "Transformation Control Office",
+    use: "The strategy is approved, but the portfolio is not moving fast enough or value is not holding in execution.",
+    produces: ["Portfolio governance", "Launch gates", "WBR cadence", "Benefits verification"],
+    decision: "Which intervention, owner, and control will move the result now?",
   },
 ];
 
-const otherWork = [
-  {
-    label: "Global delivery economics",
-    title: "A quality failure reframed as a network-value problem.",
-    metric: "$25M",
-    metricLabel: "validated annual cost avoidance",
-    detail: "Connected defect mechanics to cost, built the value bridge, and aligned more than 1,000 stations around a common control model.",
-  },
-  {
-    label: "Measurement integrity",
-    title: "A 44% reporting gap exposed and corrected.",
-    metric: "1,200 bps",
-    metricLabel: "hidden degradation quantified",
-    detail: "Audited exemption and classification logic, rebuilt accountability signals, and redesigned cross-functional governance.",
-  },
-  {
-    label: "Peak surge readiness",
-    title: "Record volume absorbed without incremental headcount.",
-    metric: "92%+",
-    metricLabel: "service compliance",
-    detail: "Used AI-assisted defect attribution, targeted coaching, and a durable field cadence to control execution through peak.",
-  },
+const outcomes = [
+  { value: "$2.5B+", label: "annual savings generated", context: "Global delivery transformation · prior executive role" },
+  { value: "$550M+", label: "delivery losses eliminated", context: "Operating redesign and prediction · prior executive role" },
+  { value: "$300M", label: "capital program directed", context: "North America, Europe, and Japan · prior executive role" },
+  { value: "35%", label: "operational defect reduction", context: "Global last-mile network · prior executive role" },
 ];
 
-type FeaturedCompany = {
-  key: string;
-  name: string;
-  logo: string;
-  width: number;
-  height: number;
-  website: string;
-  relationship: string;
-  title: string;
-  description: string;
-  caseStudy?: string;
-  retrospective?: string;
-  evidenceStatus: string;
-  evidenceNote: string;
-  evidenceHref?: string;
-  evidenceLinkLabel?: string;
-};
-
-const featuredCompanies: FeaturedCompany[] = [
-  {
-    key: "psa",
-    name: "PSA",
-    logo: "/psa-logo.png",
-    width: 830,
-    height: 338,
-    website: "https://www.psacard.com/",
-    caseStudy: "/work/psa",
-    relationship: "Luna Sol advisory engagement · 2026",
-    title: "Backlog stabilization and operating roadmap.",
-    description: "Engaged during a record grading-backlog surge to identify the active constraint, structure near-term countermeasures, and establish the governance and capacity mechanisms behind recovery.",
-    evidenceStatus: "Live evidence checked",
-    evidenceNote: "Public operating evidence · not sole-attribution proof",
-    evidenceHref: "https://www.psacard.com/info/backlog-tracker",
-    evidenceLinkLabel: "Official backlog source",
-  },
-  {
-    key: "hopskipdrive",
-    name: "HopSkipDrive",
-    logo: "/hopskipdrive-logo.svg",
-    width: 256,
-    height: 256,
-    website: "https://www.hopskipdrive.com/",
-    caseStudy: "/work/hopskipdrive",
-    relationship: "Luna Sol consulting engagement · 2026",
-    title: "Operational foundation for regulated national scale.",
-    description: "Designed the operating architecture connecting dispatch, compliance, SOPs, risk, executive governance, technical requirements, and implementation across a 30+ metro footprint.",
-    evidenceStatus: "Company sources checked",
-    evidenceNote: "Official company context · personal scope labeled separately",
-    evidenceHref: "https://www.hopskipdrive.com/blog/new-2026-2027-product-suite/",
-    evidenceLinkLabel: "Official product source",
-  },
-  {
-    key: "maid-of-the-mist",
-    name: "Maid of the Mist",
-    logo: "/maid-of-the-mist-logo.svg",
-    width: 229,
-    height: 154,
-    website: "https://www.maidofthemist.com/",
-    caseStudy: "/work/maid-of-the-mist",
-    relationship: "Luna Sol senior operations engagement · 2026",
-    title: "Guest-flow bottlenecks translated into a public planning tool.",
-    description: "Assessed the U.S. operation end to end; recommendations informed guest-planning enhancements, including the Wait Time Trends & Insights capability launched for the 2026 season.",
-    evidenceStatus: "News + official source checked",
-    evidenceNote: "Feature launch corroborated · contribution attribution bounded",
-    evidenceHref: "https://www.wgrz.com/article/news/local/maid-of-the-mist-announces-launch-date-for-2026/71-302e72a9-f363-43db-ad1d-69884d595407",
-    evidenceLinkLabel: "WGRZ evidence source",
-  },
-  {
-    key: "amazon",
-    name: "Amazon",
-    logo: "/amazon-logo.svg",
-    width: 603,
-    height: 182,
-    website: "https://www.amazon.com/",
-    retrospective: "/experience/amazon",
-    relationship: "Former executive operator · Career experience",
-    title: "Global last-mile transformation at enterprise scale.",
-    description: "Led operating-system, delivery-partner, capacity, and network-economics work across North America, Europe, and Japan before founding Luna Sol.",
-    evidenceStatus: "Experience basis labeled",
-    evidenceNote: "Prior employment · not a Luna Sol client",
-  },
-  {
-    key: "walmart",
-    name: "Walmart",
-    logo: "/walmart-logo.svg",
-    width: 1000,
-    height: 190,
-    website: "https://www.walmart.com/",
-    relationship: "Former operator · Career experience",
-    title: "Nearly a decade inside complex retail operations.",
-    description: "Built frontline judgment and execution discipline in a high-volume retail environment where customer promise, labor, inventory, and operating cadence converge.",
-    evidenceStatus: "Experience basis labeled",
-    evidenceNote: "Prior employment · not a Luna Sol client",
-  },
+const insights = [
+  { n: "01", title: "Backlog recovery planning", detail: "Why rated capacity is not the same as effective throughput.", href: "/insights/backlog-recovery-planning" },
+  { n: "02", title: "Cost of delay for operating queues", detail: "How to frame exposure without pretending it is booked savings.", href: "/insights/cost-of-delay-operating-queues" },
+  { n: "03", title: "Validate the constraint before staffing", detail: "An evidence sequence for testing the mechanism before adding labor.", href: "/insights/validate-constraints-before-staffing" },
 ];
 
 export default function HomePage() {
   return (
     <>
       <SiteHeader />
-      <main id="main">
-        <section className="hero">
-          <div className="hero-glow" aria-hidden="true" />
-          <div className="shell hero-grid">
-            <div className="hero-copy">
-              <span className="kicker">Operator-led transformation · Built for consequential decisions</span>
-              <h1>Operating problems worth millions need more than <em>recommendations.</em></h1>
-              <p className="hero-deck">Luna Sol turns contested signals, cross-functional friction, and stalled transformation into a fact base, an operating system, and measurable control.</p>
-              <div className="hero-actions">
-                <Link className="button" href="/#featured-work">Explore featured work <span aria-hidden="true">→</span></Link>
-                <Link className="button button-ghost" href="/tools">Use the operations products</Link>
+      <main id="main" className="home-v2">
+        <section className="home-hero">
+          <div className="shell home-hero-grid">
+            <div className="home-hero-copy" data-reveal>
+              <span className="kicker">Luna Sol Group · Operator-led transformation</span>
+              <h1>Find the constraint.<br /><em>Build the system</em><br />that clears it.</h1>
+              <p>Ryan Miller helps logistics, retail, mobility, and investor-backed teams stabilize performance, redesign decision flow, and leave with controls their operators can run.</p>
+              <div className="home-hero-actions">
+                <Link className="button" href="/work" prefetch={false}>See the work <span aria-hidden="true">→</span></Link>
+                <Link className="button button-ghost" href="/tools" prefetch={false}>Test your operation</Link>
               </div>
-              <div className="hero-note"><span>Best fit</span> Logistics · Retail · Mobility · Investor-backed operations</div>
+              <dl className="home-hero-register">
+                <div><dt>Best fit</dt><dd>Consequential operating decisions</dd></div>
+                <div><dt>Built for</dt><dd>Executives · Operators · Investors</dd></div>
+                <div><dt>Posture</dt><dd>Founder-led · Embedded when required</dd></div>
+              </dl>
             </div>
-            <div className="operating-board" aria-label="Luna operating system overview">
-              <div className="board-top">
-                <span>Luna operating system</span>
-                <b>Decision control</b>
+            <figure className="home-portrait" data-reveal>
+              <div className="home-portrait-frame">
+                <Image src="/ryan-miller-stage.png" width={800} height={800} priority sizes="(max-width: 760px) 100vw, 42vw" alt="Ryan Miller, founder and principal of Luna Sol Group, speaking on stage." />
+                <span aria-hidden="true">01 / Principal</span>
               </div>
-              <div className="board-signal">
-                <span>Signal integrity</span>
-                <strong>Operating truth</strong>
-                <i>01</i>
-              </div>
-              <div className="board-path" aria-hidden="true"><span /><span /><span /><span /></div>
-              <div className="board-grid">
-                <div><b>02</b><span>Constraint</span><strong>Economics</strong></div>
-                <div><b>03</b><span>Operating</span><strong>Architecture</strong></div>
-                <div><b>04</b><span>Adoption</span><strong>Mechanisms</strong></div>
-                <div><b>05</b><span>Durable</span><strong>Control</strong></div>
-              </div>
-              <div className="board-status"><i /> From ambiguity to controlled execution</div>
-            </div>
+              <figcaption>
+                <div><strong>Ryan Miller, EMBA</strong><span>Founder and Principal</span></div>
+                <p>Former Amazon and Walmart operator · North America, Europe, and Japan</p>
+              </figcaption>
+            </figure>
           </div>
-          <div className="shell proof-strip">
-            {enterpriseProof.map((proof) => (
-              <div key={proof.value}><strong>{proof.value}</strong><span>{proof.label}</span></div>
-            ))}
+          <div className="shell relationship-rail" aria-label="Advisory and operating experience">
+            <div><span>Advisory engagements</span><a href="https://www.psacard.com/" target="_blank" rel="noreferrer"><Image src="/psa-logo.png" width={830} height={338} alt="PSA" /></a><a href="https://www.hopskipdrive.com/" target="_blank" rel="noreferrer" className="rail-hsd"><Image src="/hopskipdrive-logo.svg" width={256} height={256} alt="HopSkipDrive" /><b>HopSkipDrive</b></a><a href="https://www.maidofthemist.com/" target="_blank" rel="noreferrer"><Image src="/maid-of-the-mist-logo.svg" width={229} height={154} alt="Maid of the Mist" /></a></div>
+            <div><span>Prior operating experience</span><a href="https://www.amazon.com/" target="_blank" rel="noreferrer"><Image src="/amazon-logo.svg" width={603} height={182} alt="Amazon" /></a><a href="https://www.walmart.com/" target="_blank" rel="noreferrer"><Image src="/walmart-logo.svg" width={1000} height={190} alt="Walmart" /></a></div>
           </div>
-          <p className="shell proof-disclaimer">Select outcomes led by Ryan Miller across executive operator and advisory roles. Figures are anonymized and should not be read as solely attributable to Luna Sol.</p>
         </section>
 
-        <section className="section paper" id="capabilities">
+        <HomeCaseIndex />
+
+        <section className="section offer-section" id="capabilities">
           <div className="shell">
-            <div className="section-heading">
-              <div><span className="section-label">How Luna Sol creates value</span><h2>Advice is the starting point.<br />Control is the deliverable.</h2></div>
-              <p>Engagements begin with a consequential decision and end with a system an operator can run under pressure.</p>
-            </div>
-            <div className="capability-grid">
-              {capabilities.map((capability) => (
-                <article className="capability" key={capability.n}>
-                  <span className="capability-number">{capability.n}</span>
-                  <h3>{capability.title}</h3>
-                  <p>{capability.description}</p>
-                  <ul>{capability.deliverables.map((item) => <li key={item}>{item}</li>)}</ul>
+            <header className="editorial-heading inverse" data-reveal>
+              <div><span className="section-label light">How to engage</span><h2>Start with the decision—not a generic scope.</h2></div>
+              <p>Three bounded entry points create enough clarity to act without forcing the operation into a prepackaged answer.</p>
+            </header>
+            <div className="offer-ledger">
+              {offers.map((offer) => (
+                <article key={offer.n} data-reveal>
+                  <header><span>{offer.n}</span><h3>{offer.title}</h3></header>
+                  <div className="offer-use"><strong>Use when</strong><p>{offer.use}</p></div>
+                  <div className="offer-output"><strong>Produces</strong><ul>{offer.produces.map((item) => <li key={item}>{item}</li>)}</ul></div>
+                  <div className="offer-decision"><strong>Starting decision</strong><p>{offer.decision}</p></div>
                 </article>
               ))}
             </div>
+            <div className="offer-close"><p>Unsure which intervention fits? Start with the operating decision and the evidence currently available.</p><Link className="button button-light" href="/#contact" prefetch={false}>Discuss the decision →</Link></div>
           </div>
         </section>
 
-        <section className="section home-product-section">
-          <div className="shell home-product-grid">
-            <div className="home-product-copy">
-              <span className="section-label light">Working operations products</span>
-              <h2>Control the operation—and make the change executable.</h2>
-              <p>Two connected environments cover the work executives and transformation leaders are expected to install: operating control, portfolio governance, launch readiness, process ownership, and risk closure.</p>
-              <div className="home-product-capabilities"><span>Control tower</span><span>Portfolio optimizer</span><span>Weekly business review</span><span>Launch gates</span><span>SOP + RACI</span><span>Risk controls</span></div>
-              <div className="feature-actions"><Link className="button" href="/tools/executive-operations-studio">Executive Studio <span aria-hidden="true">→</span></Link><Link className="button button-ghost" href="/tools/implementation-workbench">Implementation Workbench</Link><Link className="text-link light" href="/tools">View the product suite →</Link></div>
+        <section className="section product-desk-section">
+          <div className="shell product-desk-grid">
+            <div className="product-desk-copy" data-reveal>
+              <span className="section-label">Flagship decision product</span>
+              <h2>Run the operation and the transformation from one decision surface.</h2>
+              <p>The Executive Operations Studio turns capacity, service, value, portfolio, and risk signals into a controlled weekly operating cadence.</p>
+              <ul><li>Control tower and capacity signal</li><li>Portfolio value and sequencing</li><li>Weekly business review</li><li>Decision and risk register</li></ul>
+              <div><Link className="button" href="/tools/executive-operations-studio" prefetch={false}>Open with sample data →</Link><Link className="text-link dark" href="/tools" prefetch={false}>See all decision products</Link></div>
             </div>
-            <div className="home-product-console" aria-label="Executive Operations Studio product preview">
-              <header><span>Executive Operations Studio</span><b><i /> Local data mode</b></header>
-              <div className="home-console-tabs"><span>01 · Control Tower</span><span>02 · Portfolio</span><span>03 · WBR</span></div>
-              <div className="home-console-kpis"><article><span>Capacity coverage</span><strong>100.7%</strong><small>watch · &lt;5% buffer</small></article><article><span>Target timing</span><strong>32 wks</strong><small>outside 13-week plan</small></article><article><span>Portfolio value</span><strong>$29.1M</strong><small>modeled gross value</small></article><article><span>Control status</span><strong>4 / 5</strong><small>KPIs not red</small></article></div>
-              <div className="home-console-decision"><span>Decision surfaced</span><p>Secure the effective capacity gap or move the recovery target before committing the operating plan.</p></div>
+            <div className="product-desk-surface" data-reveal aria-label="Executive Operations Studio sample state">
+              <header><div><i /><span>Executive Operations Studio</span></div><b>Sample operating state</b></header>
+              <div className="product-desk-tabs"><span className="is-active">Control tower</span><span>Portfolio</span><span>WBR</span></div>
+              <div className="product-desk-kpis"><article><span>Capacity coverage</span><strong>100.7%</strong><small>Watch · &lt;5% buffer</small></article><article><span>Target timing</span><strong>32 wks</strong><small>Outside plan</small></article><article><span>Portfolio value</span><strong>$29.1M</strong><small>Modeled gross value</small></article></div>
+              <div className="product-desk-decision"><span>Decision surfaced</span><strong>Secure the effective-capacity gap or move the recovery target before committing the operating plan.</strong><dl><div><dt>Owner</dt><dd>Network operations</dd></div><div><dt>Control</dt><dd>Weekly capacity gate</dd></div></dl></div>
               <footer><span>CSV import</span><span>Transparent formulas</span><span>Exportable brief</span></footer>
             </div>
           </div>
         </section>
 
-        <section className="section featured-work-section" id="featured-work">
-          <div className="shell">
-            <div className="section-heading compact-heading dark-heading">
-              <div><span className="section-label light">Featured engagement case studies</span><h2>Three engagements.<br />Three complete case studies.</h2></div>
-              <p>The homepage is the index. Each engagement opens into its own evidence-aware, single-page case study built from the material provided.</p>
-            </div>
-            <div className="company-grid case-study-grid">
-              {featuredCompanies.filter((company) => company.caseStudy).map((company, index) => (
-                <article className="company-card" key={company.name}>
-                  <div className="company-card-top">
-                    <span>{company.relationship}</span>
-                    <b>0{index + 1}</b>
-                  </div>
-                  <a className="company-logo-link" href={company.website} target="_blank" rel="noreferrer" aria-label={`Visit ${company.name} website`}>
-                    <span className={company.key === "hopskipdrive" ? "company-logo-stage company-logo-lockup" : "company-logo-stage"}>
-                      <Image src={company.logo} width={company.width} height={company.height} alt={`${company.name} logo`} />
-                      {company.key === "hopskipdrive" ? <b>HopSkipDrive</b> : null}
-                    </span>
-                  </a>
-                  <div className="company-card-copy">
-                    <h3>{company.title}</h3>
-                    <p>{company.description}</p>
-                  </div>
-                  <div className="company-evidence-status">
-                    <i aria-hidden="true">✓</i>
-                    <span>
-                      <strong>{company.evidenceStatus}</strong>
-                      <small>{company.evidenceNote}</small>
-                      {company.evidenceHref ? <a className="company-evidence-source" href={company.evidenceHref} target="_blank" rel="noreferrer">{company.evidenceLinkLabel} <b aria-hidden="true">↗</b></a> : null}
-                    </span>
-                  </div>
-                  {company.key === "psa" ? <LiveBacklog compact /> : null}
-                  <div className="company-card-links">
-                    <Link href={company.caseStudy!}>View case study <span aria-hidden="true">→</span></Link>
-                    <a href={company.website} target="_blank" rel="noreferrer">Company site <span aria-hidden="true">↗</span></a>
-                  </div>
-                </article>
-              ))}
-            </div>
-            <div className="career-experience">
-              <div className="career-experience-heading"><div><span>Prior operating experience</span><h3>Operator credibility—not client case studies.</h3></div><p>Amazon and Walmart are separated from Luna Sol engagements and labeled as prior employment.</p></div>
-              <div className="career-company-grid">
-                {featuredCompanies.filter((company) => !company.caseStudy).map((company) => (
-                  <article key={company.name}>
-                    <a className="company-logo-link" href={company.website} target="_blank" rel="noreferrer" aria-label={`Visit ${company.name} website`}><span className="company-logo-stage"><Image src={company.logo} width={company.width} height={company.height} alt={`${company.name} logo`} /></span></a>
-                    <div><span>{company.relationship}</span><h3>{company.title}</h3><p>{company.description}</p></div>
-                    <div className="career-company-links">
-                      {company.retrospective ? <Link className="career-company-link" href={company.retrospective}>Read the retrospective →</Link> : null}
-                      <a className="career-company-link" href={company.website} target="_blank" rel="noreferrer">Company site ↗</a>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </div>
-            <div className="portfolio-outcomes" aria-label="Selected operating outcomes">
-              {otherWork.map((work) => (
-                <article key={work.title}>
-                  <span>{work.label}</span>
-                  <strong>{work.metric}</strong>
-                  <p>{work.metricLabel}</p>
-                </article>
-              ))}
-            </div>
-            <p className="portfolio-disclaimer">PSA, HopSkipDrive, and Maid of the Mist are consulting or advisory engagements as labeled and each links to a dedicated case study. Public outcomes reflect the collaborative work of company leadership, operating teams, and stakeholders. Amazon and Walmart represent Ryan Miller’s prior employment, not Luna Sol client engagements. All marks belong to their respective owners.</p>
-          </div>
-        </section>
-
-        <section className="section method-section" id="method">
-          <div className="shell method-grid">
-            <div className="method-copy">
-              <span className="section-label light">Luna OS™</span>
-              <h2>One operating thread from signal to sustained value.</h2>
-              <p>Every phase produces an executive decision and an operator-owned mechanism. No orphaned analysis. No transformation theater.</p>
-              <div className="method-links">
-                <Link className="text-link light" href="/approach">Explore the decision system →</Link>
-                <Link className="text-link light" href="/tools/executive-operations-studio">Use the Executive Operations Studio →</Link>
-                <Link className="text-link light" href="/tools/implementation-workbench">Build the implementation system →</Link>
-              </div>
-            </div>
-            <ol className="method-list">
-              <li><b>01</b><div><strong>Truth</strong><span>Reconcile the signal with physical reality.</span></div></li>
-              <li><b>02</b><div><strong>Constraint</strong><span>Identify the economically material mechanism.</span></div></li>
-              <li><b>03</b><div><strong>Architecture</strong><span>Redesign work, decisions, technology, and incentives.</span></div></li>
-              <li><b>04</b><div><strong>Adoption</strong><span>Make the new behavior executable under pressure.</span></div></li>
-              <li><b>05</b><div><strong>Control</strong><span>Install cadence, thresholds, owners, and verification.</span></div></li>
+        <section className="section method-v2-section">
+          <div className="shell method-v2-grid">
+            <div className="method-v2-intro" data-reveal><span className="section-label light">Luna OS™</span><h2>One operating thread from contested signal to durable control.</h2><p>Every gate produces an executive decision and an operator-owned mechanism.</p><Link className="text-link light" href="/approach" prefetch={false}>Inspect the complete decision system →</Link></div>
+            <ol className="method-spine">
+              <li data-reveal><b>01</b><div><strong>Truth</strong><span>Reconcile signal with physical reality.</span></div><small>Fact base</small></li>
+              <li data-reveal><b>02</b><div><strong>Constraint</strong><span>Identify the economically material mechanism.</span></div><small>Hypothesis</small></li>
+              <li data-reveal><b>03</b><div><strong>Architecture</strong><span>Redesign work, decisions, technology, and incentives.</span></div><small>Operating model</small></li>
+              <li data-reveal><b>04</b><div><strong>Adoption</strong><span>Make the new behavior executable under pressure.</span></div><small>Mechanisms</small></li>
+              <li data-reveal><b>05</b><div><strong>Control</strong><span>Install cadence, thresholds, owners, and verification.</span></div><small>Management system</small></li>
             </ol>
           </div>
         </section>
 
-        <section className="section paper principal-section" id="principal">
-          <div className="shell principal-grid">
-            <div className="principal-card">
-              <div className="principal-monogram">RM</div>
-              <div className="principal-status"><i /> Available for select 2026 engagements</div>
-              <dl>
-                <div><dt>Operating regions</dt><dd>North America · Europe · Japan</dd></div>
-                <div><dt>Core environments</dt><dd>Last mile · Retail · Mobility · AI-enabled operations</dd></div>
-                <div><dt>Engagement posture</dt><dd>Founder-led · Confidential · Embedded when required</dd></div>
-              </dl>
+        <section className="section outcome-section paper">
+          <div className="shell">
+            <header className="editorial-heading" data-reveal><div><span className="section-label">Selected operating outcomes</span><h2>Scale carried before Luna Sol was founded.</h2></div><p>The advisory method is grounded in executive operating work inside high-velocity physical networks—not abstract frameworks.</p></header>
+            <div className="outcome-register">
+              {outcomes.map((outcome) => <article key={outcome.value} data-reveal><strong>{outcome.value}</strong><h3>{outcome.label}</h3><p>{outcome.context}</p></article>)}
             </div>
-            <div className="principal-copy">
-              <span className="section-label">Founder and principal</span>
-              <h2>Ryan Miller, EMBA</h2>
-              <p className="principal-lead">An operator who has built, redesigned, and carried the number inside two of the world’s most demanding operating systems.</p>
-              <p>Ryan’s work spans global last-mile transformation, network optimization, AI-driven route prediction, delivery-partner architecture, capacity planning, customer experience, and large-scale frontline execution.</p>
-              <div className="credential-grid">
-                <div><strong>Amazon</strong><span>Global last-mile leadership across NA, EU, and JP</span></div>
-                <div><strong>Walmart</strong><span>Nearly a decade in complex retail operations</span></div>
-                <div><strong>DSP 2.0</strong><span>Co-developed foundational partner-model redesign</span></div>
-                <div><strong>103.8 TPH</strong><span>North American manual-sortation benchmark</span></div>
-              </div>
-              <a className="text-link dark" href="https://www.linkedin.com/in/ryan-miller-90b1181aa/" target="_blank" rel="noreferrer">View Ryan’s LinkedIn profile ↗</a>
+            <div className="experience-register">
+              <div><a href="https://www.amazon.com/" target="_blank" rel="noreferrer"><Image src="/amazon-logo.svg" width={603} height={182} alt="Amazon" /></a><span>Prior executive operator</span><p>Global last-mile transformation across North America, Europe, and Japan.</p><Link href="/experience/amazon" prefetch={false}>Read the operating retrospective →</Link></div>
+              <div><a href="https://www.walmart.com/" target="_blank" rel="noreferrer"><Image src="/walmart-logo.svg" width={1000} height={190} alt="Walmart" /></a><span>Prior operator</span><p>Nearly a decade inside complex retail operations where labor, inventory, and customer promise converge.</p><Link href="/about" prefetch={false}>Meet the principal →</Link></div>
             </div>
+            <p className="outcome-boundary">These outcomes span Ryan Miller’s prior executive operating roles and are not presented as Luna Sol client results or solely attributable individual outcomes.</p>
           </div>
         </section>
 
-        <section className="section diagnostic-callout">
-          <div className="shell diagnostic-callout-grid">
-            <div>
-              <span className="section-label">Working case-study integration</span>
-              <h2>Pressure-test the PSA recovery mechanics.</h2>
-              <p>Change demand, capacity, utilization, quality loss, aging work, and productivity assumptions. The model translates them into weekly backlog burn, a target date, a capacity gap, and demand-shock sensitivity.</p>
-            </div>
-            <div className="diagnostic-preview">
-              <div><span>Weekly inbound</span><i><b style={{ width: "54%" }} /></i><strong>350k</strong></div>
-              <div><span>Effective output</span><i><b style={{ width: "78%" }} /></i><strong>686k</strong></div>
-              <div><span>Net backlog burn</span><i><b style={{ width: "63%" }} /></i><strong>336k</strong></div>
-              <Link className="button" href="/diagnostic">Open the recovery model <span aria-hidden="true">→</span></Link>
-            </div>
+        <section className="section principal-v2-section" id="principal">
+          <div className="shell principal-v2-grid">
+            <div className="principal-v2-statement" data-reveal><span className="section-label light">The operator behind the system</span><blockquote>“The recommendation is not the deliverable. The deliverable is a system the operating team can run when the pressure returns.”</blockquote><Link className="button button-light" href="/about" prefetch={false}>About Ryan Miller →</Link></div>
+            <div className="principal-v2-record" data-reveal><span>Operator record</span><h2>Built inside the work.</h2><p>Ryan has operated inside two of the world’s most demanding physical networks, then translated that experience into a founder-led advisory model for companies whose growth has outrun their operating system.</p><dl><div><dt>Operating regions</dt><dd>North America · Europe · Japan</dd></div><div><dt>Core environments</dt><dd>Last mile · Retail · Mobility · AI-enabled operations</dd></div><div><dt>Engagement posture</dt><dd>Founder-led · Confidential · Embedded when required</dd></div></dl><a className="text-link light" href="https://www.linkedin.com/in/ryan-miller-90b1181aa/" target="_blank" rel="noreferrer">View LinkedIn profile ↗</a></div>
           </div>
         </section>
 
-        <section className="section contact-section" id="contact">
+        <section className="section insight-preview-section paper">
+          <div className="shell">
+            <header className="editorial-heading" data-reveal><div><span className="section-label">Latest operating briefs</span><h2>Judgment you can inspect.</h2></div><p>Short technical briefs expose the equation, the evidence sequence, and the point where the model stops.</p></header>
+            <div className="insight-preview-list">{insights.map((insight) => <article key={insight.href} data-reveal><span>{insight.n}</span><div><h3>{insight.title}</h3><p>{insight.detail}</p></div><Link href={insight.href} prefetch={false} aria-label={`Read ${insight.title}`}>Read brief →</Link></article>)}</div>
+            <Link className="text-link dark" href="/insights" prefetch={false}>Open all operations insights →</Link>
+          </div>
+        </section>
+
+        <section className="section contact-section contact-v2" id="contact">
           <div className="shell contact-grid">
-            <div className="contact-copy">
-              <span className="section-label light">Start with the real problem</span>
-              <h2>Bring the operating problem your dashboards cannot explain.</h2>
-              <p>Confidential conversations for executives, operators, investors, and founders navigating complex operating systems.</p>
-              <div className="contact-points">
-                <span><i>01</i> Define the decision</span>
-                <span><i>02</i> Size what is at stake</span>
-                <span><i>03</i> Determine the right intervention</span>
-              </div>
-            </div>
+            <div className="contact-copy" data-reveal><span className="section-label light">Bring one operating decision</span><h2>Start with what the current system cannot resolve.</h2><p>Ryan reviews every inquiry directly. If there is a fit, the first conversation will define the decision, the evidence needed, and the smallest useful starting point.</p><div className="contact-points"><span><i>01</i> Define the decision</span><span><i>02</i> Size what is at stake</span><span><i>03</i> Select the smallest useful intervention</span></div></div>
             <InquiryForm />
           </div>
         </section>

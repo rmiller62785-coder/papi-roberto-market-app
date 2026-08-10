@@ -47,12 +47,12 @@ export function InquiryForm() {
     <form className="inquiry-form" onSubmit={submit} aria-label="Confidential inquiry">
       <div className="form-head">
         <span className="section-label">Confidential intake</span>
-        <small>Typically replies within one business day</small>
+        <small>Reviewed directly by Ryan</small>
       </div>
       <div className="field-grid">
         <label>
-          <span>Name</span>
-          <input name="name" autoComplete="name" required maxLength={100} />
+          <span>Name <small>Optional</small></span>
+          <input name="name" autoComplete="name" maxLength={100} />
         </label>
         <label>
           <span>Work email</span>
@@ -60,12 +60,8 @@ export function InquiryForm() {
         </label>
       </div>
       <label>
-        <span>Company</span>
-        <input name="company" autoComplete="organization" maxLength={140} />
-      </label>
-      <label>
-        <span>What decision or operating problem is on the table?</span>
-        <textarea name="problem" required maxLength={2400} rows={5} placeholder="Include the scale, urgency, and what has already been tried." />
+        <span>What operating decision is on the table?</span>
+        <textarea name="problem" required minLength={20} maxLength={2400} rows={6} placeholder="Describe the decision, scale, urgency, and what the current system cannot resolve." />
       </label>
       <label className="honeypot" aria-hidden="true">
         <span>Website</span>
@@ -73,7 +69,7 @@ export function InquiryForm() {
       </label>
       <div className="form-actions">
         <button className="button" type="submit" disabled={status === "sending"}>
-          {status === "sending" ? "Sending…" : "Send confidential inquiry"} <span aria-hidden="true">→</span>
+          {status === "sending" ? "Sending…" : "Send operating brief"} <span aria-hidden="true">→</span>
         </button>
         <a href={`mailto:${contactEmail}`}>Or email Ryan directly</a>
       </div>
