@@ -97,7 +97,11 @@ export default function BacklogRecoveryPlanningInsight() {
                   <li><strong>Stress demand and execution.</strong><span>Test what happens when inbound or effective throughput misses the central assumption.</span></li>
                   <li><strong>Name the decision owner.</strong><span>Assign who can fund capacity, reset scope, control intake, or change the target date.</span></li>
                 </ol>
-                <div className="mandate-box insight-boundary-box"><span>Model boundary</span><p>This framework is deterministic. It does not forecast demand, discover constraints, optimize a workforce, or validate the source data. Use it to expose assumptions and define the operating evidence required before action.</p></div>
+                <div className="mandate-box insight-boundary-box">
+                  <span>Queue-physics warning</span>
+                  <p><strong>Utilization is not linear near saturation.</strong> As the system approaches 100% utilization, ordinary variation in arrivals and processing time can produce disproportionate waiting and work-in-process. Do not treat another point of scheduled utilization as a free point of realized throughput; inspect service-time variation, batching, starvation, blocking, and skill constraints directly.</p>
+                </div>
+                <div className="mandate-box insight-boundary-box"><span>Model boundary</span><p>The core equations are deterministic. The companion calculator adds a reproducible scenario simulation, but neither forecasts demand, discovers constraints, models queue congestion, optimizes a workforce, or validates source data. Use them to expose assumptions and define the operating evidence required before action.</p></div>
               </div>
             </div>
           </section>

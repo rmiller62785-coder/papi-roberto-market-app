@@ -15,6 +15,63 @@
 .calculator-field input, .constraint-field input, .constraint-field select { min-height: 44px; font-size: 14px; }
 .calculator-preset-button, .calculator-action, .constraint-action { min-height: 44px; }
 
+/* Recovery-risk instrument */
+.backlog-volatility-control { margin: 0 0 18px; padding: 18px; border: 1px solid #d9d0c3; background: #f7f2ea; }
+.backlog-volatility-control legend { padding: 0 7px; color: #34342f; font-size: 10px; font-weight: 900; }
+.backlog-volatility-control > p { margin: 0 0 13px; color: #746e65; font-size: 8px; line-height: 1.55; }
+.backlog-volatility-control > div { display: grid; grid-template-columns: repeat(3,1fr); gap: 6px; }
+.backlog-volatility-control button { min-height: 66px; padding: 11px; border: 1px solid #d4cabc; background: #fffdf9; color: #504c46; text-align: left; cursor: pointer; transition: border-color .2s,background .2s,transform .2s; }
+.backlog-volatility-control button:hover { border-color: #a98b57; transform: translateY(-1px); }
+.backlog-volatility-control button[aria-pressed="true"] { border-color: #8a6934; background: #1b252f; color: #fff; }
+.backlog-volatility-control button strong,.backlog-volatility-control button span { display: block; }
+.backlog-volatility-control button strong { font-size: 9px; }
+.backlog-volatility-control button span { margin-top: 5px; color: #8b8479; font-size: 7px; line-height: 1.4; }
+.backlog-volatility-control button[aria-pressed="true"] span { color: #aab1b7; }
+
+.backlog-risk-summary { margin: 20px 0; border: 1px solid rgba(223,201,159,.22); background: rgba(223,201,159,.045); }
+.backlog-risk-summary header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; padding: 17px; border-bottom: 1px solid rgba(255,255,255,.11); }
+.backlog-risk-summary header span,.backlog-risk-summary header strong { display: block; }
+.backlog-risk-summary header span { color: #8b939b; font-size: 7px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.backlog-risk-summary header strong { max-width: 470px; margin-top: 7px; color: #ede8df; font-family: Georgia,serif; font-size: 18px; font-weight: 400; line-height: 1.25; }
+.backlog-risk-summary header b { flex: 0 0 auto; padding: 6px 8px; border: 1px solid currentColor; color: #d8be83; font-size: 7px; letter-spacing: .08em; text-transform: uppercase; }
+.backlog-risk-summary dl { display: grid; grid-template-columns: repeat(4,1fr); margin: 0; }
+.backlog-risk-summary dl > div { min-height: 82px; padding: 13px; border-right: 1px solid rgba(255,255,255,.11); }
+.backlog-risk-summary dl > div:last-child { border-right: 0; }
+.backlog-risk-summary dt { color: #7f8790; font-size: 7px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
+.backlog-risk-summary dd { margin: 9px 0 0; color: #f0ece4; font-family: Georgia,serif; font-size: 19px; font-variant-numeric: tabular-nums; }
+.backlog-risk-summary > p { margin: 0; padding: 14px 17px; border-top: 1px solid rgba(255,255,255,.11); color: #9299a1; font-size: 8px; line-height: 1.55; }
+.backlog-risk-summary.risk-fragile-plan,.backlog-risk-summary.risk-no-recovery { border-color: rgba(242,151,132,.38); background: rgba(242,151,132,.055); }
+.backlog-risk-summary.risk-fragile-plan header b,.backlog-risk-summary.risk-no-recovery header b { color: #f0a38f; }
+.backlog-risk-summary.risk-thin-margin { border-color: rgba(240,194,108,.36); background: rgba(240,194,108,.05); }
+.backlog-risk-summary.risk-thin-margin header b { color: #efc26c; }
+.backlog-risk-summary.risk-durable-margin { border-color: rgba(147,207,119,.3); background: rgba(147,207,119,.045); }
+.backlog-risk-summary.risk-durable-margin header b { color: #9acf83; }
+
+.backlog-risk-band { fill: rgba(209,174,103,.18); }
+.backlog-median-line { fill: none; stroke: #f0d79f; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+.backlog-base-line { stroke: #7a848e; stroke-width: 1.5; }
+.backlog-chart-legend .median::before { background: #f0d79f; }
+.backlog-chart-legend .risk-band::before { height: 8px; background: rgba(209,174,103,.25); }
+.backlog-chart-legend .base::before { height: 1px; background: #7a848e; }
+
+.calculator-offer-section { padding: 110px 0; }
+.calculator-offer-grid { display: grid; grid-template-columns: minmax(0,.8fr) minmax(0,1.2fr); gap: 80px; align-items: start; }
+.calculator-offer-intro h2 { margin: 17px 0 22px; font-size: clamp(44px,5vw,68px); line-height: 1; }
+.calculator-offer-intro p { max-width: 550px; color: var(--dark-muted); font-size: 15px; line-height: 1.75; }
+.calculator-offer-deliverables { border-top: 1px solid var(--dark-line); }
+.calculator-offer-deliverables article { display: grid; grid-template-columns: 48px minmax(0,1fr); gap: 16px; padding: 22px 0; border-bottom: 1px solid var(--dark-line); }
+.calculator-offer-deliverables article > b { color: #94703a; font-family: Georgia,serif; font-size: 19px; font-weight: 400; }
+.calculator-offer-deliverables h3 { margin: 0 0 7px; color: #2e2e29; font-family: Georgia,serif; font-size: 23px; font-weight: 400; }
+.calculator-offer-deliverables p { margin: 0; color: #716b62; font-size: 12px; line-height: 1.65; }
+.calculator-offer-terms { display: grid; grid-template-columns: repeat(3,1fr); margin-top: 28px; border: 1px solid #d0c7b9; }
+.calculator-offer-terms div { min-height: 90px; padding: 15px; border-right: 1px solid #d0c7b9; }
+.calculator-offer-terms div:last-child { border-right: 0; }
+.calculator-offer-terms span,.calculator-offer-terms strong { display: block; }
+.calculator-offer-terms span { color: #8c8478; font-size: 7px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.calculator-offer-terms strong { margin-top: 12px; color: #393832; font-size: 11px; line-height: 1.4; }
+.calculator-offer-action { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin-top: 28px; }
+.calculator-offer-action p { flex-basis: 100%; margin: 0; color: #7c756b; font-size: 9px; line-height: 1.55; }
+
 /* Private Firm OS: instrument grade, not miniature */
 .firmos-app { background: var(--carbon-950); }
 .firmos-header { min-height: 72px; background: rgba(10,14,18,.96); }
@@ -37,4 +94,11 @@
 @media (max-width: 760px) {
   .product-suite-card { padding: 24px; }
   .firmos-sidebar nav button { min-height: 48px; }
+  .backlog-volatility-control > div,.backlog-risk-summary dl,.calculator-offer-grid,.calculator-offer-terms { grid-template-columns: 1fr; }
+  .backlog-risk-summary header { flex-direction: column; }
+  .backlog-risk-summary dl > div,.calculator-offer-terms div { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.11); }
+  .calculator-offer-terms div { border-bottom-color: #d0c7b9; }
+  .backlog-risk-summary dl > div:last-child,.calculator-offer-terms div:last-child { border-bottom: 0; }
+  .calculator-offer-section { padding: 78px 0; }
+  .calculator-offer-grid { gap: 38px; }
 }

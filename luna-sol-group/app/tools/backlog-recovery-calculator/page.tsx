@@ -16,7 +16,7 @@ const frequentlyAskedQuestions = [
   {
     question: "Why does the calculator show a sensitivity range?",
     answer:
-      "The range applies plus or minus 12 percent variation to modeled effective throughput before weekly inbound is subtracted. It is a transparent stress test for execution variance, not a statistical confidence interval or forecast.",
+      "The transparent range applies plus or minus 12 percent variation to effective throughput before inbound is subtracted. The separate recovery-risk view runs 1,000 reproducible weekly scenarios at low, moderate, or high operating volatility and reports P50, P80, and P95 timing plus target-miss risk. Neither is a fitted forecast or confidence interval.",
   },
   {
     question: "What does 'No recovery' mean?",
@@ -55,10 +55,11 @@ const structuredData = [
     },
     featureList: [
       "Net backlog burn calculation",
-      "Weeks-to-threshold estimate",
+      "P50, P80, and P95 recovery-risk simulation",
+      "Fragility and margin-of-safety diagnostic",
       "Required-throughput calculation",
       "Capacity-gap analysis",
-      "Throughput sensitivity range",
+      "Recovery-risk fan chart",
     ],
   },
   {
@@ -84,17 +85,17 @@ const structuredData = [
 export const metadata: Metadata = {
   title: "Backlog Recovery Calculator | Queue Capacity & Time-to-Target Model",
   description:
-    "Model backlog burn, required throughput, capacity gaps, and time to a controlled queue. A free, transparent scenario calculator for operations leaders.",
+    "Test whether a backlog recovery plan survives operating variability. Model P50, P80, and P95 timing, fragility, margin of safety, and target-miss risk.",
   alternates: { canonical: toolPath },
   openGraph: {
     title: "Backlog Recovery Calculator",
-    description: "Turn demand, capacity, quality loss, and recovery timing into a testable operating decision.",
+    description: "Find out whether the recovery plan survives contact with operating reality.",
     images: [{ url: "/og.png", width: 1200, height: 630, alt: "Luna Sol Group backlog recovery calculator" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "Backlog Recovery Calculator",
-    description: "Turn demand, capacity, quality loss, and recovery timing into a testable operating decision.",
+    description: "Find out whether the recovery plan survives contact with operating reality.",
     images: ["/og.png"],
   },
 };
@@ -119,16 +120,16 @@ export default function BacklogRecoveryCalculatorPage() {
               <Link href="/tools" prefetch={false}>Operations Lab</Link><span aria-hidden="true">/</span>
               <b>Backlog Recovery Calculator</b>
             </nav>
-            <span className="kicker">Operations Lab · Deterministic queue-flow model</span>
-            <h1>Turn a visible backlog into a <em>testable recovery decision.</em></h1>
+            <span className="kicker">Operations Lab · Recovery-risk instrument</span>
+            <h1>Will the recovery plan survive <em>contact with reality?</em></h1>
             <p>
-              Model demand, effective capacity, quality loss, aging work, surge options, and target timing. The
-              calculator shows whether the queue can recover, what throughput the commitment requires, and where
-              the operating plan still has a capacity gap.
+              Average arithmetic can make a fragile plan look certain. Model the queue, add real operating variability,
+              and see median timing, four-in-five timing, conservative timing, target-miss risk, and the throughput
+              shortfall that stalls recovery entirely.
             </p>
             <div className="diagnostic-facts">
-              <span><strong>10</strong> Adjustable operating inputs</span>
-              <span><strong>4</strong> Decision-ready outputs</span>
+              <span><strong>1,000</strong> Reproducible weekly trials</span>
+              <span><strong>P50–P95</strong> Recovery timing</span>
               <span><strong>0</strong> Data stored unless submitted</span>
             </div>
           </div>
@@ -138,8 +139,8 @@ export default function BacklogRecoveryCalculatorPage() {
           <div className="shell">
             <header className="calculator-section-intro">
               <span className="section-label">Build the operating case</span>
-              <h2 id="calculator-model-heading">Describe the queue. Test the path to control.</h2>
-              <p>Start with the example, replace each assumption with observed operating data, then use the result to frame the next decision—not to bypass validation.</p>
+              <h2 id="calculator-model-heading">Test the promise—not just the arithmetic.</h2>
+              <p>Replace the example with observed operating data, select how volatile the operation really is, and compare leadership&rsquo;s target with the distribution of plausible recovery paths.</p>
             </header>
             <BacklogCalculator />
           </div>
@@ -193,10 +194,14 @@ export default function BacklogRecoveryCalculatorPage() {
               <h3>3. Test the commitment</h3>
               <p>The model calculates the throughput required to move from the current queue to the control threshold within the selected window. Any difference between required and effective throughput becomes the capacity gap leadership must fund, remove, or renegotiate.</p>
               <h3>4. Stress the execution case</h3>
-              <p>The sensitivity range varies modeled effective throughput by ±12% before inbound demand is subtracted. It is a planning tolerance—not a confidence interval—used to show how ordinary execution variance can change the target date.</p>
+              <p>The sensitivity range varies effective throughput by ±12% before inbound demand is subtracted. The recovery-risk view then runs 1,000 reproducible weekly trials with independent variation around demand and output, reporting P50, P80, P95, and target-miss risk.</p>
+              <h3>5. Read the fragility—not only the date</h3>
+              <p>Margin of safety equals net burn divided by effective output. The inverse operating problem is the amplification factor: effective output divided by net burn. When the margin is thin, a routine percentage change in output creates a much larger percentage change in backlog burn.</p>
+              <h3>6. Treat high utilization as a warning, not a free multiplier</h3>
+              <p>The input model uses utilization as a transparent throughput multiplier, but real queues become nonlinear near saturation: variability and waiting time rise sharply as utilization approaches 100%. The model does not implement Kingman&rsquo;s approximation or a service-time distribution, so high-utilization scenarios require direct queueing analysis before commitment.</p>
               <div className="mandate-box calculator-boundary-box">
                 <span>Trust boundary</span>
-                <p><strong>This is a deterministic scenario model, not a forecast or optimization engine.</strong> Validate demand patterns, process constraints, staffing feasibility, quality controls, financial assumptions, and safety or compliance implications before acting.</p>
+                <p><strong>This is a transparent scenario distribution, not a fitted forecast or optimization engine.</strong> It does not learn from historical data or model correlation, seasonality, service times, congestion, or structural breaks. Validate those mechanisms before acting.</p>
               </div>
             </div>
           </div>
@@ -205,11 +210,11 @@ export default function BacklogRecoveryCalculatorPage() {
         <section className="section diagnostic-after calculator-output-section" aria-labelledby="calculator-output-heading">
           <div className="shell narrow-shell">
             <span className="section-label light">What the product produces</span>
-            <h2 id="calculator-output-heading" className="calculator-section-title">Four outputs that move a recovery discussion forward.</h2>
+            <h2 id="calculator-output-heading" className="calculator-section-title">The date, the odds, and the point where the plan breaks.</h2>
             <div className="after-grid calculator-output-grid">
-              <div><b>01</b><h3>Recovery viability</h3><p>Whether the modeled queue is controlled, recovering, stalled, or growing at the assumptions provided.</p></div>
-              <div><b>02</b><h3>Target commitment</h3><p>Weeks to the control threshold and the effective throughput required to hit leadership&rsquo;s selected window.</p></div>
-              <div><b>03</b><h3>Escalation case</h3><p>The remaining weekly capacity gap and a sensitivity range that make tradeoffs explicit before a promise is made.</p></div>
+              <div><b>01</b><h3>Risk-adjusted timing</h3><p>P50, P80, and P95 recovery timing plus the share of simulated paths that miss leadership&rsquo;s target window.</p></div>
+              <div><b>02</b><h3>Fragility</h3><p>Margin of safety, net-burn amplification, and the throughput shortfall that stalls recovery completely.</p></div>
+              <div><b>03</b><h3>Decision gap</h3><p>The effective and rated capacity required to turn the target from a hope into a controlled operating path.</p></div>
             </div>
             <div className="calculator-decision-cta">
               <div>
@@ -220,6 +225,36 @@ export default function BacklogRecoveryCalculatorPage() {
               <div className="calculator-decision-actions">
                 <Link className="button" href="/tools/constraint-diagnostic" prefetch={false}>Diagnose the constraint →</Link>
                 <Link className="text-link" href="/#contact" prefetch={false}>Discuss the operating decision</Link>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="section paper calculator-offer-section" aria-labelledby="calculator-offer-heading">
+          <div className="shell narrow-shell calculator-offer-grid">
+            <div className="calculator-offer-intro">
+              <span className="section-label">Fixed-scope entry engagement</span>
+              <h2 id="calculator-offer-heading">Two-week Backlog Reality Check.</h2>
+              <p>
+                Move from a browser scenario to an evidence-backed operating decision. Ryan validates the queue definition,
+                tests the recovery assumptions against operating evidence, and converts the result into an accountable action path.
+              </p>
+            </div>
+            <div>
+              <div className="calculator-offer-deliverables">
+                <article><b>01</b><div><h3>Validate the operating baseline</h3><p>Reconcile intake, demonstrated output, yield loss, aging, and the control threshold with the people and data closest to the work.</p></div></article>
+                <article><b>02</b><div><h3>Identify the three binding constraints</h3><p>Separate symptoms from mechanisms and define the evidence, falsifier, owner, and decision attached to each leading constraint.</p></div></article>
+                <article><b>03</b><div><h3>Sequence the recovery decision</h3><p>Deliver a practical action plan with scenario ranges, leading indicators, governance cadence, and the first implementation gates.</p></div></article>
+              </div>
+              <div className="calculator-offer-terms" aria-label="Engagement characteristics">
+                <div><span>Working window</span><strong>Two focused weeks</strong></div>
+                <div><span>Delivery model</span><strong>Principal-led</strong></div>
+                <div><span>Commercial boundary</span><strong>Fixed fee agreed before kickoff</strong></div>
+              </div>
+              <div className="calculator-offer-action">
+                <Link className="button" href="/#contact" prefetch={false}>Request current scope and fee →</Link>
+                <Link className="text-link" href="/approach" prefetch={false}>See how evidence becomes a decision</Link>
+                <p>The exact fee, acceptance criteria, access requirements, and exclusions are confirmed in writing. No performance outcome is implied by this page.</p>
               </div>
             </div>
           </div>

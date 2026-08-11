@@ -3,6 +3,7 @@ export type ProductEventName =
   | "preset_selected"
   | "input_changed"
   | "no_recovery_shown"
+  | "fragility_warning_shown"
   | "scenario_link_copied"
   | "artifact_downloaded"
   | "inquiry_started"

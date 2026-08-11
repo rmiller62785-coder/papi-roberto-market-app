@@ -2,9 +2,10 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { OperatingVolatility, simulateRecoveryRisk, volatilityOptions } from "../lib/backlog-risk";
 import { trackProductEvent } from "../lib/analytics";
 
-const MODEL_VERSION = "LUNA-BRM-2.0";
+const MODEL_VERSION = "LUNA-BRM-3.0";
 const RECOVERY_EPSILON = 0.01;
 
 type Scenario = {
@@ -20,9 +21,10 @@ type Scenario = {
   automationGain: number;
   targetWeeks: number;
   costPerUnitWeek: number;
+  operatingVolatility: OperatingVolatility;
 };
 
-type NumericKey = keyof Omit<Scenario, "unitLabel">;
+type NumericKey = keyof Omit<Scenario, "unitLabel" | "operatingVolatility">;
 
 type InputDefinition = {
   key: NumericKey;
@@ -46,8 +48,9 @@ const baseline: Scenario = {
   agingMix: 30,
   surgeCapacity: 1,
   automationGain: 5,
-  targetWeeks: 20,
+  targetWeeks: 8,
   costPerUnitWeek: 0,
+  operatingVolatility: "moderate",
 };
 
 const presets: Array<{ id: string; label: string; note: string; scenario: Scenario }> = [
@@ -55,31 +58,31 @@ const presets: Array<{ id: string; label: string; note: string; scenario: Scenar
     id: "support",
     label: "Support tickets",
     note: "High-volume service queue",
-    scenario: { unitLabel: "tickets", currentBacklog: 1200, targetBacklog: 200, weeklyInbound: 450, ratedCapacity: 600, utilization: 85, rework: 8, agingMix: 35, surgeCapacity: 40, automationGain: 8, targetWeeks: 8, costPerUnitWeek: 0 },
+    scenario: { unitLabel: "tickets", currentBacklog: 1200, targetBacklog: 200, weeklyInbound: 450, ratedCapacity: 600, utilization: 85, rework: 8, agingMix: 35, surgeCapacity: 40, automationGain: 8, targetWeeks: 8, costPerUnitWeek: 0, operatingVolatility: "moderate" },
   },
   {
     id: "claims",
     label: "Insurance claims",
     note: "Regulated case-processing queue",
-    scenario: { unitLabel: "claims", currentBacklog: 3200, targetBacklog: 500, weeklyInbound: 900, ratedCapacity: 1200, utilization: 78, rework: 12, agingMix: 45, surgeCapacity: 100, automationGain: 10, targetWeeks: 12, costPerUnitWeek: 0 },
+    scenario: { unitLabel: "claims", currentBacklog: 3200, targetBacklog: 500, weeklyInbound: 900, ratedCapacity: 1200, utilization: 78, rework: 12, agingMix: 45, surgeCapacity: 100, automationGain: 10, targetWeeks: 12, costPerUnitWeek: 0, operatingVolatility: "moderate" },
   },
   {
     id: "orders",
     label: "Order fulfillment",
     note: "Physical-flow operating queue",
-    scenario: { unitLabel: "orders", currentBacklog: 1800, targetBacklog: 300, weeklyInbound: 1100, ratedCapacity: 1400, utilization: 82, rework: 5, agingMix: 25, surgeCapacity: 125, automationGain: 6, targetWeeks: 8, costPerUnitWeek: 0 },
+    scenario: { unitLabel: "orders", currentBacklog: 1800, targetBacklog: 300, weeklyInbound: 1100, ratedCapacity: 1400, utilization: 82, rework: 5, agingMix: 25, surgeCapacity: 125, automationGain: 6, targetWeeks: 8, costPerUnitWeek: 0, operatingVolatility: "moderate" },
   },
   {
     id: "permits",
     label: "Permit review",
     note: "Multi-stage approval queue",
-    scenario: { unitLabel: "permits", currentBacklog: 850, targetBacklog: 150, weeklyInbound: 140, ratedCapacity: 180, utilization: 75, rework: 7, agingMix: 55, surgeCapacity: 20, automationGain: 5, targetWeeks: 16, costPerUnitWeek: 0 },
+    scenario: { unitLabel: "permits", currentBacklog: 850, targetBacklog: 150, weeklyInbound: 140, ratedCapacity: 180, utilization: 75, rework: 7, agingMix: 55, surgeCapacity: 20, automationGain: 5, targetWeeks: 16, costPerUnitWeek: 0, operatingVolatility: "moderate" },
   },
   {
     id: "grading",
     label: "Grading submissions",
     note: "Specialist inspection queue",
-    scenario: { unitLabel: "submissions", currentBacklog: 5000, targetBacklog: 800, weeklyInbound: 1200, ratedCapacity: 1500, utilization: 85, rework: 4, agingMix: 40, surgeCapacity: 150, automationGain: 8, targetWeeks: 12, costPerUnitWeek: 0 },
+    scenario: { unitLabel: "submissions", currentBacklog: 5000, targetBacklog: 800, weeklyInbound: 1200, ratedCapacity: 1500, utilization: 85, rework: 4, agingMix: 40, surgeCapacity: 150, automationGain: 8, targetWeeks: 12, costPerUnitWeek: 0, operatingVolatility: "moderate" },
   },
 ];
 
@@ -110,6 +113,7 @@ const hashKeys: Record<keyof Scenario, string> = {
   automationGain: "ag",
   targetWeeks: "tw",
   costPerUnitWeek: "cd",
+  operatingVolatility: "vol",
 };
 
 function bounded(value: number, minimum: number, maximum: number) {
@@ -154,8 +158,12 @@ function formatCurrency(value: number) {
   }).format(value);
 }
 
+function formatRiskWeek(value: number | null) {
+  return value === null ? ">104 wk" : `${value} wk`;
+}
+
 function encodeScenario(scenario: Scenario) {
-  const params = new URLSearchParams({ v: "2" });
+  const params = new URLSearchParams({ v: "3" });
   (Object.keys(hashKeys) as Array<keyof Scenario>).forEach((key) => {
     params.set(hashKeys[key], String(scenario[key]));
   });
@@ -165,11 +173,13 @@ function encodeScenario(scenario: Scenario) {
 function decodeScenario(hash: string): Scenario | null {
   if (!hash) return null;
   const params = new URLSearchParams(hash.replace(/^#/, ""));
-  if (params.get("v") !== "2") return null;
+  if (params.get("v") !== "2" && params.get("v") !== "3") return null;
 
   const decoded: Scenario = { ...baseline };
   const unit = params.get(hashKeys.unitLabel);
   if (unit) decoded.unitLabel = unit.replace(/[<>]/g, "").trim().slice(0, 24) || baseline.unitLabel;
+  const volatility = params.get(hashKeys.operatingVolatility);
+  if (volatility && volatilityOptions.some((option) => option.id === volatility)) decoded.operatingVolatility = volatility as OperatingVolatility;
 
   for (const definition of numericInputs) {
     const raw = params.get(hashKeys[definition.key]);
@@ -194,6 +204,7 @@ export function BacklogCalculator() {
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "fallback" | "error">("idle");
   const [artifactStatus, setArtifactStatus] = useState<"idle" | "downloaded" | "error">("idle");
   const noRecoveryTracked = useRef(false);
+  const fragilityTracked = useRef(false);
   const inquiryStarted = useRef(false);
   const sliderInputsTracked = useRef(new Set<NumericKey>());
 
@@ -248,6 +259,17 @@ export function BacklogCalculator() {
     const recoveryPeriodExposure = Number.isFinite(weeksToTarget)
       ? 0.5 * backlogGap * weeksToTarget * scenario.costPerUnitWeek
       : Number.POSITIVE_INFINITY;
+    const marginOfSafety = effectiveThroughput > RECOVERY_EPSILON ? netBurn / effectiveThroughput : 0;
+    const stressTolerancePercent = Math.max(0, marginOfSafety * 100);
+    const amplificationFactor = isRecovering ? effectiveThroughput / netBurn : Number.POSITIVE_INFINITY;
+    const fragilityStatus = !isRecovering
+      ? "No recovery"
+      : marginOfSafety < 0.15
+        ? "Fragile plan"
+        : marginOfSafety < 0.3
+          ? "Thin margin"
+          : "Durable margin";
+    const fragilityKey = fragilityStatus.toLowerCase().replace(/\s+/g, "-");
 
     return {
       agingFactor,
@@ -272,8 +294,22 @@ export function BacklogCalculator() {
       weeklyDelayExposure,
       monthlyDelayExposure,
       recoveryPeriodExposure,
+      marginOfSafety,
+      stressTolerancePercent,
+      amplificationFactor,
+      fragilityStatus,
+      fragilityKey,
     };
   }, [scenario]);
+
+  const risk = useMemo(() => simulateRecoveryRisk({
+    currentBacklog: scenario.currentBacklog,
+    targetBacklog: scenario.targetBacklog,
+    weeklyInbound: scenario.weeklyInbound,
+    effectiveThroughput: model.effectiveThroughput,
+    targetWeeks: scenario.targetWeeks,
+    volatility: scenario.operatingVolatility,
+  }), [model.effectiveThroughput, scenario.currentBacklog, scenario.operatingVolatility, scenario.targetBacklog, scenario.targetWeeks, scenario.weeklyInbound]);
 
   useEffect(() => {
     const noRecovery = model.backlogGap > 0 && !Number.isFinite(model.weeksToTarget);
@@ -283,26 +319,41 @@ export function BacklogCalculator() {
     noRecoveryTracked.current = noRecovery;
   }, [model.backlogGap, model.status, model.weeksToTarget]);
 
+  useEffect(() => {
+    const isFragile = model.fragilityStatus !== "Durable margin";
+    if (isFragile && !fragilityTracked.current) {
+      trackProductEvent("fragility_warning_shown", {
+        status: model.fragilityStatus,
+        miss_target_percent: Math.round(risk.missTargetPercent),
+        model_version: MODEL_VERSION,
+      });
+    }
+    fragilityTracked.current = isFragile;
+  }, [model.fragilityStatus, risk.missTargetPercent]);
+
   const chart = useMemo(() => {
     const baseCandidate = Number.isFinite(model.weeksToTarget) ? roundFullWeeks(model.weeksToTarget) : scenario.targetWeeks;
-    const highCandidate = Number.isFinite(model.highWeeks) ? roundFullWeeks(model.highWeeks) : scenario.targetWeeks;
-    const horizon = Math.max(4, Math.min(156, Math.max(scenario.targetWeeks, baseCandidate, highCandidate)));
-    const samples = Math.min(64, Math.max(16, horizon));
-    const weeks = Array.from({ length: samples + 1 }, (_, index) => (horizon * index) / samples);
+    const riskCandidate = risk.p95Week ?? risk.horizon;
+    const horizon = Math.max(8, Math.min(risk.horizon, Math.ceil(Math.max(scenario.targetWeeks, baseCandidate, riskCandidate))));
+    const stride = Math.max(1, Math.ceil(horizon / 64));
+    const riskPath = risk.path.filter((point) => point.week <= horizon && point.week % stride === 0);
+    if (riskPath.at(-1)?.week !== horizon) riskPath.push(risk.path[horizon]);
+    const weeks = riskPath.map((point) => point.week);
     const queueAt = (burn: number, week: number) => {
       if (model.alreadyControlled) return Math.max(0, scenario.currentBacklog - burn * week);
       return Math.max(scenario.targetBacklog, scenario.currentBacklog - burn * week);
     };
     const base = weeks.map((week) => ({ week, value: queueAt(model.operatingNetBurn, week) }));
-    const optimistic = weeks.map((week) => ({ week, value: queueAt(model.optimisticBurn, week) }));
-    const pessimistic = weeks.map((week) => ({ week, value: queueAt(model.pessimisticBurn, week) }));
+    const riskLow = riskPath.map((point) => ({ week: point.week, value: point.p10 }));
+    const riskMedian = riskPath.map((point) => ({ week: point.week, value: point.p50 }));
+    const riskHigh = riskPath.map((point) => ({ week: point.week, value: point.p90 }));
     const required = weeks.map((week) => ({
       week,
       value: week >= scenario.targetWeeks
         ? scenario.targetBacklog
         : scenario.currentBacklog - (model.backlogGap / Math.max(1, scenario.targetWeeks)) * week,
     }));
-    const yMax = Math.max(1, scenario.currentBacklog, scenario.targetBacklog, ...pessimistic.map((point) => point.value), ...optimistic.map((point) => point.value)) * 1.08;
+    const yMax = Math.max(1, scenario.currentBacklog, scenario.targetBacklog, ...riskHigh.map((point) => point.value)) * 1.08;
     const left = 54;
     const right = 18;
     const top = 18;
@@ -313,15 +364,14 @@ export function BacklogCalculator() {
     const y = (value: number) => top + (1 - value / yMax) * (height - top - bottom);
     const points = (series: Array<{ week: number; value: number }>) => series.map((point) => `${x(point.week).toFixed(1)},${y(point.value).toFixed(1)}`).join(" ");
     const band = [
-      ...optimistic.map((point, index) => `${x(point.week).toFixed(1)},${y(Math.min(point.value, pessimistic[index].value)).toFixed(1)}`),
-      ...pessimistic.slice().reverse().map((point, reverseIndex) => {
-        const index = pessimistic.length - 1 - reverseIndex;
-        return `${x(point.week).toFixed(1)},${y(Math.max(point.value, optimistic[index].value)).toFixed(1)}`;
+      ...riskLow.map((point) => `${x(point.week).toFixed(1)},${y(point.value).toFixed(1)}`),
+      ...riskHigh.slice().reverse().map((point) => {
+        return `${x(point.week).toFixed(1)},${y(point.value).toFixed(1)}`;
       }),
     ].join(" ");
 
-    return { horizon, width, height, left, right, top, bottom, yMax, x, y, base, required, basePoints: points(base), requiredPoints: points(required), bandPoints: band };
-  }, [model, scenario]);
+    return { horizon, width, height, left, right, top, bottom, yMax, x, y, basePoints: points(base), medianPoints: points(riskMedian), requiredPoints: points(required), bandPoints: band };
+  }, [model, risk, scenario]);
 
   const validationMessages = useMemo(() => {
     const messages: string[] = [];
@@ -343,6 +393,35 @@ export function BacklogCalculator() {
     if (!Number.isFinite(model.highWeeks)) return `${roundFullWeeks(model.lowWeeks)} wk–no recovery`;
     return `${roundFullWeeks(model.lowWeeks)}–${roundFullWeeks(model.highWeeks)} wk`;
   }, [model]);
+
+  const riskNarrative = useMemo(() => {
+    const missRate = formatNumber(risk.missTargetPercent, risk.missTargetPercent < 10 ? 1 : 0);
+    if (risk.p50Week === null) {
+      return `Fewer than half of simulated paths recover inside the 104-week horizon. ${missRate}% miss leadership's ${scenario.targetWeeks}-week target.`;
+    }
+    const confidence = risk.p80Week === null
+      ? "At least one in five paths remains unrecovered after 104 weeks."
+      : `Four-in-five recovery odds arrive by week ${risk.p80Week}.`;
+    const target = risk.missTargetPercent < 0.1
+      ? `More than 99.9% meet leadership's ${scenario.targetWeeks}-week target.`
+      : `${missRate}% miss leadership's ${scenario.targetWeeks}-week target.`;
+    return `Median recovery: ${risk.p50Week} weeks. ${confidence} ${target}`;
+  }, [risk, scenario.targetWeeks]);
+
+  const fragilityCopy = useMemo(() => {
+    if (!Number.isFinite(model.amplificationFactor)) {
+      return "Average effective output does not exceed inbound demand. Timing is not the decision until the operating constraint changes.";
+    }
+    const tolerance = formatNumber(model.stressTolerancePercent, 1);
+    const amplification = formatNumber(model.amplificationFactor, 1);
+    if (model.marginOfSafety < 0.15) {
+      return `This is not a durable recovery plan. A ${tolerance}% throughput shortfall stalls recovery entirely, and a 1% output change moves net burn by about ${amplification}%.`;
+    }
+    if (model.marginOfSafety < 0.3) {
+      return `Thin margin. A ${tolerance}% throughput shortfall stalls recovery, and a 1% output change moves net burn by about ${amplification}%.`;
+    }
+    return `Durable margin. The plan absorbs roughly a ${tolerance}% throughput shortfall before recovery stalls. Net burn amplification is ${amplification}×.`;
+  }, [model.amplificationFactor, model.marginOfSafety, model.stressTolerancePercent]);
 
   const update = (key: keyof Scenario, value: number | string) => {
     setActivePreset(null);
@@ -388,12 +467,13 @@ export function BacklogCalculator() {
       scenarioUrl.hash = encodeScenario(scenario);
       const chartBand = chart.bandPoints;
       const chartBase = chart.basePoints;
+      const chartMedian = chart.medianPoints;
       const chartRequired = chart.requiredPoints;
       const rows = numericInputs.map((input) => `<tr><th>${escapeHtml(input.label(scenario.unitLabel))}</th><td>${escapeHtml(String(scenario[input.key]))}${escapeHtml(input.suffix(scenario.unitLabel))}</td></tr>`).join("");
       const costSection = scenario.costPerUnitWeek > 0
         ? `<section><h2>Delay-cost framing</h2><p><strong>${escapeHtml(formatCurrency(model.monthlyDelayExposure))}/month</strong> current excess-backlog exposure.</p><p>${Number.isFinite(model.recoveryPeriodExposure) ? `${escapeHtml(formatCurrency(model.recoveryPeriodExposure))} approximate exposure through the modeled recovery period.` : "Exposure remains open-ended because the current scenario does not recover."}</p><p class="boundary">This is an exposure estimate from the supplied unit-week cost, not modeled savings or an accounting forecast.</p></section>`
         : "";
-      const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Backlog recovery decision brief</title><style>body{font:15px/1.5 Arial,sans-serif;color:#15212b;max-width:980px;margin:40px auto;padding:0 28px}header{border-bottom:3px solid #b99656;padding-bottom:22px;margin-bottom:28px}.eyebrow{letter-spacing:.12em;text-transform:uppercase;color:#806532;font-size:12px}h1{font:42px/1.05 Georgia,serif;margin:8px 0}.status{display:inline-block;padding:6px 10px;border:1px solid #b99656;border-radius:99px}section{margin:28px 0}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.metric{border:1px solid #d8d4ca;padding:16px}.metric strong{display:block;font-size:22px}svg{width:100%;height:auto;background:#f7f5ef;border:1px solid #d8d4ca}table{border-collapse:collapse;width:100%}th,td{text-align:left;border-bottom:1px solid #ddd;padding:8px}th{width:52%}.boundary{padding:14px;border-left:3px solid #b99656;background:#f7f5ef;color:#46515a}.small{font-size:12px;color:#5d666d;word-break:break-all}@media print{body{margin:0}.no-print{display:none}}@media(max-width:700px){.metrics{grid-template-columns:1fr 1fr}}</style></head><body><header><div class="eyebrow">Luna Sol Group · ${MODEL_VERSION}</div><h1>Backlog recovery decision brief</h1><p>${escapeHtml(scenario.unitLabel)} · Generated ${escapeHtml(createdAt.toLocaleString())}</p><span class="status">${escapeHtml(model.status)}</span></header><section class="metrics"><div class="metric">Net backlog burn<strong>${model.operatingNetBurn > 0 ? "−" : model.operatingNetBurn < 0 ? "+" : ""}${escapeHtml(formatRate(Math.abs(model.operatingNetBurn), scenario.unitLabel))}</strong></div><div class="metric">Full weeks to threshold<strong>${Number.isFinite(model.weeksToTarget) ? roundFullWeeks(model.weeksToTarget) : "No recovery"}</strong></div><div class="metric">Required throughput<strong>${escapeHtml(formatRate(model.requiredThroughput, scenario.unitLabel))}</strong></div><div class="metric">Sensitivity<strong>${escapeHtml(sensitivityLabel)}</strong></div></section><section><h2>Modeled burn-down</h2><svg viewBox="0 0 ${chart.width} ${chart.height}" role="img" aria-label="Modeled backlog path"><polygon points="${chartBand}" fill="#b99656" opacity=".18"/><line x1="${chart.left}" y1="${chart.y(scenario.targetBacklog)}" x2="${chart.width - chart.right}" y2="${chart.y(scenario.targetBacklog)}" stroke="#638075" stroke-dasharray="6 5"/><polyline points="${chartRequired}" fill="none" stroke="#7c8790" stroke-width="2" stroke-dasharray="5 5"/><polyline points="${chartBase}" fill="none" stroke="#142a3b" stroke-width="4"/><text x="${chart.left}" y="${chart.height - 12}" font-size="12">Week 0</text><text x="${chart.width - chart.right - 64}" y="${chart.height - 12}" font-size="12">Week ${chart.horizon}</text></svg><p class="small">Solid: modeled path · band: ±12% effective-throughput sensitivity · dashed: path required to hit leadership's target window · green: control threshold.</p></section>${costSection}<section><h2>Operating assumptions</h2><table><tr><th>Queue label</th><td>${escapeHtml(scenario.unitLabel)}</td></tr>${rows}</table></section><section><h2>Method and boundary</h2><p>Effective throughput = rated capacity × utilization × productivity lift × quality yield × aging factor + net surge output. Aging factor applies a fixed 8% handling penalty to the aged-work share. Sensitivity varies effective throughput ±12%. Full recovery weeks are rounded up because a partial weekly period is not an operationally completed week.</p><p class="boundary"><strong>Model boundary:</strong> This is a deterministic queue-flow scenario, not a statistical forecast. Validate assumptions with direct observation, operating data, frontline evidence, and financial owners before acting. Generated locally; no connection to client data.</p><p class="small">Portable scenario: ${escapeHtml(scenarioUrl.toString())}</p></section><button class="no-print" onclick="window.print()">Print or save as PDF</button></body></html>`;
+      const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Backlog recovery decision brief</title><style>body{font:15px/1.5 Arial,sans-serif;color:#15212b;max-width:980px;margin:40px auto;padding:0 28px}header{border-bottom:3px solid #b99656;padding-bottom:22px;margin-bottom:28px}.eyebrow{letter-spacing:.12em;text-transform:uppercase;color:#806532;font-size:12px}h1{font:42px/1.05 Georgia,serif;margin:8px 0}.status{display:inline-block;padding:6px 10px;border:1px solid #b99656;border-radius:99px}section{margin:28px 0}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.metric{border:1px solid #d8d4ca;padding:16px}.metric strong{display:block;font-size:22px}svg{width:100%;height:auto;background:#f7f5ef;border:1px solid #d8d4ca}table{border-collapse:collapse;width:100%}th,td{text-align:left;border-bottom:1px solid #ddd;padding:8px}th{width:52%}.boundary{padding:14px;border-left:3px solid #b99656;background:#f7f5ef;color:#46515a}.small{font-size:12px;color:#5d666d;word-break:break-all}@media print{body{margin:0}.no-print{display:none}}@media(max-width:700px){.metrics{grid-template-columns:1fr 1fr}}</style></head><body><header><div class="eyebrow">Luna Sol Group · ${MODEL_VERSION}</div><h1>Recovery-plan reality check</h1><p>${escapeHtml(scenario.unitLabel)} · ${escapeHtml(scenario.operatingVolatility)} volatility · Generated ${escapeHtml(createdAt.toLocaleString())}</p><span class="status">${escapeHtml(model.fragilityStatus)}</span></header><section><h2>${escapeHtml(riskNarrative)}</h2><p>${escapeHtml(fragilityCopy)}</p></section><section class="metrics"><div class="metric">Median · P50<strong>${escapeHtml(formatRiskWeek(risk.p50Week))}</strong></div><div class="metric">Four-in-five · P80<strong>${escapeHtml(formatRiskWeek(risk.p80Week))}</strong></div><div class="metric">Conservative · P95<strong>${escapeHtml(formatRiskWeek(risk.p95Week))}</strong></div><div class="metric">Miss target window<strong>${escapeHtml(formatNumber(risk.missTargetPercent, risk.missTargetPercent < 10 ? 1 : 0))}%</strong></div></section><section><h2>Recovery-risk fan</h2><svg viewBox="0 0 ${chart.width} ${chart.height}" role="img" aria-label="Simulated backlog recovery risk"><polygon points="${chartBand}" fill="#b99656" opacity=".18"/><line x1="${chart.left}" y1="${chart.y(scenario.targetBacklog)}" x2="${chart.width - chart.right}" y2="${chart.y(scenario.targetBacklog)}" stroke="#638075" stroke-dasharray="6 5"/><polyline points="${chartRequired}" fill="none" stroke="#7c8790" stroke-width="2" stroke-dasharray="5 5"/><polyline points="${chartBase}" fill="none" stroke="#6b7680" stroke-width="2"/><polyline points="${chartMedian}" fill="none" stroke="#142a3b" stroke-width="4"/><text x="${chart.left}" y="${chart.height - 12}" font-size="12">Week 0</text><text x="${chart.width - chart.right - 64}" y="${chart.height - 12}" font-size="12">Week ${chart.horizon}</text></svg><p class="small">Bold: median simulated path · band: P10–P90 outcomes · thin: average-input path · dashed: path required to hit leadership's target window · green: control threshold.</p></section>${costSection}<section><h2>Operating assumptions</h2><table><tr><th>Queue label</th><td>${escapeHtml(scenario.unitLabel)}</td></tr><tr><th>Operating volatility</th><td>${escapeHtml(scenario.operatingVolatility)} · CV ${Math.round(risk.cv * 100)}%</td></tr>${rows}</table></section><section><h2>Method and boundary</h2><p>Effective throughput = rated capacity × utilization × productivity lift × quality yield × aging factor + net surge output. The risk view runs ${risk.trials.toLocaleString()} reproducible weekly trials with independent, zero-truncated variation around inbound and effective output. P50, P80, and P95 are scenario percentiles, not statistical confidence intervals.</p><p class="boundary"><strong>Model boundary:</strong> The simulation does not fit historical data or model seasonality, correlation, service-time distributions, congestion, or structural breaks. Validate assumptions with direct observation, operating data, frontline evidence, and financial owners before acting. Generated locally; no connection to client data.</p><p class="small">Portable scenario: ${escapeHtml(scenarioUrl.toString())}</p></section><button class="no-print" onclick="window.print()">Print or save as PDF</button></body></html>`;
       const blob = new Blob([html], { type: "text/html;charset=utf-8" });
       const href = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -414,6 +494,8 @@ export function BacklogCalculator() {
     `${formatUnits(scenario.currentBacklog, scenario.unitLabel)} in queue; ${formatUnits(scenario.targetBacklog, scenario.unitLabel)} control threshold`,
     `${formatRate(scenario.weeklyInbound, scenario.unitLabel)} inbound; ${formatRate(model.effectiveThroughput, scenario.unitLabel)} effective output`,
     `${model.status}; ${Number.isFinite(model.weeksToTarget) ? `${formatNumber(model.weeksToTarget, 1)} modeled / ${roundFullWeeks(model.weeksToTarget)} full weeks` : "no recovery at current inputs"}`,
+    `${scenario.operatingVolatility} volatility; P50 ${formatRiskWeek(risk.p50Week)}, P80 ${formatRiskWeek(risk.p80Week)}, ${formatNumber(risk.missTargetPercent, risk.missTargetPercent < 10 ? 1 : 0)}% miss target`,
+    `${model.fragilityStatus}; ${formatNumber(model.stressTolerancePercent, 1)}% throughput tolerance`,
     scenario.costPerUnitWeek > 0 ? `${formatCurrency(model.monthlyDelayExposure)}/month modeled excess-backlog exposure` : "No dollar assumption supplied",
   ];
 
@@ -433,12 +515,15 @@ export function BacklogCalculator() {
       `Utilization: ${scenario.utilization}% · Rework: ${scenario.rework}% · Aging mix: ${scenario.agingMix}%`,
       `Net surge output: ${formatRate(scenario.surgeCapacity, scenario.unitLabel)} · Productivity gain: ${scenario.automationGain}%`,
       `Target window: ${scenario.targetWeeks} weeks`,
+      `Operating volatility: ${scenario.operatingVolatility} (CV ${Math.round(risk.cv * 100)}%)`,
       scenario.costPerUnitWeek > 0 ? `Estimated cost per unit-week: ${formatCurrency(scenario.costPerUnitWeek)}` : "Cost per unit-week: not supplied",
       "",
       `Modeled net burn: ${formatRate(model.operatingNetBurn, scenario.unitLabel)} (${model.status})`,
       `Modeled weeks to target: ${Number.isFinite(model.weeksToTarget) ? `${formatNumber(model.weeksToTarget, 1)} exact / ${roundFullWeeks(model.weeksToTarget)} full weeks` : "no recovery at current inputs"}`,
       `Effective-output gap vs. target window: ${formatRate(model.effectiveCapacityGap, scenario.unitLabel)}`,
       `Sensitivity: ${sensitivityLabel}`,
+      `Risk simulation: P50 ${formatRiskWeek(risk.p50Week)} · P80 ${formatRiskWeek(risk.p80Week)} · P95 ${formatRiskWeek(risk.p95Week)} · ${formatNumber(risk.missTargetPercent, risk.missTargetPercent < 10 ? 1 : 0)}% miss target`,
+      `Fragility: ${model.fragilityStatus} · ${formatNumber(model.stressTolerancePercent, 1)}% throughput tolerance${Number.isFinite(model.amplificationFactor) ? ` · ${formatNumber(model.amplificationFactor, 1)}× amplification` : ""}`,
       scenario.costPerUnitWeek > 0 ? `Monthly excess-backlog exposure: ${formatCurrency(model.monthlyDelayExposure)}` : "",
       "",
       String(data.problem || ""),
@@ -495,6 +580,26 @@ export function BacklogCalculator() {
             ))}
           </div>
         </div>
+
+        <fieldset className="backlog-volatility-control">
+          <legend>How much does weekly demand and output move?</legend>
+          <p>Used only for the recovery-risk simulation. Both demand and effective output vary independently around the averages above.</p>
+          <div>
+            {volatilityOptions.map((option) => (
+              <button
+                type="button"
+                key={option.id}
+                aria-pressed={scenario.operatingVolatility === option.id}
+                onClick={() => {
+                  update("operatingVolatility", option.id);
+                  trackProductEvent("input_changed", { input: "operatingVolatility", control: "button", level: option.id, model_version: MODEL_VERSION });
+                }}
+              >
+                <strong>{option.label}</strong><span>{option.description}</span>
+              </button>
+            ))}
+          </div>
+        </fieldset>
 
         <div className="twin-input twin-input-text">
           <label htmlFor="backlog-unit"><strong>What are you tracking?</strong></label>
@@ -566,7 +671,7 @@ export function BacklogCalculator() {
         )}
       </section>
 
-      <section className="twin-output" aria-labelledby="modeled-path-title" aria-live="polite">
+      <section className="twin-output" aria-labelledby="modeled-path-title">
         <div className="twin-panel-heading">
           <h3 id="modeled-path-title">02 · Modeled operating path</h3>
           <b className={`twin-status twin-status-${model.statusKey}`}>{model.status}</b>
@@ -578,19 +683,34 @@ export function BacklogCalculator() {
           <p>Effective output {formatRate(model.effectiveThroughput, scenario.unitLabel)} against {formatRate(scenario.weeklyInbound, scenario.unitLabel)} inbound.</p>
         </div>
 
+        <div className={`backlog-risk-summary risk-${model.fragilityKey}`}>
+          <header>
+            <div><span>Recovery plan under {scenario.operatingVolatility} volatility</span><strong>{riskNarrative}</strong></div>
+            <b>{model.fragilityStatus}</b>
+          </header>
+          <dl>
+            <div><dt>Median · P50</dt><dd>{formatRiskWeek(risk.p50Week)}</dd></div>
+            <div><dt>Four-in-five · P80</dt><dd>{formatRiskWeek(risk.p80Week)}</dd></div>
+            <div><dt>Conservative · P95</dt><dd>{formatRiskWeek(risk.p95Week)}</dd></div>
+            <div><dt>Miss target window</dt><dd>{formatNumber(risk.missTargetPercent, risk.missTargetPercent < 10 ? 1 : 0)}%</dd></div>
+          </dl>
+          <p>{fragilityCopy}</p>
+        </div>
+
         <div className="backlog-chart-card">
           <div className="backlog-chart-head">
-            <div><strong>Backlog burn-down</strong><span>Base path, required path, and throughput sensitivity</span></div>
+            <div><strong>Recovery-risk fan</strong><span>{risk.trials.toLocaleString()} weekly simulations · P10–P90 outcomes</span></div>
             <span>0–{chart.horizon} weeks</span>
           </div>
           <svg className="backlog-chart" viewBox={`0 0 ${chart.width} ${chart.height}`} role="img" aria-labelledby="backlog-chart-title backlog-chart-desc">
-            <title id="backlog-chart-title">{`Modeled backlog trajectory over ${chart.horizon} weeks`}</title>
-            <desc id="backlog-chart-desc">The primary line shows the current scenario, the shaded band varies effective throughput by plus or minus twelve percent, the dashed line shows the path required to meet the target window, and the horizontal line marks the control threshold.</desc>
+            <title id="backlog-chart-title">{`Simulated backlog recovery risk over ${chart.horizon} weeks`}</title>
+            <desc id="backlog-chart-desc">The shaded fan contains the middle eighty percent of simulated backlog paths, the bright line shows the median simulated path, the thin line shows the average-input path, the dashed line shows the path required to meet the target window, and the horizontal line marks the control threshold.</desc>
             <line x1={chart.left} y1={chart.top} x2={chart.left} y2={chart.height - chart.bottom} className="backlog-axis" />
             <line x1={chart.left} y1={chart.height - chart.bottom} x2={chart.width - chart.right} y2={chart.height - chart.bottom} className="backlog-axis" />
             <line x1={chart.left} y1={chart.y(scenario.targetBacklog)} x2={chart.width - chart.right} y2={chart.y(scenario.targetBacklog)} className="backlog-threshold-line" />
-            <polygon points={chart.bandPoints} className="backlog-sensitivity-band" />
+            <polygon points={chart.bandPoints} className="backlog-risk-band" />
             <polyline points={chart.requiredPoints} className="backlog-required-line" />
+            <polyline points={chart.medianPoints} className="backlog-median-line" />
             <polyline points={chart.basePoints} className="backlog-base-line" />
             <circle cx={chart.x(0)} cy={chart.y(scenario.currentBacklog)} r="5" className="backlog-chart-point" />
             <text x={chart.left - 8} y={chart.top + 5} textAnchor="end" className="backlog-axis-label">{formatNumber(chart.yMax, 0)}</text>
@@ -598,15 +718,15 @@ export function BacklogCalculator() {
             <text x={chart.left} y={chart.height - 13} className="backlog-axis-label">Week 0</text>
             <text x={chart.width - chart.right} y={chart.height - 13} textAnchor="end" className="backlog-axis-label">Week {chart.horizon}</text>
           </svg>
-          <div className="backlog-chart-legend" aria-hidden="true"><span className="base">Modeled path</span><span className="band">±12% throughput</span><span className="required">Required path</span><span className="threshold">Control threshold</span></div>
-          {chart.horizon === 156 && <p className="backlog-chart-limit">Chart shown through week 156. Exact modeled outputs remain unchanged.</p>}
+          <div className="backlog-chart-legend" aria-hidden="true"><span className="median">Median simulation</span><span className="risk-band">P10–P90 fan</span><span className="base">Average-input path</span><span className="required">Required path</span><span className="threshold">Control threshold</span></div>
+          {risk.noRecoveryPercent > 0 && <p className="backlog-chart-limit">{formatNumber(risk.noRecoveryPercent, risk.noRecoveryPercent < 10 ? 1 : 0)}% of simulated paths do not reach the threshold inside the 104-week horizon.</p>}
         </div>
 
         <div className="twin-output-grid">
-          <div><span>Weeks to threshold</span><strong>{Number.isFinite(model.weeksToTarget) ? roundFullWeeks(model.weeksToTarget) : "No recovery"}</strong><small>{model.alreadyControlled ? Number.isFinite(model.weeksToBreach) ? `Below threshold now; breach risk in ${roundFullWeeks(model.weeksToBreach)} wk` : "Already at or below the threshold" : Number.isFinite(model.weeksToTarget) ? `${formatNumber(model.weeksToTarget, 1)} modeled · rounded to full weeks` : "effective output does not exceed inbound"}</small></div>
+          <div><span>Average-input recovery</span><strong>{Number.isFinite(model.weeksToTarget) ? `${roundFullWeeks(model.weeksToTarget)} wk` : "No recovery"}</strong><small>{model.alreadyControlled ? Number.isFinite(model.weeksToBreach) ? `Below threshold now; breach risk in ${roundFullWeeks(model.weeksToBreach)} wk` : "Already at or below the threshold" : Number.isFinite(model.weeksToTarget) ? `${formatNumber(model.weeksToTarget, 1)} exact · this is not the risk-adjusted commitment` : "effective output does not exceed inbound"}</small></div>
           <div><span>Required throughput</span><strong>{formatRate(model.requiredThroughput, scenario.unitLabel)}</strong><small>To reach {formatUnits(scenario.targetBacklog, scenario.unitLabel)} in {scenario.targetWeeks} weeks</small></div>
           <div><span>Effective-output gap</span><strong>{formatRate(model.effectiveCapacityGap, scenario.unitLabel)}</strong><small>{model.effectiveCapacityGap > RECOVERY_EPSILON ? Number.isFinite(model.incrementalRatedCapacity) ? `${formatRate(model.incrementalRatedCapacity, scenario.unitLabel)} additional rated capacity at current yield` : "Rated capacity cannot close the gap while usable yield is zero" : "Current scenario supports the target path"}</small></div>
-          <div><span>Sensitivity range</span><strong>{sensitivityLabel}</strong><small>±12% variation on effective throughput</small></div>
+          <div><span>Margin of safety</span><strong>{formatNumber(model.marginOfSafety * 100, 1)}%</strong><small>{Number.isFinite(model.amplificationFactor) ? `${formatNumber(model.stressTolerancePercent, 1)}% throughput tolerance · ${formatNumber(model.amplificationFactor, 1)}× net-burn amplification` : "No average recovery margin"}</small></div>
         </div>
 
         {scenario.costPerUnitWeek > 0 && (
@@ -628,7 +748,7 @@ export function BacklogCalculator() {
           </p>
         </div>
 
-        <p className="twin-disclaimer"><strong>Model boundary:</strong> A deterministic queue-flow scenario, not a statistical forecast. Effective throughput applies utilization, productivity gain, rework loss, a fixed 8% penalty to the aged-work share, and net surge output. The chart samples the same equations; it is not a prediction. Validate every assumption with operating evidence before acting. No connection to client data.</p>
+        <p className="twin-disclaimer"><strong>Model boundary:</strong> The average-input path is deterministic. The risk view runs 1,000 reproducible weekly trials with independent, zero-truncated variation around inbound and effective output; it is a scenario distribution, not a fitted forecast or confidence interval. It does not model seasonality, correlation, service-time distributions, congestion, or structural breaks. Validate every assumption with operating evidence before acting. No connection to client data.</p>
 
         {model.backlogGap > 0 && !Number.isFinite(model.weeksToTarget) && (
           <aside className="backlog-escalation" aria-labelledby="capacity-gap-heading">
