@@ -65,7 +65,7 @@ export function MegaNavigation() {
           );
         })}
         <Link className={pathname.startsWith("/work") ? "is-current" : undefined} href="/work" prefetch={false}>Case studies</Link>
-        <Link className={pathname === "/about" ? "is-current" : undefined} href="/about" prefetch={false}>Principal</Link>
+        <Link className={pathname.startsWith("/about") ? "is-current" : undefined} href="/about" prefetch={false}>About</Link>
       </div>
 
       {megaNavigation.map((section) => {

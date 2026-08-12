@@ -12,7 +12,7 @@ export function SiteHeader() {
     <header className="site-header rebuild-header">
       <div className="rebuild-utility-rail">
         <div className="shell rebuild-utility-shell">
-          <p><span aria-hidden="true" /> Founder-led operating transformation</p>
+          <p>Management consulting</p>
           <nav aria-label="Utility navigation">
             {utilityNavigation.map((item) => item.external ? (
               <a href={item.href} key={item.href} target="_blank" rel="noreferrer">
@@ -34,9 +34,9 @@ export function SiteHeader() {
 
       <div className="shell rebuild-core-shell">
         <Link className="rebuild-wordmark" href="/" aria-label="Luna Sol Group home" prefetch={false}>
-          <span className="rebuild-wordmark-name">Luna Sol</span>
+          <span className="rebuild-wordmark-name">LUNA SOL</span>
           <span className="rebuild-wordmark-group">Group</span>
-          <small>Management consulting</small>
+          <small>Operator-led transformation</small>
         </Link>
 
         <MegaNavigation />
@@ -49,7 +49,7 @@ export function SiteHeader() {
             target={isExternalCalendar ? "_blank" : undefined}
             rel={isExternalCalendar ? "noreferrer" : undefined}
           >
-            Start a conversation <span aria-hidden="true">↗</span>
+            Get in touch <span aria-hidden="true">↗</span>
           </a>
           <MobileNav />
         </div>

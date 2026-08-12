@@ -10,6 +10,7 @@ import "./styles/consulting.css";
 import "./styles/rebuild-shell.css";
 import "./styles/rebuild-home.css";
 import "./styles/rebuild-pages.css";
+import "./styles/rebuild-v2.css";
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://luna-sol-group.rmiller62785.chatgpt.site";
 const contactEmail = process.env.NEXT_PUBLIC_CONTACT_EMAIL || "Rmiller62785@gmail.com";
