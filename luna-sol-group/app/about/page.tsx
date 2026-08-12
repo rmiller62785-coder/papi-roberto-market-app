@@ -1,24 +1,35 @@
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
-import { SiteFooter } from "../components/SiteFooter";
-import { SiteHeader } from "../components/SiteHeader";
+import { SiteFooter } from "@/app/components/SiteFooter";
+import { SiteHeader } from "@/app/components/SiteHeader";
 
 export const metadata: Metadata = {
-  title: "Ryan Miller | Founder and Principal",
-  description: "Meet Ryan Miller, EMBA—founder of Luna Sol Group and former Amazon and Walmart operator working across logistics, retail, mobility, and transformation.",
+  title: "About Luna Sol Group",
+  description: "A founder-led management consulting firm for consequential operating decisions in logistics, retail, mobility, and investor-backed businesses.",
   alternates: { canonical: "/about" },
 };
+
+const principles = [
+  { index: "01", title: "Operating truth before prescription", copy: "Reconcile the dashboard with workflow evidence and frontline reality before recommending action." },
+  { index: "02", title: "Decisions before activity", copy: "Define what leadership must decide, the evidence required, and the consequence of delay." },
+  { index: "03", title: "Mechanisms before theater", copy: "Build workflows, controls, ownership, and cadence that operators can use under pressure." },
+  { index: "04", title: "Capability before dependence", copy: "Leave the operating team able to run the system without permanent reliance on the advisor." },
+];
 
 export default function AboutPage() {
   return (
     <>
       <SiteHeader />
-      <main id="main" className="about-page">
-        <section className="about-hero"><div className="shell about-hero-grid"><figure><Image src="/ryan-miller-stage.png" width={800} height={800} priority sizes="(max-width: 760px) 100vw, 45vw" alt="Ryan Miller, founder and principal of Luna Sol Group, speaking on stage." /><figcaption>Ryan Miller · Founder and Principal</figcaption></figure><div><span className="kicker">Operator first · Advisor second</span><h1>Built inside the work.</h1><p className="about-lead">Ryan has operated inside two of the world’s most demanding physical networks, then translated that experience into a founder-led advisory model for companies whose growth has outrun their operating system.</p><p>His work spans global last-mile transformation, network economics, delivery-partner architecture, capacity planning, customer experience, AI-enabled operations, and large-scale frontline execution.</p><a className="button button-light" href="https://www.linkedin.com/in/ryan-miller-90b1181aa/" target="_blank" rel="noreferrer">View LinkedIn profile ↗</a></div></div></section>
-        <section className="section paper about-record-section"><div className="shell"><header className="editorial-heading"><div><span className="section-label">Operator record</span><h2>The through-line is operating control.</h2></div><p>Across retail, last mile, mobility, and advisory work, the recurring problem is the same: turn ambiguous signals into a system people can execute under pressure.</p></header><div className="about-record-grid"><article><span>Amazon</span><strong>Global last-mile leadership</strong><p>Operating-system, delivery-partner, capacity, network-economics, and transformation work across North America, Europe, and Japan.</p><Link href="/experience/amazon" prefetch={false}>Read the retrospective →</Link></article><article><span>Walmart</span><strong>Nearly a decade in retail operations</strong><p>Frontline execution where labor, inventory, customer promise, safety, and operating cadence converge every day.</p></article><article><span>Luna Sol Group</span><strong>Founder-led advisory</strong><p>Embedded operating transformation for consequential decisions, with evidence boundaries and operator ownership built into the work.</p><Link href="/work" prefetch={false}>See the advisory work →</Link></article></div></div></section>
-        <section className="section about-principles-section"><div className="shell case-two-column"><div className="sticky-intro"><span className="section-label light">Working principles</span><h2>How Ryan shows up.</h2></div><ol className="about-principles"><li><b>01</b><div><strong>Tell the operating truth.</strong><p>Reconcile the dashboard with workflow evidence and frontline reality before prescribing action.</p></div></li><li><b>02</b><div><strong>Carry the decision into execution.</strong><p>The recommendation is incomplete until owners, controls, and cadence exist.</p></div></li><li><b>03</b><div><strong>Leave capability behind.</strong><p>The operating team should be able to run the mechanism without dependence on the consultant.</p></div></li></ol></div></section>
-        <section className="section paper about-close-section"><div className="shell narrow-shell"><span className="section-label">Founder-led by design</span><h2>The person you meet is the person accountable for the work.</h2><p>Luna Sol stays deliberately focused: select engagements, direct principal involvement, and enough proximity to the operation to make the recommendation executable.</p><Link className="button" href="/#contact" prefetch={false}>Start a confidential conversation →</Link></div></section>
+      <main id="main" className="depth-page">
+        <section className="firm-hero depth-hero-dark"><div className="shell firm-hero-grid"><div><span className="depth-eyebrow">About Luna Sol Group</span><h1>A focused firm for <em>consequential operating decisions.</em></h1></div><div><p>Luna Sol Group is a founder-led management consulting firm that helps executives diagnose operating constraints, design scalable systems, and carry transformation into implementation.</p><p>The firm was founded in 2023 and has operated as a full-time advisory practice since January 2026.</p></div></div></section>
+
+        <section className="firm-thesis"><div className="shell firm-thesis-grid"><span>Why Luna Sol exists</span><h2>Recommendations do not create value. Operating systems do.</h2><div><p>The firm is built for the gap between an approved idea and an operation capable of delivering it. Engagements begin with the decision, make the evidence boundary explicit, and finish with accountable mechanisms the team can sustain.</p><Link href="/approach" prefetch={false}>Explore the decision system ↗</Link></div></div></section>
+
+        <section className="firm-principles"><div className="shell"><header className="depth-section-head"><div><span>Operating principles</span><h2>How the firm works.</h2></div><p>These principles govern the engagement posture, the methods, and the way evidence is presented on this site.</p></header><div className="firm-principles-grid">{principles.map((principle) => <article key={principle.index}><span>{principle.index}</span><h3>{principle.title}</h3><p>{principle.copy}</p></article>)}</div></div></section>
+
+        <section className="firm-boundary"><div className="shell firm-boundary-grid"><div><span>Evidence standard</span><h2>Client work, public context, and prior experience stay separate.</h2></div><div><p>Case-study pages label Luna Sol&apos;s scope separately from public company outcomes. Ryan Miller&apos;s Amazon and Walmart record is presented as prior operating experience—not as Luna Sol client work.</p><p>No testimonial, client result, fund relationship, or personal attribution is implied where the underlying evidence does not support it.</p></div></div></section>
+
+        <section className="firm-principal-link"><div className="shell"><div><span>Founder and principal</span><h2>Senior judgment stays close to the operating decision.</h2><p>Learn about Ryan Miller&apos;s operating background, selected prior experience, and founder-led engagement posture.</p></div><Link className="button" href="/about/ryan-miller" prefetch={false}>Meet Ryan Miller →</Link></div></section>
       </main>
       <SiteFooter />
     </>

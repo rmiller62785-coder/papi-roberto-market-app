@@ -87,7 +87,7 @@ export function AssessmentStory() {
 
   return (
     <div className="motm-story-grid">
-      <aside className="motm-story-console" aria-live="polite">
+      <aside className="motm-story-console" aria-hidden="true">
         <div className="motm-console-top"><span>Operational assessment</span><b>0{active + 1} / 06</b></div>
         <div className="motm-console-water" aria-hidden="true"><i /><i /><i /><i /></div>
         <span className="motm-console-label">{current.label}</span>
@@ -102,9 +102,6 @@ export function AssessmentStory() {
             data-index={index}
             key={step.label}
             ref={(node) => { cards.current[index] = node; }}
-            onFocus={() => setActive(index)}
-            onMouseEnter={() => setActive(index)}
-            tabIndex={0}
           >
             <div><b>0{index + 1}</b><span>{step.label}</span></div>
             <h3>{step.title}</h3>
@@ -162,35 +159,16 @@ export function BeforeAfterFlow() {
   );
 }
 
-function AnimatedMetric({ value, suffix, label }: { value: number; suffix?: string; label: string }) {
-  const [display, setDisplay] = useState(0);
-  const target = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(([entry]) => {
-      if (!entry.isIntersecting) return;
-      const started = performance.now();
-      const animate = (now: number) => {
-        const progress = Math.min((now - started) / 900, 1);
-        setDisplay(Math.round(value * (1 - Math.pow(1 - progress, 3))));
-        if (progress < 1) requestAnimationFrame(animate);
-      };
-      requestAnimationFrame(animate);
-      observer.disconnect();
-    }, { threshold: 0.45 });
-    if (target.current) observer.observe(target.current);
-    return () => observer.disconnect();
-  }, [value]);
-
-  return <div ref={target}><strong>{display}{suffix}</strong><span>{label}</span></div>;
+function AssessmentMetric({ value, suffix, label }: { value: number; suffix?: string; label: string }) {
+  return <div><strong>{value}{suffix}</strong><span>{label}</span></div>;
 }
 
 export function AssessmentMetrics() {
   return (
     <div className="motm-metrics" aria-label="Assessment scope metrics">
-      <AnimatedMetric value={8} label="guest-flow stages" />
-      <AnimatedMetric value={6} label="supported contributions" />
-      <AnimatedMetric value={3} label="public evidence links" />
+      <AssessmentMetric value={8} label="guest-flow stages" />
+      <AssessmentMetric value={6} label="supported contributions" />
+      <AssessmentMetric value={3} label="public evidence links" />
     </div>
   );
 }

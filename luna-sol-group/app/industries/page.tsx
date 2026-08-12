@@ -1,18 +1,34 @@
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
-import { SiteFooter } from "../components/SiteFooter";
-import { SiteHeader } from "../components/SiteHeader";
+import { SiteFooter } from "@/app/components/SiteFooter";
+import { SiteHeader } from "@/app/components/SiteHeader";
+import { industries } from "@/app/data/expertise";
 
-const industries = [
-  { n: "01", title: "Logistics and last mile", lead: "Turn network complexity into controlled service, capacity, and unit economics.", problems: ["Capacity and backlog recovery", "Service and delivery-loss reduction", "Network operating model", "Frontline mechanisms and adoption"], record: "Amazon · PSA", href: "/work/psa" },
-  { n: "02", title: "Mobility and transportation", lead: "Scale regulated transportation without separating safety, dispatch, compliance, and customer promise.", problems: ["Dispatch architecture", "Compliance-by-design", "Incident and risk systems", "Multi-market operating control"], record: "HopSkipDrive", href: "/work/hopskipdrive" },
-  { n: "03", title: "Consumer and retail", lead: "Improve physical flow where labor, inventory, demand, and the customer experience converge.", problems: ["Guest and customer flow", "Labor and capacity planning", "Operating cadence", "Experience-enabling technology"], record: "Walmart · Maid of the Mist", href: "/work/maid-of-the-mist" },
-  { n: "04", title: "Investor-backed businesses", lead: "Translate the value-creation thesis into an operating architecture the management team can execute.", problems: ["Operational diligence", "Value-creation roadmap", "Transformation control", "Benefits and risk verification"], record: "Principal-led advisory", href: "/capabilities" },
-];
-
-export const metadata: Metadata = { title: "Industries | Operating Transformation Expertise", description: "Luna Sol Group industry expertise across logistics, mobility, retail, consumer operations, and investor-backed businesses.", alternates: { canonical: "/industries" } };
+export const metadata: Metadata = {
+  title: "Industries | Operating Transformation Expertise",
+  description: "Focused operating expertise across logistics, mobility, consumer operations, and investor-backed businesses.",
+  alternates: { canonical: "/industries" },
+};
 
 export default function IndustriesPage() {
-  return <><SiteHeader /><main id="main" className="industry-page"><section className="subpage-hero industry-hero"><div className="shell narrow-shell"><span className="kicker">Industries · Operator depth</span><h1>Expertise built where operations become <em>the customer promise.</em></h1><p>Luna Sol works in environments where physical flow, frontline execution, technology, risk, and economics must operate as one system.</p></div></section><section className="section paper industry-index"><div className="shell"><header className="consulting-section-head"><div><span>Industry focus</span><h2>Four operating environments.</h2></div><p>Each focus area is grounded in Ryan Miller’s operating record, completed advisory work, or clearly labeled transformation expertise.</p></header><div className="industry-ledger">{industries.map((item) => <article key={item.n}><header><span>{item.n}</span><h2>{item.title}</h2></header><div><p className="industry-lead">{item.lead}</p><ul>{item.problems.map((problem) => <li key={problem}>{problem}</li>)}</ul></div><aside><span>Relevant record</span><strong>{item.record}</strong><Link href={item.href} prefetch={false}>Explore evidence →</Link></aside></article>)}</div></div></section><section className="industry-proof"><div className="shell industry-proof-grid"><div><span>Operating experience</span><h2>Depth before breadth.</h2><p>The firm does not claim a universal industry footprint. It leads where the operating record is credible and brings in specialist support when the decision requires it.</p></div><div className="industry-logo-wall"><a href="https://www.amazon.com/" target="_blank" rel="noreferrer"><Image src="/amazon-logo.svg" width={603} height={182} alt="Amazon" /></a><a href="https://www.walmart.com/" target="_blank" rel="noreferrer"><Image src="/walmart-logo.svg" width={1000} height={190} alt="Walmart" /></a><a href="https://www.psacard.com/" target="_blank" rel="noreferrer"><Image src="/psa-logo.png" width={830} height={338} alt="PSA" /></a><a href="https://www.hopskipdrive.com/" target="_blank" rel="noreferrer"><Image src="/hopskipdrive-logo.svg" width={256} height={256} alt="HopSkipDrive" /></a><a href="https://www.maidofthemist.com/" target="_blank" rel="noreferrer"><Image src="/maid-of-the-mist-logo.svg" width={229} height={154} alt="Maid of the Mist" /></a></div></div></section><section className="section consulting-contact"><div className="shell industry-close"><span>Bring the operating decision</span><h2>Start with the mechanism that must change.</h2><p>The first conversation defines what is at stake, what evidence exists, and whether Luna Sol has the right depth for the problem.</p><Link className="button button-light" href="/#contact" prefetch={false}>Get in touch →</Link></div></section></main><SiteFooter /></>;
+  return (
+    <>
+      <SiteHeader />
+      <main id="main" className="depth-page">
+        <section className="depth-hero depth-hero-navy">
+          <div className="shell depth-hero-grid">
+            <div><span className="depth-eyebrow">Industries · Operator depth</span><h1>Built where operations become <em>the customer promise.</em></h1></div>
+            <div className="depth-hero-aside"><p>Luna Sol works in environments where physical flow, frontline execution, technology, risk, and economics must operate as one system.</p><dl><div><dt>Posture</dt><dd>Depth before breadth</dd></div><div><dt>Boundary</dt><dd>Evidence basis labeled by page</dd></div></dl></div>
+          </div>
+        </section>
+
+        <section className="depth-index-section">
+          <div className="shell"><header className="depth-section-head"><div><span>Industry focus</span><h2>Four operating environments.</h2></div><p>Each focus area is grounded in completed advisory work, prior operating experience, or a clearly labeled Luna Sol method proposition.</p></header><div className="depth-index-grid">{industries.map((item) => <Link className="depth-index-card" href={`/industries/${item.slug}`} key={item.slug} prefetch={false}><span>{item.index}</span><div><h2>{item.title}</h2><p>{item.promise}</p></div><strong>Explore industry <i aria-hidden="true">↗</i></strong></Link>)}</div></div>
+        </section>
+
+        <section className="depth-method-band"><div className="shell depth-method-grid"><div><span>Operating depth</span><h2>Lead where the record is credible.</h2></div><div><p>Luna Sol does not claim a universal industry footprint. The firm works where its operating pattern recognition is relevant and identifies when a decision requires additional specialist depth.</p><Link className="button button-light" href="/contact" prefetch={false}>Discuss the operating decision →</Link></div></div></section>
+      </main>
+      <SiteFooter />
+    </>
+  );
 }

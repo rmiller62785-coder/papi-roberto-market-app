@@ -7,6 +7,9 @@ import "./styles/editorial.css";
 import "./styles/products.css";
 import "./styles/motion.css";
 import "./styles/consulting.css";
+import "./styles/rebuild-shell.css";
+import "./styles/rebuild-home.css";
+import "./styles/rebuild-pages.css";
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://luna-sol-group.rmiller62785.chatgpt.site";
 const contactEmail = process.env.NEXT_PUBLIC_CONTACT_EMAIL || "Rmiller62785@gmail.com";
@@ -24,15 +27,15 @@ export const metadata: Metadata = {
     type: "website",
     url: siteUrl,
     siteName: "Luna Sol Group",
-    title: "Luna Sol Group | Operating Transformation",
-    description: "Find the operating constraint. Build the system that clears it.",
-    images: [{ url: "/og-consulting.png", width: 1200, height: 630, alt: "Luna Sol Group — turn operating pressure into durable performance" }],
+    title: "Luna Sol Group | Operator-Led Transformation",
+    description: "Operating decisions. Built to hold.",
+    images: [{ url: "/og-luna-sol-rebuild.png", width: 1730, height: 909, alt: "Luna Sol Group — operating decisions built to hold" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Luna Sol Group | Operating Transformation",
-    description: "Find the operating constraint. Build the system that clears it.",
-    images: ["/og-consulting.png"],
+    title: "Luna Sol Group | Operator-Led Transformation",
+    description: "Operating decisions. Built to hold.",
+    images: ["/og-luna-sol-rebuild.png"],
   },
   robots: { index: true, follow: true },
 };

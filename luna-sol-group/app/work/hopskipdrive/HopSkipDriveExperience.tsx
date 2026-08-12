@@ -94,7 +94,7 @@ export function TransformationStory() {
 
   return (
     <div className="hsd-story-grid">
-      <aside className="hsd-story-console" aria-live="polite">
+      <aside className="hsd-story-console" aria-hidden="true">
         <div className="hsd-console-top"><span>Transformation architecture</span><b>0{active + 1} / 06</b></div>
         <div className="hsd-console-orbit" aria-hidden="true"><i /><i /><i /></div>
         <span className="hsd-console-label">{current.label}</span>
@@ -111,9 +111,6 @@ export function TransformationStory() {
             data-index={index}
             key={step.label}
             ref={(node) => { cards.current[index] = node; }}
-            onFocus={() => setActive(index)}
-            onMouseEnter={() => setActive(index)}
-            tabIndex={0}
           >
             <div><b>0{index + 1}</b><span>{step.label}</span></div>
             <h3>{step.title}</h3>
@@ -158,15 +155,12 @@ export function MarketMap() {
       <div className="hsd-map-shell">
         <Image src="/us-map.svg" width={959} height={593} alt="Map of the United States with HopSkipDrive engagement coverage marked" />
         {markets.map((market, index) => (
-          <button
+          <span
             className={active === index ? "hsd-market-node active" : "hsd-market-node"}
             key={market.code}
-            type="button"
             style={{ left: `${market.x}%`, top: `${market.y}%` }}
-            onClick={() => setActive(index)}
-            aria-label={`Show ${market.label} coverage`}
-            aria-pressed={active === index}
-          ><span>{market.code}</span></button>
+            aria-hidden="true"
+          ><span>{market.code}</span></span>
         ))}
         <div className="hsd-map-readout" aria-live="polite">
           <span>Selected coverage</span>
@@ -183,35 +177,16 @@ export function MarketMap() {
   );
 }
 
-function AnimatedMetric({ value, suffix, label }: { value: number; suffix: string; label: string }) {
-  const [display, setDisplay] = useState(0);
-  const target = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(([entry]) => {
-      if (!entry.isIntersecting) return;
-      const started = performance.now();
-      const animate = (now: number) => {
-        const progress = Math.min((now - started) / 900, 1);
-        setDisplay(Math.round(value * (1 - Math.pow(1 - progress, 3))));
-        if (progress < 1) requestAnimationFrame(animate);
-      };
-      requestAnimationFrame(animate);
-      observer.disconnect();
-    }, { threshold: 0.45 });
-    if (target.current) observer.observe(target.current);
-    return () => observer.disconnect();
-  }, [value]);
-
-  return <div ref={target}><strong>{display}{suffix}</strong><span>{label}</span></div>;
+function EngagementMetric({ value, suffix, label }: { value: number; suffix: string; label: string }) {
+  return <div><strong>{value}{suffix}</strong><span>{label}</span></div>;
 }
 
 export function EngagementMetrics() {
   return (
     <div className="hsd-metrics" aria-label="Engagement scope metrics">
-      <AnimatedMetric value={30} suffix="+" label="metropolitan markets" />
-      <AnimatedMetric value={17} suffix="" label="coverage geographies" />
-      <AnimatedMetric value={10} suffix="" label="integrated workstreams" />
+      <EngagementMetric value={30} suffix="+" label="metropolitan markets" />
+      <EngagementMetric value={17} suffix="" label="coverage geographies" />
+      <EngagementMetric value={10} suffix="" label="integrated workstreams" />
     </div>
   );
 }

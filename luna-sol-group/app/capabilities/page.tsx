@@ -1,15 +1,53 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { SiteFooter } from "../components/SiteFooter";
-import { SiteHeader } from "../components/SiteHeader";
+import { SiteFooter } from "@/app/components/SiteFooter";
+import { SiteHeader } from "@/app/components/SiteHeader";
+import { capabilities } from "@/app/data/expertise";
 
-const capabilities = [
-  { id: "performance", n: "01", title: "Performance transformation", statement: "Resolve the operating mechanism behind unstable service, cost, quality, or throughput.", work: ["Constraint diagnostic and fact base", "Backlog and capacity recovery", "Labor, yield, and flow architecture", "Value-at-stake and countermeasure roadmap"], decision: "What is actually limiting performance, and what changes first?" },
-  { id: "operating-model", n: "02", title: "Operating model and scale", statement: "Build the system required to carry growth, regulation, and cross-functional complexity.", work: ["Current-state operating assessment", "Target operating model", "Decision rights, SOP, and RACI system", "Governance and implementation roadmap"], decision: "How must work, accountability, and control change for the next stage?" },
-  { id: "execution", n: "03", title: "Transformation execution", statement: "Create one control system for portfolio movement, risk, readiness, and realized value.", work: ["Transformation control office", "Portfolio and dependency management", "Launch and readiness gates", "Weekly business review and benefits control"], decision: "Which intervention, owner, and gate will move the result now?" },
-  { id: "digital", n: "04", title: "Digital operations", statement: "Convert operating requirements into practical decision products and technology-enabled workflows.", work: ["Technical and product requirements", "AI-enabled process design", "Executive control-tower products", "Adoption, governance, and human controls"], decision: "Where can technology create leverage without obscuring accountability?" },
-];
+export const metadata: Metadata = {
+  title: "Capabilities | Performance, Operating Model & Transformation",
+  description: "Operator-led capabilities in performance transformation, operating-model design, transformation execution, and digital operations.",
+  alternates: { canonical: "/capabilities" },
+};
 
-export const metadata: Metadata = { title: "Capabilities | Performance, Operating Model & Transformation", description: "Luna Sol Group capabilities in performance transformation, operating models, transformation execution, and digital operations.", alternates: { canonical: "/capabilities" } };
+export default function CapabilitiesPage() {
+  return (
+    <>
+      <SiteHeader />
+      <main id="main" className="depth-page">
+        <section className="depth-hero depth-hero-dark">
+          <div className="shell depth-hero-grid">
+            <div>
+              <span className="depth-eyebrow">Capabilities · From diagnosis to control</span>
+              <h1>Strategy becomes valuable when the operation can <em>run it.</em></h1>
+            </div>
+            <div className="depth-hero-aside">
+              <p>Luna Sol connects the executive decision to the operating mechanism, implementation path, and management system required to hold the result.</p>
+              <dl><div><dt>Entry point</dt><dd>The first unresolved decision</dd></div><div><dt>Exit condition</dt><dd>A mechanism the team can sustain</dd></div></dl>
+            </div>
+          </div>
+        </section>
 
-export default function CapabilitiesPage() { return <><SiteHeader /><main id="main" className="capabilities-v2"><section className="subpage-hero capability-v2-hero"><div className="shell narrow-shell"><span className="kicker">Capabilities · From diagnosis to control</span><h1>Strategy becomes valuable when the operation can <em>run it.</em></h1><p>Luna Sol connects the executive decision to the operating mechanism, implementation path, and management system required to hold the result.</p></div></section><section className="section paper capability-v2-index"><div className="shell"><header className="consulting-section-head"><div><span>Our capabilities</span><h2>One operating thread. Four entry points.</h2></div><p>Start at the first unresolved decision. Preserve what works, expose what does not, and build only the mechanisms the operation needs.</p></header><div className="capability-v2-ledger">{capabilities.map((item) => <article id={item.id} key={item.n}><header><span>{item.n}</span><h2>{item.title}</h2><p>{item.statement}</p></header><div><span>Selected work</span><ul>{item.work.map((entry) => <li key={entry}>{entry}</li>)}</ul></div><aside><span>Decision unlocked</span><strong>{item.decision}</strong></aside></article>)}</div></div></section><section className="capability-v2-method"><div className="shell capability-v2-method-grid"><div><span>Luna OS™</span><h2>Truth → Constraint → Architecture → Adoption → Control</h2></div><div><p>The method stays constant while the starting gate changes. Every phase produces an inspectable decision, an accountable owner, and a mechanism the operating team can continue without Luna Sol.</p><div><Link className="button button-light" href="/approach" prefetch={false}>Inspect the method →</Link><Link className="consulting-arrow-link" href="/tools" prefetch={false}>Use the decision products <span>↗</span></Link></div></div></div></section><section className="section paper capability-v2-close"><div className="shell industry-close"><span>Start with the decision</span><h2>What must be true for the operating commitment to hold?</h2><p>Bring the decision, the current evidence, and the consequence of getting it wrong.</p><Link className="button" href="/#contact" prefetch={false}>Get in touch →</Link></div></section></main><SiteFooter /></>; }
+        <section className="depth-index-section">
+          <div className="shell">
+            <header className="depth-section-head"><div><span>What we do</span><h2>One operating thread. Four entry points.</h2></div><p>Each capability has its own questions, work modules, decision outputs, and evidence boundary.</p></header>
+            <div className="depth-index-grid">
+              {capabilities.map((item) => (
+                <Link className="depth-index-card" href={`/capabilities/${item.slug}`} key={item.slug} prefetch={false}>
+                  <span>{item.index}</span>
+                  <div><h2>{item.title}</h2><p>{item.promise}</p></div>
+                  <strong>Explore capability <i aria-hidden="true">↗</i></strong>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="depth-method-band">
+          <div className="shell depth-method-grid"><div><span>Luna Sol decision system</span><h2>Truth → Constraint → Architecture → Adoption → Control</h2></div><div><p>The method remains constant while the starting point changes. Every phase should produce an inspectable decision, an accountable owner, and evidence of whether the mechanism works.</p><Link className="button button-light" href="/approach" prefetch={false}>Inspect the approach →</Link></div></div>
+        </section>
+      </main>
+      <SiteFooter />
+    </>
+  );
+}

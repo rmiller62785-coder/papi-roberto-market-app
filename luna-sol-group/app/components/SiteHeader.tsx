@@ -1,5 +1,7 @@
 import Link from "next/link";
-import { primaryNav } from "../content";
+import { utilityNavigation } from "../content";
+import { DecisionFinder } from "./DecisionFinder";
+import { MegaNavigation } from "./MegaNavigation";
 import { MobileNav } from "./MobileNav";
 
 export function SiteHeader() {
@@ -7,27 +9,50 @@ export function SiteHeader() {
   const isExternalCalendar = calendarUrl.startsWith("http");
 
   return (
-    <header className="site-header">
-      <div className="shell header-inner">
-        <Link className="brand" href="/" aria-label="Luna Sol Group home" prefetch={false}>
-          <span className="brand-mark" aria-hidden="true">LS</span>
-          <span>
-            <strong>Luna Sol Group</strong>
-            <small>Management consulting</small>
-          </span>
+    <header className="site-header rebuild-header">
+      <div className="rebuild-utility-rail">
+        <div className="shell rebuild-utility-shell">
+          <p><span aria-hidden="true" /> Founder-led operating transformation</p>
+          <nav aria-label="Utility navigation">
+            {utilityNavigation.map((item) => item.external ? (
+              <a href={item.href} key={item.href} target="_blank" rel="noreferrer">
+                {item.label} <span aria-hidden="true">↗</span>
+              </a>
+            ) : (
+              <Link href={item.href} key={item.href} prefetch={false}>{item.label}</Link>
+            ))}
+            <a
+              href={calendarUrl}
+              target={isExternalCalendar ? "_blank" : undefined}
+              rel={isExternalCalendar ? "noreferrer" : undefined}
+            >
+              Contact <span aria-hidden="true">↗</span>
+            </a>
+          </nav>
+        </div>
+      </div>
+
+      <div className="shell rebuild-core-shell">
+        <Link className="rebuild-wordmark" href="/" aria-label="Luna Sol Group home" prefetch={false}>
+          <span className="rebuild-wordmark-name">Luna Sol</span>
+          <span className="rebuild-wordmark-group">Group</span>
+          <small>Management consulting</small>
         </Link>
-        <nav className="desktop-nav" aria-label="Primary navigation">
-          {primaryNav.map((item) => <Link key={item.href} href={item.href} prefetch={false}>{item.label}</Link>)}
-        </nav>
-        <a
-          className="button button-small header-cta"
-          href={calendarUrl}
-          target={isExternalCalendar ? "_blank" : undefined}
-          rel={isExternalCalendar ? "noreferrer" : undefined}
-        >
-          Get in touch <span aria-hidden="true">↗</span>
-        </a>
-        <MobileNav />
+
+        <MegaNavigation />
+
+        <div className="rebuild-header-actions">
+          <DecisionFinder compact />
+          <a
+            className="rebuild-contact-link"
+            href={calendarUrl}
+            target={isExternalCalendar ? "_blank" : undefined}
+            rel={isExternalCalendar ? "noreferrer" : undefined}
+          >
+            Start a conversation <span aria-hidden="true">↗</span>
+          </a>
+          <MobileNav />
+        </div>
       </div>
     </header>
   );
