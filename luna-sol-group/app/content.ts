@@ -1,9 +1,10 @@
 export const primaryNav = [
-  { href: "/work", label: "Work" },
-  { href: "/capabilities", label: "What we solve" },
-  { href: "/tools", label: "Decision products" },
+  { href: "/capabilities", label: "Capabilities" },
+  { href: "/industries", label: "Industries" },
+  { href: "/work", label: "Case studies" },
   { href: "/insights", label: "Insights" },
-  { href: "/about", label: "About Ryan" },
+  { href: "/tools", label: "Operations Lab" },
+  { href: "/about", label: "About" },
 ];
 
 export const psaSources = [

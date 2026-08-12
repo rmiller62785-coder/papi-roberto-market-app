@@ -13,7 +13,7 @@ export function SiteHeader() {
           <span className="brand-mark" aria-hidden="true">LS</span>
           <span>
             <strong>Luna Sol Group</strong>
-            <small>Operating transformation</small>
+            <small>Management consulting</small>
           </span>
         </Link>
         <nav className="desktop-nav" aria-label="Primary navigation">
@@ -25,7 +25,7 @@ export function SiteHeader() {
           target={isExternalCalendar ? "_blank" : undefined}
           rel={isExternalCalendar ? "noreferrer" : undefined}
         >
-          Discuss a decision <span aria-hidden="true">↗</span>
+          Get in touch <span aria-hidden="true">↗</span>
         </a>
         <MobileNav />
       </div>

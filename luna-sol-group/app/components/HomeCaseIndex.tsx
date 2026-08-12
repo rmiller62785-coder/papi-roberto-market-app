@@ -60,9 +60,10 @@ export function HomeCaseIndex({ showHeading = true }: { showHeading?: boolean })
     <section className="section case-index-section paper" id="featured-work">
       <div className="shell">
         {showHeading ? (
-          <header className="editorial-heading" data-reveal>
-            <div><span className="section-label">Selected advisory work</span><h2>Proof before proposition.</h2></div>
+          <header className="consulting-section-head" data-reveal>
+            <div><span>Featured case studies</span><h2>Evidence, not decoration.</h2></div>
             <p>Each engagement opens into a focused dossier: the operating context, Ryan’s scope, the system designed, and the evidence boundary.</p>
+            <Link href="/work" prefetch={false}>View all case studies →</Link>
           </header>
         ) : null}
         <div className="case-index" aria-label="Featured case studies">

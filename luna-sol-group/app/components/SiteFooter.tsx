@@ -8,19 +8,20 @@ export function SiteFooter() {
       <div className="shell footer-invitation">
         <span>One decision at a time</span>
         <h2>Make the next operating decision inspectable.</h2>
-        <Link className="button button-light" href="/#contact" prefetch={false}>Discuss an operating decision →</Link>
+        <Link className="button button-light" href="/#contact" prefetch={false}>Get in touch →</Link>
       </div>
       <div className="shell footer-grid">
         <div className="footer-firm">
           <div className="footer-brand"><i aria-hidden="true">LS</i><span>Luna Sol Group</span></div>
-          <p>Operator-led transformation for complex logistics, retail, mobility, and investor-backed businesses.</p>
+          <p>Founder-led management consulting for complex logistics, retail, mobility, and investor-backed businesses.</p>
           <small>Founder-led · Confidential · Evidence-aware</small>
         </div>
         <div>
           <span className="footer-label">Explore</span>
-          <Link href="/work" prefetch={false}>Selected work</Link>
-          <Link href="/capabilities" prefetch={false}>What we solve</Link>
-          <Link href="/tools" prefetch={false}>Decision products</Link>
+          <Link href="/capabilities" prefetch={false}>Capabilities</Link>
+          <Link href="/industries" prefetch={false}>Industries</Link>
+          <Link href="/work" prefetch={false}>Case studies</Link>
+          <Link href="/tools" prefetch={false}>Operations Lab</Link>
           <Link href="/insights" prefetch={false}>Operations insights</Link>
           <Link href="/about" prefetch={false}>About Ryan</Link>
         </div>

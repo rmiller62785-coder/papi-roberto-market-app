@@ -1,0 +1,99 @@
+/* Consulting-firm architecture — authoritative, editorial, evidence-led */
+.site-header { background: rgba(252,251,247,.97); border-bottom-color: #d6d3cc; backdrop-filter: blur(18px); }
+.brand-mark { border-color: #9a7a45; color: #765326; }
+.brand strong { color: #171a17; }.brand small { color: #6f736e; }
+.desktop-nav { gap: clamp(18px,2.1vw,32px); }
+.desktop-nav a { color: #323732; font-size: 13px; font-weight: 700; }
+.desktop-nav a::after { background: #2e6e4c; }
+.header-cta { border-color: #1d5a3c; background: #1d5a3c; color: #fff; }
+.header-cta:hover { background: #174a32; border-color: #174a32; }
+.mobile-nav-trigger { color: #171a17; }
+
+.consulting-home { background: #f8f6f0; color: #171a17; }
+.consulting-hero { overflow: hidden; padding: 82px 0 0; background: #f8f6f0; color: #171a17; }
+.consulting-hero-grid { display: grid; grid-template-columns: minmax(0,1.05fr) minmax(390px,.95fr); gap: 74px; align-items: center; }
+.consulting-hero-copy { padding: 46px 0 64px; }
+.consulting-hero .kicker { color: #2e6e4c; }
+.consulting-hero h1 { max-width: 790px; margin: 22px 0 28px; font-size: clamp(62px,7vw,104px); line-height: .91; }
+.consulting-hero h1 em { display: block; color: #765326; font-style: normal; }
+.consulting-hero-copy > p { max-width: 710px; color: #555c56; font-size: clamp(18px,1.55vw,22px); line-height: 1.62; }
+.consulting-hero-actions,.consulting-product-actions { display: flex; gap: 26px; align-items: center; flex-wrap: wrap; margin-top: 34px; }
+.consulting-hero .button,.capability-v2-close .button { border-color: #1d5a3c; background: #1d5a3c; color: #fff; }
+.consulting-arrow-link { min-height: 44px; display: inline-flex; gap: 34px; align-items: center; padding-bottom: 3px; border-bottom: 1px solid currentColor; font-size: 13px; font-weight: 800; }
+.consulting-arrow-link span { font-size: 16px; transition: transform .2s; }.consulting-arrow-link:hover span { transform: translate(3px,-3px); }
+.consulting-hero-portrait { align-self: stretch; position: relative; min-height: 665px; margin: 0; overflow: hidden; background: #0a1825; }
+.consulting-hero-portrait img { width: 100%; height: 100%; min-height: 665px; object-fit: cover; object-position: center; }
+.consulting-hero-portrait::after { position: absolute; inset: 45% 0 0; content: ""; background: linear-gradient(transparent,rgba(5,14,21,.94)); }
+.consulting-hero-portrait figcaption { position: absolute; z-index: 2; left: 30px; right: 30px; bottom: 28px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.4); color: #fff; }
+.consulting-hero-portrait figcaption span,.consulting-hero-portrait figcaption strong,.consulting-hero-portrait figcaption small { display: block; }
+.consulting-hero-portrait figcaption span { color: #d8bf8f; font-size: 9px; font-weight: 900; letter-spacing: .13em; text-transform: uppercase; }
+.consulting-hero-portrait figcaption strong { margin-top: 8px; font-family: Georgia,serif; font-size: 25px; font-weight: 400; }.consulting-hero-portrait figcaption small { margin-top: 5px; color: #bbc4c8; font-size: 10px; }
+.consulting-proof-rail { display: grid; grid-template-columns: repeat(4,1fr); border-top: 1px solid #cfcbc2; border-left: 1px solid #cfcbc2; }
+.consulting-proof-rail > div { min-height: 144px; padding: 24px; border-right: 1px solid #cfcbc2; border-bottom: 1px solid #cfcbc2; }
+.consulting-proof-rail strong,.consulting-proof-rail span,.consulting-proof-rail small { display: block; }
+.consulting-proof-rail strong { color: #1d5a3c; font-family: Georgia,serif; font-size: clamp(32px,3vw,47px); font-weight: 400; line-height: 1; }
+.consulting-proof-rail span { margin-top: 11px; font-size: 12px; font-weight: 800; }.consulting-proof-rail small { margin-top: 4px; color: #7a7f79; font-size: 9px; }
+.consulting-proof-boundary { margin-top: 12px; padding-bottom: 22px; color: #7a7f79; font-size: 9px; }
+
+.consulting-thesis { padding: 92px 0; background: #123526; color: #fff; }
+.consulting-thesis-grid { display: grid; grid-template-columns: .35fr 1.15fr .7fr; gap: 64px; align-items: start; }
+.consulting-thesis-grid > span,.consulting-section-head span,.consulting-sectors-intro > span,.consulting-product-grid > div:first-child > span,.consulting-principal-grid > div > span,.industry-proof-grid > div > span,.industry-close > span,.capability-v2-method span { color: #d4bb87; font-size: 10px; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; }
+.consulting-thesis h2 { margin: 0; font-size: clamp(42px,4.8vw,67px); line-height: 1.02; }.consulting-thesis h2 em { color: #d4bb87; font-style: normal; }
+.consulting-thesis-grid > div p { margin: 0 0 25px; color: #c3cec7; font-size: 15px; line-height: 1.75; }.consulting-thesis .consulting-arrow-link { color: #fff; }
+
+.consulting-capabilities,.consulting-insights { background: #f8f6f0; }
+.consulting-section-head { display: grid; grid-template-columns: 1.1fr .75fr auto; gap: 55px; align-items: end; margin-bottom: 44px; }
+.consulting-section-head span { color: #2e6e4c; }.consulting-section-head h2 { margin: 10px 0 0; font-size: clamp(46px,5vw,70px); line-height: .98; }
+.consulting-section-head > p { margin: 0; color: #636a63; font-size: 15px; line-height: 1.7; }.consulting-section-head > a { min-height: 44px; display: flex; align-items: center; color: #1d5a3c; font-size: 12px; font-weight: 900; white-space: nowrap; }
+.consulting-capability-grid { display: grid; grid-template-columns: repeat(2,1fr); border-top: 1px solid #cbc8c0; border-left: 1px solid #cbc8c0; }
+.consulting-capability-grid article { min-height: 415px; display: flex; flex-direction: column; padding: 32px; border-right: 1px solid #cbc8c0; border-bottom: 1px solid #cbc8c0; background: rgba(255,255,255,.4); transition: background .2s,transform .2s; }
+.consulting-capability-grid article:hover { background: #fff; }
+.consulting-capability-grid article > span { color: #2e6e4c; font-size: 10px; font-weight: 900; }.consulting-capability-grid h3 { max-width: 510px; margin: 60px 0 16px; font-family: Georgia,serif; font-size: clamp(29px,3vw,39px); font-weight: 400; line-height: 1.05; }
+.consulting-capability-grid p { max-width: 560px; color: #626962; font-size: 13px; line-height: 1.7; }.consulting-capability-grid ul { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; margin: auto 0 25px; padding: 18px 0 0; border-top: 1px solid #d4d1c9; list-style: none; }
+.consulting-capability-grid li { padding: 6px 0; color: #4f554f; font-size: 11px; }.consulting-capability-grid li::before { content: "—"; margin-right: 7px; color: #2e6e4c; }
+.consulting-capability-grid article > a,.consulting-insight-grid article > a { display: flex; justify-content: space-between; padding-top: 15px; border-top: 1px solid #d4d1c9; color: #1d5a3c; font-size: 11px; font-weight: 900; }
+
+.consulting-sectors { background: #0d1922; color: #fff; }
+.consulting-sectors-grid { display: grid; grid-template-columns: .75fr 1.25fr; gap: 92px; }
+.consulting-sectors-intro { position: sticky; top: calc(var(--header-height) + 40px); align-self: start; }.consulting-sectors-intro h2 { margin: 13px 0 24px; font-size: clamp(47px,5vw,70px); line-height: .98; }.consulting-sectors-intro p { color: #aeb8bb; font-size: 15px; line-height: 1.75; }.consulting-sectors-intro .button { margin-top: 22px; }
+.consulting-sector-list { border-top: 1px solid rgba(255,255,255,.16); }.consulting-sector-list article { display: grid; grid-template-columns: 50px 1fr; gap: 22px; min-height: 192px; padding: 28px 0; border-bottom: 1px solid rgba(255,255,255,.16); }
+.consulting-sector-list > article > b { color: #d4bb87; font-size: 10px; }.consulting-sector-list h3 { margin: 0 0 12px; font-family: Georgia,serif; font-size: 31px; font-weight: 400; }.consulting-sector-list p { max-width: 660px; color: #aeb8bb; font-size: 13px; line-height: 1.65; }.consulting-sector-list small { color: #d4bb87; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+
+.consulting-product-feature { background: #e7e2d8; color: #171a17; }
+.consulting-product-grid { display: grid; grid-template-columns: .82fr 1.18fr; gap: 78px; align-items: center; }.consulting-product-grid h2 { margin: 12px 0 24px; font-size: clamp(48px,5vw,72px); line-height: .98; }.consulting-product-grid p { color: #626962; font-size: 16px; line-height: 1.72; }.consulting-product-grid .consulting-arrow-link { color: #1d5a3c; }
+.consulting-product-console { padding: 26px; border: 1px solid #283743; background: #0f1922; color: #fff; box-shadow: 0 30px 80px rgba(21,31,38,.18); }
+.consulting-product-console header { display: flex; justify-content: space-between; gap: 20px; padding-bottom: 17px; border-bottom: 1px solid rgba(255,255,255,.13); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }.consulting-product-console header b { color: #d4bb87; }
+.consulting-product-status { position: relative; min-height: 150px; padding: 27px 130px 25px 0; }.consulting-product-status span { color: #d4bb87; font-size: 8px; text-transform: uppercase; letter-spacing: .1em; }.consulting-product-status strong { display: block; max-width: 540px; margin-top: 13px; font-family: Georgia,serif; font-size: 29px; font-weight: 400; line-height: 1.12; }.consulting-product-status i { position: absolute; right: 0; top: 26px; padding: 6px 9px; border: 1px solid #d4bb87; color: #d4bb87; font-size: 7px; font-style: normal; text-transform: uppercase; }
+.consulting-product-console dl { display: grid; grid-template-columns: repeat(4,1fr); margin: 0; border-top: 1px solid rgba(255,255,255,.13); border-left: 1px solid rgba(255,255,255,.13); }.consulting-product-console dl div { min-height: 92px; padding: 15px; border-right: 1px solid rgba(255,255,255,.13); border-bottom: 1px solid rgba(255,255,255,.13); }.consulting-product-console dt { color: #7f8c93; font-size: 7px; text-transform: uppercase; }.consulting-product-console dd { margin: 12px 0 0; font-family: Georgia,serif; font-size: 22px; }
+.consulting-product-fan { height: 105px; display: flex; align-items: end; gap: 5px; padding: 20px 0; }.consulting-product-fan span { flex: 1; height: 85%; clip-path: polygon(0 40%,100% 0,100% 55%,0 100%); background: linear-gradient(rgba(212,187,135,.4),rgba(212,187,135,.08)); }.consulting-product-fan span:nth-child(2){height:78%}.consulting-product-fan span:nth-child(3){height:68%}.consulting-product-fan span:nth-child(4){height:56%}.consulting-product-fan span:nth-child(5){height:47%}.consulting-product-fan span:nth-child(6){height:39%}.consulting-product-fan span:nth-child(7){height:32%}.consulting-product-fan span:nth-child(8){height:27%}
+.consulting-product-console footer { padding-top: 14px; border-top: 1px solid rgba(255,255,255,.13); color: #7f8c93; font-size: 8px; text-transform: uppercase; letter-spacing: .07em; }
+
+.consulting-insight-grid { display: grid; grid-template-columns: repeat(3,1fr); border-top: 1px solid #cbc8c0; border-left: 1px solid #cbc8c0; }.consulting-insight-grid article { min-height: 370px; display: flex; flex-direction: column; padding: 28px; border-right: 1px solid #cbc8c0; border-bottom: 1px solid #cbc8c0; background: rgba(255,255,255,.4); }.consulting-insight-grid article > span { color: #2e6e4c; font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; }.consulting-insight-grid h3 { margin: 64px 0 16px; font-family: Georgia,serif; font-size: 31px; font-weight: 400; line-height: 1.08; }.consulting-insight-grid p { color: #636a63; font-size: 13px; line-height: 1.68; }.consulting-insight-grid article > a { margin-top: auto; }
+
+.consulting-principal { padding: 0; background: #123526; color: #fff; }.consulting-principal-grid { display: grid; grid-template-columns: 1fr 1fr; }.consulting-principal figure { min-height: 670px; margin: 0; }.consulting-principal figure img { width: 100%; height: 100%; min-height: 670px; object-fit: cover; }.consulting-principal-grid > div { padding: 82px 70px; }.consulting-principal-grid h2 { margin: 13px 0 24px; font-size: clamp(47px,5vw,72px); line-height: .98; }.consulting-principal-grid p { color: #c3cec7; font-size: 15px; line-height: 1.76; }.consulting-principal-grid dl { margin: 30px 0; border-top: 1px solid rgba(255,255,255,.18); }.consulting-principal-grid dl div { display: grid; grid-template-columns: 150px 1fr; gap: 20px; padding: 14px 0; border-bottom: 1px solid rgba(255,255,255,.18); }.consulting-principal-grid dt { color: #8fa398; font-size: 9px; text-transform: uppercase; }.consulting-principal-grid dd { margin: 0; color: #e0e8e2; font-size: 11px; }
+.consulting-contact { background: #0a0e12; color: #fff; }
+
+/* Capability and industry indexes */
+.capability-v2-hero,.industry-hero { background: #123526; }.capability-v2-hero::before,.industry-hero::before { background: linear-gradient(90deg,rgba(212,187,135,.1),transparent 48%); }
+.capability-v2-index,.industry-index { background: #f8f6f0; }.capability-v2-ledger,.industry-ledger { border-top: 1px solid #cbc8c0; }
+.capability-v2-ledger article { display: grid; grid-template-columns: 1.1fr .9fr .8fr; gap: 50px; min-height: 310px; padding: 34px 0; border-bottom: 1px solid #cbc8c0; }.capability-v2-ledger header { display: grid; grid-template-columns: 36px 1fr; gap: 12px; align-content: start; }.capability-v2-ledger header > span { color: #2e6e4c; font-size: 10px; }.capability-v2-ledger h2 { margin: 0; font-size: 39px; line-height: 1.04; }.capability-v2-ledger header p { grid-column: 2; color: #636a63; font-size: 13px; line-height: 1.68; }.capability-v2-ledger article > div > span,.capability-v2-ledger aside > span,.industry-ledger aside > span { color: #2e6e4c; font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .09em; }.capability-v2-ledger ul { margin: 18px 0 0; padding: 0; list-style: none; }.capability-v2-ledger li { padding: 9px 0; border-bottom: 1px solid #d8d5ce; color: #4f554f; font-size: 12px; }.capability-v2-ledger aside { padding-left: 28px; border-left: 1px solid #cbc8c0; }.capability-v2-ledger aside strong { display: block; margin-top: 25px; font-family: Georgia,serif; font-size: 23px; font-weight: 400; line-height: 1.3; }
+.capability-v2-method,.industry-proof { padding: 96px 0; background: #0d1922; color: #fff; }.capability-v2-method-grid,.industry-proof-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 90px; align-items: center; }.capability-v2-method h2,.industry-proof h2 { margin: 14px 0 0; font-size: clamp(43px,4.7vw,64px); line-height: 1; }.capability-v2-method p,.industry-proof p { color: #acb7bb; font-size: 15px; line-height: 1.75; }.capability-v2-method-grid > div:last-child > div { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; margin-top: 28px; }.capability-v2-method .consulting-arrow-link { color: #fff; }
+.industry-ledger article { display: grid; grid-template-columns: .85fr 1fr .55fr; gap: 55px; min-height: 290px; padding: 34px 0; border-bottom: 1px solid #cbc8c0; }.industry-ledger header { display: grid; grid-template-columns: 36px 1fr; gap: 12px; }.industry-ledger header span { color: #2e6e4c; font-size: 10px; }.industry-ledger h2 { margin: 0; font-size: 38px; line-height: 1.05; }.industry-lead { margin: 0 0 22px; color: #4c534d; font-family: Georgia,serif; font-size: 21px; line-height: 1.35; }.industry-ledger ul { margin: 0; padding: 0; list-style: none; }.industry-ledger li { padding: 7px 0; color: #676d67; font-size: 11px; }.industry-ledger li::before { content: "—"; margin-right: 7px; color: #2e6e4c; }.industry-ledger aside { padding-left: 25px; border-left: 1px solid #cbc8c0; }.industry-ledger aside strong { display: block; margin: 24px 0; font-family: Georgia,serif; font-size: 22px; font-weight: 400; }.industry-ledger aside a { color: #1d5a3c; font-size: 11px; font-weight: 900; }
+.industry-logo-wall { display: grid; grid-template-columns: repeat(3,1fr); border-top: 1px solid rgba(255,255,255,.15); border-left: 1px solid rgba(255,255,255,.15); }.industry-logo-wall a { min-height: 108px; display: grid; place-items: center; padding: 22px; border-right: 1px solid rgba(255,255,255,.15); border-bottom: 1px solid rgba(255,255,255,.15); background: rgba(255,255,255,.04); filter: grayscale(1) brightness(2); opacity: .75; }.industry-logo-wall img { width: auto; max-width: 140px; max-height: 43px; }.industry-close { max-width: 900px; }.industry-close h2 { margin: 15px 0 20px; font-size: clamp(48px,5vw,72px); line-height: .98; }.industry-close p { max-width: 730px; color: #616862; font-size: 15px; line-height: 1.72; }.consulting-contact .industry-close p { color: #aeb8bb; }
+
+@media (max-width: 1100px) {
+  .consulting-hero-grid { grid-template-columns: 1fr .8fr; gap: 45px; }.consulting-hero h1 { font-size: clamp(58px,7.5vw,85px); }
+  .consulting-thesis-grid { grid-template-columns: .3fr 1fr; }.consulting-thesis-grid > div { grid-column: 2; }
+  .consulting-section-head { grid-template-columns: 1fr .8fr; }.consulting-section-head > a { grid-column: 1/-1; }
+  .consulting-product-grid,.consulting-sectors-grid { grid-template-columns: 1fr; }.consulting-sectors-intro { position: static; max-width: 800px; }.consulting-product-console { max-width: 900px; }
+  .capability-v2-ledger article,.industry-ledger article { grid-template-columns: 1fr 1fr; }.capability-v2-ledger aside,.industry-ledger aside { grid-column: 2; padding: 20px 0 0; border-top: 1px solid #cbc8c0; border-left: 0; }
+}
+
+@media (max-width: 760px) {
+  .consulting-hero { padding-top: 40px; }.consulting-hero-grid,.consulting-principal-grid,.capability-v2-method-grid,.industry-proof-grid { grid-template-columns: 1fr; }.consulting-hero-copy { padding-bottom: 30px; }.consulting-hero h1 { font-size: clamp(51px,14vw,70px); }.consulting-hero-portrait,.consulting-hero-portrait img { min-height: 500px; }.consulting-proof-rail { grid-template-columns: 1fr 1fr; }.consulting-proof-rail > div { min-height: 125px; padding: 18px; }
+  .consulting-thesis { padding: 70px 0; }.consulting-thesis-grid { grid-template-columns: 1fr; gap: 25px; }.consulting-thesis-grid > div { grid-column: auto; }
+  .consulting-section-head { grid-template-columns: 1fr; gap: 18px; }.consulting-capability-grid,.consulting-insight-grid { grid-template-columns: 1fr; }.consulting-capability-grid article { min-height: 370px; padding: 24px; }.consulting-capability-grid h3 { margin-top: 42px; }.consulting-capability-grid ul { grid-template-columns: 1fr; }
+  .consulting-sector-list article { min-height: 170px; }.consulting-product-console { padding: 18px; }.consulting-product-status { padding-right: 0; }.consulting-product-status i { position: static; display: inline-block; margin-top: 18px; }.consulting-product-console dl { grid-template-columns: 1fr 1fr; }
+  .consulting-principal figure,.consulting-principal figure img { min-height: 500px; }.consulting-principal-grid > div { padding: 66px 18px; }.consulting-principal-grid dl div { grid-template-columns: 1fr; gap: 5px; }
+  .capability-v2-ledger article,.industry-ledger article { grid-template-columns: 1fr; gap: 28px; }.capability-v2-ledger aside,.industry-ledger aside { grid-column: auto; }.capability-v2-ledger h2,.industry-ledger h2 { font-size: 33px; }.industry-logo-wall { grid-template-columns: 1fr 1fr; }
+}

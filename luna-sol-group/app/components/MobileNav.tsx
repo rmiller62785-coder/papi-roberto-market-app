@@ -35,7 +35,7 @@ export function MobileNav() {
             ))}
           </nav>
           <div className="mobile-nav-close">
-            <Link className="button" href="/#contact" onClick={closeMenu} prefetch={false}>Discuss an operating decision</Link>
+            <Link className="button" href="/#contact" onClick={closeMenu} prefetch={false}>Get in touch</Link>
             <small>Founder-led · Confidential · Evidence-aware</small>
           </div>
         </div>
