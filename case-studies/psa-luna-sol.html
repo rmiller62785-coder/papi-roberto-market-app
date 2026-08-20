@@ -1,0 +1,1630 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The 14-Million-Card Recovery</title>
+<meta name="description" content="How a record 14-million-card grading backlog became a recovery you can audit — every figure sourced, every derivation shown.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* ============================================================================
+   PSA × Luna Sol — v8
+   Committed dark. The paper band is an in-page device, not a second theme, so
+   every colour is painted explicitly from a token and nothing relies on the
+   host's ground.
+   ========================================================================= */
+:root{
+  /* ground: near-black biased toward the accent, so the neutral reads chosen */
+  --ground:#0B0D0A; --slab:#111410; --slab2:#161A14; --sunk:#080907;
+
+  /* ink */
+  --ink:#F4F5F2; --body:#BEC2B6; --mute:#949A90; --faint:#7E837A;
+
+  /* accent + data. Data slots validated: dark, surface #111410, all six checks
+     PASS, worst adjacent pair ΔE 22.5 deutan / 27.2 normal. */
+  --lime:#B8E34D; --lime-dim:rgba(184,227,77,.13);
+  --ember:#D2602B; --slate:#4E9BD4; --warn:#FF8A4C; --psa:#E8341C;
+
+  /* the inverted evidence band — the card back */
+  --paper:#EFEDE4; --paper-ink:#14161A; --paper-body:#3E443C;
+  --paper-mute:#5C6259; --paper-line:rgba(20,22,26,.14); --paper-acc:#4A6A12;
+
+  --line:rgba(255,255,255,.10); --line2:rgba(255,255,255,.055);
+
+  --disp:'Archivo',system-ui,-apple-system,sans-serif;
+  --serif:'Newsreader',Georgia,'Times New Roman',serif;
+  --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;
+
+  --rail:212px;
+  --measure:1080px;
+  --e:cubic-bezier(.33,0,.1,1);
+  --s1:8px; --s2:16px; --s3:24px; --s4:40px; --s5:64px; --s6:104px;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;scroll-padding-top:88px;-webkit-text-size-adjust:100%}
+body{
+  background:var(--ground);color:var(--body);
+  font-family:var(--serif);font-size:17px;line-height:1.7;font-weight:400;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;
+  font-synthesis-weight:none;
+}
+::selection{background:var(--lime);color:var(--ground)}
+img{max-width:100%;display:block}
+
+h1,h2,h3,h4{font-family:var(--disp);color:var(--ink);font-weight:600;
+  letter-spacing:-.028em;line-height:1.05;text-wrap:balance}
+h1{font-size:clamp(44px,6.4vw,88px);font-weight:700;letter-spacing:-.038em;line-height:.96}
+h2{font-size:clamp(31px,3.9vw,50px);letter-spacing:-.032em;line-height:1.03;max-width:19ch}
+h3{font-size:clamp(19px,1.7vw,24px);letter-spacing:-.02em}
+h4{font-size:16px;letter-spacing:-.01em}
+a{color:inherit}
+strong,b{color:var(--ink);font-weight:500}
+
+.kicker{font-family:var(--mono);font-size:11px;letter-spacing:.15em;
+  text-transform:uppercase;color:var(--mute);font-weight:400}
+.lede{font-family:var(--serif);font-size:clamp(18px,1.55vw,21px);line-height:1.58;
+  color:var(--body);max-width:60ch;text-wrap:pretty}
+.small{font-size:14px;line-height:1.62;color:var(--mute)}
+.num{font-variant-numeric:tabular-nums}
+
+/* ---- accessibility scaffolding ------------------------------------------ */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
+.skip{position:absolute;left:-9999px;top:0;z-index:200;background:var(--lime);
+  color:var(--ground);padding:12px 20px;font-family:var(--disp);font-weight:600;
+  border-radius:0 0 6px 0}
+.skip:focus{left:0}
+:focus-visible{outline:2px solid var(--lime);outline-offset:3px;border-radius:2px}
+[data-band="paper"] :focus-visible{outline-color:var(--paper-acc)}
+
+/* ---- layout -------------------------------------------------------------- */
+main{margin-left:var(--rail)}
+.wrap{max-width:var(--measure);margin:0 auto;padding:0 var(--s5)}
+.bleed{max-width:1360px;margin:0 auto;padding:0 var(--s5)}
+.split{display:grid;grid-template-columns:1.05fr .95fr;gap:var(--s5);align-items:start}
+
+section.ch{padding:var(--s6) 0;border-top:1px solid var(--line2);position:relative}
+.chead{display:flex;align-items:baseline;gap:var(--s2);margin-bottom:var(--s3)}
+.chead .kicker{color:var(--lime)}
+.chead::after{content:"";flex:1;height:1px;background:var(--line2)}
+
+/* ---- the ledger rail ----------------------------------------------------- */
+.rail{position:fixed;inset:0 auto 0 0;width:var(--rail);z-index:50;
+  background:var(--sunk);border-right:1px solid var(--line2);
+  display:flex;flex-direction:column;padding:26px 0}
+.rail .mark{padding:0 24px 28px;display:flex;align-items:baseline;gap:9px}
+.rail .mark .ls{font-family:var(--disp);font-weight:700;font-size:17px;
+  color:var(--ink);letter-spacing:-.03em;text-decoration:none}
+.rail .mark .ls span{color:var(--lime)}
+.rail .mark small{font-family:var(--mono);font-size:9px;letter-spacing:.14em;
+  color:var(--faint);text-transform:uppercase}
+.rail nav{margin:auto 0;display:flex;flex-direction:column}
+.rail nav a{display:grid;grid-template-columns:26px 1fr;gap:10px;align-items:baseline;
+  padding:11px 24px;text-decoration:none;color:var(--faint);
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.03em;
+  border-left:2px solid transparent;transition:color .25s,border-color .25s}
+.rail nav a i{font-style:normal;font-size:9.5px;color:var(--faint);letter-spacing:.1em}
+.rail nav a:hover{color:var(--body)}
+.rail nav a[aria-current="true"]{color:var(--lime);border-left-color:var(--lime)}
+.rail nav a[aria-current="true"] i{color:var(--lime)}
+.rail .foot{padding:0 24px;font-family:var(--mono);font-size:9.5px;
+  letter-spacing:.1em;color:var(--faint);line-height:1.9}
+#prog{position:fixed;top:0;left:0;height:2px;width:0;background:var(--lime);z-index:60}
+
+/* ---- hero ---------------------------------------------------------------- */
+.hero{position:relative;padding:clamp(60px,9vh,110px) 0 var(--s5);overflow:hidden}
+.hero .field{position:absolute;right:2.5%;top:9%;width:37%;opacity:.5;pointer-events:none;
+  --fade:radial-gradient(62% 70% at 50% 46%,#000 18%,rgba(0,0,0,.42) 58%,transparent 94%);
+  mask-image:var(--fade);-webkit-mask-image:var(--fade)}
+.hero .wrap{position:relative}
+.chip{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:var(--s4)}
+.chip .psa{background:var(--psa);color:#fff;font-family:var(--disp);font-weight:700;
+  font-size:19px;line-height:1;letter-spacing:.01em;padding:6px 10px;border-radius:2px}
+.chip .x{color:var(--faint);font-family:var(--mono);font-size:12px}
+.hero h1 em{font-style:normal;color:var(--lime)}
+.hero h1 .q{color:var(--mute);font-weight:500}
+.hero .lede{margin-top:var(--s3);font-size:clamp(18px,1.7vw,22px);max-width:56ch}
+.facts{display:flex;gap:var(--s4);flex-wrap:wrap;margin-top:var(--s4);
+  padding-top:var(--s3);border-top:1px solid var(--line2)}
+.facts div{font-family:var(--mono);font-size:10px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--faint)}
+.facts b{display:block;font-family:var(--disp);font-weight:600;font-size:15px;
+  color:var(--ink);letter-spacing:-.01em;margin-top:6px;text-transform:none}
+
+/* ---- figures ------------------------------------------------------------- */
+figure{margin:0}
+.fig{background:linear-gradient(180deg,var(--slab) 0%,var(--sunk) 100%);
+  border:1px solid var(--line);border-radius:10px;padding:26px 30px 18px;
+  position:relative;overflow:visible}
+.fig svg{width:100%;height:auto;display:block;overflow:visible}
+.fig svg[tabindex]{border-radius:4px}
+.fighead{display:flex;justify-content:space-between;align-items:baseline;
+  gap:var(--s2);flex-wrap:wrap;margin-bottom:var(--s2);
+  padding-bottom:12px;border-bottom:1px solid var(--line2)}
+.fighead .t{font-family:var(--disp);font-weight:600;font-size:15.5px;color:var(--ink);
+  letter-spacing:-.015em}
+.fighead .live{font-family:var(--mono);font-size:10px;letter-spacing:.13em;
+  color:var(--lime);display:flex;align-items:center;gap:7px;text-transform:uppercase}
+.fighead .live::before{content:"";width:5px;height:5px;border-radius:50%;
+  background:var(--lime);animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+figcaption{margin-top:14px;padding-top:12px;border-top:1px solid var(--line2);
+  display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;color:var(--faint);
+  text-transform:uppercase;line-height:1.7}
+figcaption a{color:var(--mute);text-decoration:none;border-bottom:1px solid var(--line)}
+figcaption a:hover{color:var(--lime);border-color:var(--lime)}
+.tip{position:absolute;pointer-events:none;background:var(--ink);color:#0A0B09;
+  font-family:var(--disp);font-size:12.5px;line-height:1.45;padding:8px 11px;
+  border-radius:6px;opacity:0;transition:opacity .14s;white-space:nowrap;z-index:5;
+  transform:translate(-50%,-125%);font-weight:500}
+.tip.on{opacity:1}
+.tip b{font-family:var(--mono);font-size:12.5px}
+.tip span{opacity:.65;font-weight:400}
+
+/* ---- slab stats: value over a hairline, basis underneath ----------------- */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
+  background:var(--line2);border:1px solid var(--line2);border-radius:8px;
+  overflow:hidden;margin-top:var(--s4)}
+.stat{background:var(--slab);padding:22px 24px 20px;display:flex;flex-direction:column;gap:10px}
+.stat .v{font-family:var(--disp);font-weight:700;font-size:clamp(30px,3.2vw,42px);
+  color:var(--ink);letter-spacing:-.035em;line-height:1;font-variant-numeric:tabular-nums}
+.stat .v u{text-decoration:none;color:var(--mute);font-size:.6em;font-weight:600}
+.stat .k{font-family:var(--serif);font-size:13.5px;line-height:1.5;color:var(--body)}
+.stat .basis{margin-top:auto;padding-top:10px;border-top:1px solid var(--line2);
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+  min-height:2.9em;line-height:1.5}
+.stat .basis.rep{color:var(--body)}
+.stat .basis.der{color:var(--mute)}
+
+/* ---- timeline ------------------------------------------------------------ */
+.tl{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.tl .h{padding:12px 22px;background:var(--slab);border-bottom:1px solid var(--line);
+  font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--mute)}
+.tl .r{display:grid;grid-template-columns:78px 1fr auto;gap:16px;padding:15px 22px;
+  border-bottom:1px solid var(--line2);align-items:baseline;font-size:15px}
+.tl .r:last-child{border-bottom:0}
+.tl .d{font-family:var(--mono);font-size:10.5px;color:var(--mute);letter-spacing:.06em}
+.tl .v{font-family:var(--disp);font-weight:600;font-size:17px;color:var(--ink);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.tl .r.hot{background:rgba(210,96,43,.07)}
+.tl .r.hot .v{color:var(--warn)}
+
+/* ---- callouts ------------------------------------------------------------ */
+.callout{margin-top:var(--s5);border:1px solid rgba(255,138,76,.28);
+  background:rgba(210,96,43,.05);border-radius:10px;padding:28px 32px;
+  position:relative;overflow:hidden}
+.callout::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--warn)}
+.callout .kicker{color:var(--warn);margin-bottom:10px;display:block}
+.callout h3{margin-bottom:12px;max-width:28ch}
+.callout p{max-width:80ch}
+.callout p+p{margin-top:12px;font-size:15px;color:var(--mute)}
+
+.note{margin-top:var(--s3);font-size:14px;color:var(--faint);max-width:82ch;line-height:1.65}
+.note a{color:var(--mute)}
+
+/* ---- the photograph ------------------------------------------------------ */
+.photo{position:relative;border:1px solid var(--line);border-radius:10px;
+  overflow:hidden;background:var(--sunk)}
+.photo img{width:100%;height:auto}
+.photo .stamp{position:absolute;right:14px;bottom:14px;font-family:var(--mono);
+  font-size:10px;letter-spacing:.1em;color:#F4F5F2;background:rgba(8,9,7,.72);
+  padding:5px 9px;border-radius:3px;backdrop-filter:blur(4px)}
+.photo .ph{display:grid;place-items:center;aspect-ratio:16/9;padding:32px;text-align:center;
+  background:repeating-linear-gradient(135deg,var(--sunk) 0 12px,var(--slab) 12px 24px)}
+.photo .ph p{font-family:var(--mono);font-size:11px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--faint);line-height:2}
+.photocap{margin-top:14px;font-size:14.5px;color:var(--mute);line-height:1.62;max-width:56ch}
+.photocap b{color:var(--body);font-weight:500}
+
+/* ---- moves --------------------------------------------------------------- */
+.moves{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s3);margin-top:var(--s4)}
+.mv{background:var(--slab);border:1px solid var(--line);border-radius:10px;
+  padding:24px 26px}
+.mv .kicker{color:var(--lime);display:block;margin-bottom:14px}
+.mv h3{margin-bottom:10px;max-width:16ch}
+.mv>p{font-size:14.5px;margin-bottom:14px}
+.mv ul{list-style:none}
+.mv li{font-size:13.5px;padding:8px 0;border-top:1px solid var(--line2);
+  display:grid;grid-template-columns:14px 1fr;gap:8px;color:var(--body)}
+.mv li::before{content:"";width:7px;height:10px;margin-top:6px;border-radius:1px;
+  background:var(--lime);opacity:.75}
+
+/* ---- the paper band ------------------------------------------------------ */
+[data-band="paper"]{background:var(--paper);color:var(--paper-body);border-top:0}
+[data-band="paper"] h2,[data-band="paper"] h3,[data-band="paper"] strong,
+[data-band="paper"] b{color:var(--paper-ink)}
+[data-band="paper"] .kicker{color:var(--paper-mute)}
+[data-band="paper"] .chead .kicker{color:var(--paper-acc)}
+[data-band="paper"] .chead::after{background:var(--paper-line)}
+[data-band="paper"] .lede,[data-band="paper"] p{color:var(--paper-body)}
+[data-band="paper"] .note{color:var(--paper-mute)}
+[data-band="paper"] .wrap{position:relative}
+
+.srcs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:var(--s4)}
+.src{display:grid;grid-template-columns:26px 1fr auto;gap:14px;align-items:center;
+  border:1px solid var(--paper-line);border-radius:7px;padding:14px 18px;
+  text-decoration:none;background:rgba(255,255,255,.5);transition:background .2s,border-color .2s}
+.src:hover{background:#fff;border-color:rgba(20,22,26,.3)}
+.src .n{font-family:var(--mono);font-size:11.5px;color:var(--paper-acc)}
+.src .t{font-family:var(--disp);font-size:13.5px;font-weight:600;color:var(--paper-ink);
+  line-height:1.35;letter-spacing:-.01em}
+.src .m{font-family:var(--mono);font-size:10px;color:var(--paper-mute);
+  margin-top:4px;letter-spacing:.05em}
+.src .tag{font-family:var(--mono);font-size:9px;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--paper-mute);border:1px solid var(--paper-line);border-radius:99px;
+  padding:4px 9px;white-space:nowrap}
+.src .tag.pri{color:var(--paper);background:var(--paper-ink);border-color:var(--paper-ink)}
+
+/* citations */
+sup.c{font-size:9.5px;line-height:0;white-space:nowrap}
+sup.c a{color:var(--lime);text-decoration:none;font-family:var(--mono);padding:0 1px}
+sup.c a:hover{text-decoration:underline}
+[data-band="paper"] sup.c a{color:var(--paper-acc)}
+
+/* derived-number marker: the epistemics are visible in the type */
+.der{border-bottom:1px dotted var(--mute);cursor:help}
+
+/* ---- cta + footer -------------------------------------------------------- */
+.cta{padding:var(--s6) 0;border-top:1px solid var(--line2);position:relative;overflow:hidden}
+.cta::before{content:"";position:absolute;inset:auto 0 -40% 0;height:70%;pointer-events:none;
+  background:radial-gradient(60% 100% at 50% 100%,rgba(184,227,77,.09),transparent 70%)}
+.cta .wrap{position:relative}
+.cta h2{max-width:22ch}
+.cta .lede{margin-top:var(--s3)}
+.btn{display:inline-flex;align-items:center;gap:10px;background:var(--lime);color:var(--ground);
+  padding:14px 28px;border-radius:3px;text-decoration:none;font-family:var(--disp);
+  font-size:15px;font-weight:600;margin-top:var(--s4);
+  transition:transform .18s,box-shadow .18s}
+.btn:hover{transform:translateY(-2px);box-shadow:0 10px 30px rgba(184,227,77,.2)}
+.ctalinks{display:flex;gap:28px;flex-wrap:wrap;margin-top:var(--s4);
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.04em}
+.ctalinks a{color:var(--mute);text-decoration:none;border-bottom:1px solid var(--line);
+  padding-bottom:3px}
+.ctalinks a:hover{color:var(--lime);border-color:var(--lime)}
+footer{border-top:1px solid var(--line2);padding:24px 0}
+footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--faint);
+  text-transform:uppercase}
+
+/* ---- motion -------------------------------------------------------------- */
+.rv{opacity:0;transform:translateY(16px);
+  transition:opacity .7s var(--e),transform .7s var(--e)}
+.rv.in{opacity:1;transform:none}
+.rv.d1{transition-delay:.08s}.rv.d2{transition-delay:.16s}.rv.d3{transition-delay:.24s}
+@media(prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  .rv{opacity:1;transform:none;transition:none}
+  .fighead .live::before{animation:none}
+  *{animation-duration:.001ms!important;transition-duration:.001ms!important}
+}
+
+/* ---- responsive ---------------------------------------------------------- */
+@media(max-width:1180px){
+  :root{--rail:0px}
+  main{margin-left:0}
+  .rail{position:sticky;inset:0 auto auto 0;width:100%;max-width:100vw;height:auto;
+    flex-direction:row;align-items:center;padding:0;border-right:0;
+    border-bottom:1px solid var(--line2);overflow:hidden}
+  .rail .mark{padding:14px 20px;flex:0 0 auto}
+  .rail nav{margin:0;flex:1 1 auto;min-width:0;flex-direction:row;
+    overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .rail nav::-webkit-scrollbar{display:none}
+  .rail nav a{grid-template-columns:auto;gap:0;padding:16px 14px;border-left:0;
+    border-bottom:2px solid transparent;white-space:nowrap}
+  .rail nav a i{display:none}
+  .rail nav a[aria-current="true"]{border-bottom-color:var(--lime)}
+  .rail .foot{display:none}
+  .hero .field{width:88%;right:-14%;top:auto;bottom:-6%;opacity:.3}
+  .split{grid-template-columns:1fr;gap:var(--s4)}
+  .stats{grid-template-columns:1fr 1fr}
+  .moves{grid-template-columns:1fr}
+  .srcs{grid-template-columns:1fr}
+}
+@media(max-width:640px){
+  body{font-size:16px}
+  .wrap,.bleed{padding:0 22px}
+  section.ch{padding:var(--s5) 0}
+  .fig{padding:20px 16px 14px;border-radius:8px}
+  .stats{grid-template-columns:1fr}
+  .facts{gap:var(--s3)}
+  .tl .r{grid-template-columns:66px 1fr;gap:8px}
+  .tl .v{grid-column:2}
+  .callout{padding:22px 20px}
+}
+
+/* ============================================================================
+   v8 components
+   ========================================================================= */
+
+/* the hero card field */
+.hero .field svg{width:100%;height:auto;display:block}
+.fieldkey{margin-top:var(--s3);font-family:var(--mono);font-size:10.5px;
+  letter-spacing:.06em;color:var(--faint);max-width:62ch;line-height:1.9;
+  text-transform:uppercase}
+
+/* dated stamp replaces the old "tracking live" claim */
+.stamp-live{font-family:var(--mono);font-size:10px;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--mute);white-space:nowrap}
+
+/* the evidence legend */
+.legend{margin-top:var(--s4);border:1px solid var(--line);border-radius:10px;
+  padding:26px 30px;background:var(--slab)}
+.legend h2{font-size:clamp(21px,2vw,26px);max-width:none;margin-bottom:var(--s3)}
+.legend .lg{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s3)}
+.legend .lg>div{display:grid;grid-template-columns:auto 1fr;gap:8px 10px;align-items:start}
+.legend .lg b{font-family:var(--disp);font-size:14px;color:var(--ink);font-weight:600;
+  align-self:center}
+.legend .lg p{grid-column:1/-1;font-size:14px;color:var(--mute);line-height:1.55}
+.legend .sw{width:16px;height:22px;border-radius:2px;display:block;margin-top:1px}
+.legend .sw.rep{background:var(--body)}
+.legend .sw.der{border:1px solid var(--body);
+  background:repeating-linear-gradient(45deg,rgba(190,194,182,.6) 0 2px,transparent 2px 5px)}
+.legend .sw.non{border:1px dashed var(--faint)}
+
+/* the three hard parts */
+.hards{margin-top:var(--s3);display:grid;gap:var(--s3)}
+.hards .hk{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--lime);margin-bottom:6px}
+.hards p{font-size:16px}
+
+/* the reconciliation hole */
+.hole{margin-top:var(--s5);border:1px solid var(--line);border-left:3px solid var(--ember);
+  border-radius:0 10px 10px 0;padding:28px 32px;background:var(--slab)}
+.hole .kicker{display:block;color:var(--ember);margin-bottom:10px}
+.hole h3{margin-bottom:var(--s2);max-width:30ch}
+.hole p{max-width:78ch}
+.hole p+p{margin-top:12px}
+.calc{font-family:var(--mono);font-size:13px;line-height:1.85;color:var(--body);
+  background:var(--sunk);border:1px solid var(--line2);border-radius:6px;
+  padding:16px 20px;margin:var(--s3) 0;overflow-x:auto;white-space:pre;
+  font-variant-numeric:tabular-nums}
+
+/* before / after */
+.ba{margin-top:var(--s5);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.ba .bah{padding:14px 26px;background:var(--slab);border-bottom:1px solid var(--line)}
+.bagrid{display:grid;grid-template-columns:1fr 1fr}
+.bacol{padding:24px 26px}
+.bacol.before{border-right:1px solid var(--line2);background:var(--sunk)}
+.bacol .lb{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;
+  text-transform:uppercase;margin-bottom:var(--s2)}
+.bacol.before .lb{color:var(--mute)}
+.bacol.after .lb{color:var(--lime)}
+.bacol ul{list-style:none;display:grid;gap:0}
+.bacol li{font-size:14.5px;padding:11px 0;border-top:1px solid var(--line2);line-height:1.5}
+.bacol li:first-child{border-top:0;padding-top:0}
+.bacol.before li{color:var(--mute)}
+.bacol.after li{color:var(--body)}
+
+/* the five signals, as a list where the ring will not fit */
+.siglist{list-style:none;display:grid;gap:1px;background:var(--line2);
+  border:1px solid var(--line2);border-radius:8px;overflow:hidden}
+.siglist li{background:var(--slab);padding:16px 18px;display:grid;
+  grid-template-columns:26px 1fr;gap:12px;align-items:start}
+.siglist .n{font-family:var(--mono);font-size:11px;color:var(--lime);
+  border:1px solid var(--lime);border-radius:50%;width:22px;height:22px;
+  display:grid;place-items:center}
+.siglist b{display:block;font-family:var(--disp);font-size:15px;color:var(--ink);font-weight:600}
+.siglist em{display:block;font-style:normal;font-size:14px;color:var(--mute);margin-top:2px}
+.siglist .act{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--lime);margin-top:6px}
+
+/* photograph fallback */
+.photo.missing{aspect-ratio:16/9;display:grid;place-items:center;padding:32px;
+  background:var(--sunk)}
+.photo.missing .stamp{position:static;background:none;backdrop-filter:none;
+  color:var(--faint);text-align:center;line-height:2}
+.photo.missing .stamp::after{content:" — photograph not embedded in this build";
+  color:var(--faint)}
+
+/* what we would do next */
+.bets{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s3);margin-top:var(--s3)}
+.bets>div{border-top:2px solid var(--lime);padding-top:14px}
+.bets b{display:block;font-family:var(--disp);font-size:16px;color:var(--ink);
+  font-weight:600;margin-bottom:6px}
+.bets p{font-size:14.5px;color:var(--mute);line-height:1.55}
+
+.ctarow{display:flex;gap:var(--s3);align-items:center;flex-wrap:wrap;margin-top:var(--s4)}
+.ctarow .btn{margin-top:0}
+.btn2{font-family:var(--disp);font-size:15px;font-weight:600;color:var(--body);
+  text-decoration:none;border-bottom:1px solid var(--mute);padding-bottom:3px}
+.btn2:hover{color:var(--lime);border-color:var(--lime)}
+.ctalinks{flex-direction:column;gap:12px;align-items:flex-start}
+.ctalinks a{border-bottom-color:var(--mute)}
+
+@media(max-width:1180px){
+  .legend .lg{grid-template-columns:1fr}
+  .bagrid{grid-template-columns:1fr}
+  .bacol.before{border-right:0;border-bottom:1px solid var(--line2)}
+  .bets{grid-template-columns:1fr}
+}
+@media(max-width:640px){
+  .hole{padding:22px 18px}
+  .calc{font-size:11.5px;padding:12px 14px}
+  .legend{padding:20px 18px}
+}
+
+</style>
+</head>
+<body>
+<a class="skip" href="#climb">Skip to the evidence</a>
+<div id="prog" aria-hidden="true"></div>
+
+<aside class="rail">
+  <div class="mark">
+    <a class="ls" href="#top">Luna<span>Sol</span></a>
+    <small>Group</small>
+  </div>
+  <nav aria-label="Sections">
+    <a href="#climb"><i>00</i>The climb</a>
+    <a href="#problem"><i>01</i>The problem</a>
+    <a href="#blind"><i>02</i>The blind spot</a>
+    <a href="#ground"><i>03</i>On the ground</a>
+    <a href="#approach"><i>04</i>The system</a>
+    <a href="#stress"><i>05</i>The stress test</a>
+    <a href="#results"><i>06</i>Where it stands</a>
+    <a href="#evidence"><i>07</i>The evidence</a>
+  </nav>
+  <p class="foot">PSA × Luna Sol<br>Operations · May–Aug 2026<br>Last reading 11 Aug</p>
+</aside>
+
+<main id="top">
+
+<!-- ============================ HERO ============================ -->
+<header class="hero">
+  <div class="field" id="cardfield" aria-hidden="true"></div>
+  <div class="wrap">
+    <div class="chip rv in">
+      <span class="psa">PSA</span>
+      <span class="x">×</span>
+      <span class="kicker" style="color:var(--body)">Luna Sol Group</span>
+    </div>
+    <h1 class="rv in d1">Fourteen million cards.<br><span class="q">A recovery you can</span> <em>audit</em>.</h1>
+    <p class="lede rv in d2">A fee change buried the world's largest card grader under the biggest
+      backlog in its history. Luna Sol built the measurement, threshold and governance system its
+      leadership ran the recovery on — the one that read July's rebound as a signal rather than a
+      setback.</p>
+    <div class="facts rv in d3">
+      <div>Role<b>Senior operations advisor</b></div>
+      <div>Scope<b>Diagnose · Design · Govern</b></div>
+      <div>Engagement<b>May – August 2026</b></div>
+      <div>Peak queue<b class="num">~14.0M cards</b></div>
+    </div>
+    <p class="fieldkey rv in d3">Each mark is 10,000 cards. All 1,400 of them are the mid-June peak;
+      the lit ones are the 2.15 million cleared by 11 August.</p>
+  </div>
+</header>
+
+<!-- ============================ 00 THE CLIMB ============================ -->
+<section class="ch" id="climb" style="border-top:0;padding-top:var(--s3)">
+  <div class="bleed">
+    <figure class="fig rv">
+      <div class="fighead">
+        <span class="t">PSA active grading backlog, to the peak — millions of cards</span>
+        <span class="stamp-live">Last reading 11 Aug 2026</span>
+      </div>
+      <div id="fig-climb"></div>
+      <figcaption>
+        <span>Zero-based axis · hover, or focus the chart and use ← →</span>
+        <a href="https://www.psacard.com/info/backlog-tracker" target="_blank" rel="noopener">PSA backlog tracker ↗</a>
+      </figcaption>
+    </figure>
+
+    <div class="legend rv d1">
+      <h2>How to read this page</h2>
+      <div class="lg">
+        <div><span class="sw rep"></span><b>Reported</b><p>Published by PSA or an independent
+          tracker. Numbered citations link to the original.</p></div>
+        <div><span class="sw der"></span><b>Derived</b><p>Arithmetic on reported figures. The
+          calculation is printed beside the number so you can check it.</p></div>
+        <div><span class="sw non"></span><b>Not published</b><p>Left as an empty slot with the reason
+          in it, rather than filled with an estimate.</p></div>
+      </div>
+      <p class="note" style="margin-top:var(--s3)">Two more things, said once so they don't have to be
+        repeated. The threshold values inside the framework belong to the client and are not
+        published here — the architecture is the deliverable, not a number. And PSA's operating
+        results are PSA's: they reflect the work of its own leadership and operating teams, and
+        nothing on this page claims otherwise.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ 01 PROBLEM ============================ -->
+<section class="ch" id="problem">
+  <div class="wrap">
+    <div class="chead rv"><span class="kicker">01 — The problem</span></div>
+    <h2 class="rv">Thirty-three days from a fee change to an all-time record.</h2>
+    <p class="lede rv d1" style="margin-top:var(--s3)">A submission-fee update on 14 May triggered a
+      surge of roughly 20% — about <b>1.6 million extra cards in two weeks</b>.<sup class="c"><a href="#src-1">1</a></sup>
+      By 2 June the queue neared 10 million and PSA paused all four Value
+      tiers.<sup class="c"><a href="#src-1">1</a>,<a href="#src-3">3</a></sup>
+      By mid-June it stood at <b>about 14 million cards</b>, the largest queue in the company's
+      history.<sup class="c"><a href="#src-4">4</a></sup> PSA has not published the date of the peak;
+      mid-June is the assumption this page works from, and the chart marks it with an uncertainty
+      bar rather than a false coordinate.</p>
+
+    <div class="split" style="margin-top:var(--s5)">
+      <div class="tl rv d1">
+        <div class="h">How the queue built</div>
+        <div class="r"><span class="d">MAY 14</span><span>Fee update triggers a surge of about 20%<sup class="c"><a href="#src-1">1</a></sup></span><span class="v">+1.6M</span></div>
+        <div class="r"><span class="d">JUN 02</span><span>All four Value tiers paused<sup class="c"><a href="#src-1">1</a>,<a href="#src-9">9</a></sup></span><span class="v">~10.0M</span></div>
+        <div class="r hot"><span class="d">MID-JUN</span><span>Backlog peaks at an all-time record<sup class="c"><a href="#src-4">4</a></sup></span><span class="v">~14.0M</span></div>
+        <div class="r"><span class="d">JUN 30</span><span>Queue turns downward as measures take hold<sup class="c"><a href="#src-5">5</a></sup></span><span class="v">~12.0M</span></div>
+      </div>
+      <div class="rv d2">
+        <h3>Three things made this hard</h3>
+        <div class="hards">
+          <div><span class="hk">A · Scale</span>
+            <p>Fourteen million units is not a problem you work harder at. Until the binding
+              constraint is found and removed, every other effort is upstream of a wall.</p></div>
+          <div><span class="hk">B · Visibility</span>
+            <p>Volume held back by the paused tiers sat <b>outside</b> the counted queue. So a
+              falling number proved nothing on its own — the metric could improve while the real
+              position got worse.</p></div>
+          <div><span class="hk">C · Control</span>
+            <p>Reopening a tier too early would refill the queue within days. That decision needed a
+              threshold and an owner, not a date in a press release.</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ 02 THE BLIND SPOT ============================ -->
+<section class="ch" id="blind">
+  <div class="wrap">
+    <div class="chead rv"><span class="kicker">02 — The blind spot</span></div>
+    <h2 class="rv">A falling number is not a recovery.</h2>
+    <p class="lede rv d1" style="margin-top:var(--s3)">This is the finding the rest of the engagement
+      is built on. The published backlog counts cards in the active queue. It does not count the
+      submissions the tier pause was holding back — and those were going to arrive whether or not
+      the queue was ready for them. A number that cannot see its own inflow cannot tell you whether
+      you are winning.</p>
+  </div>
+
+  <div class="bleed" style="margin-top:var(--s4)">
+    <figure class="fig rv d1">
+      <div class="fighead">
+        <span class="t">Where the flow actually caps</span>
+        <span class="kicker">The finding</span>
+      </div>
+      <div id="fig-flow"></div>
+      <figcaption><span>Rated capacity is not effective throughput. The constraint sets the rate — and the held volume never enters the count.</span></figcaption>
+    </figure>
+  </div>
+
+  <div class="wrap">
+    <div class="hole rv d1">
+      <span class="kicker">A worked example of why this matters</span>
+      <h3>One published fortnight does not close on grading alone.</h3>
+      <p>Take the two weeks from the mid-June peak to 30 June. The queue fell 2.00M. June's
+        reported output was 2.50M across the month<sup class="c"><a href="#src-7">7</a></sup> — about
+        1.17M over fourteen days. Grading therefore accounts for 1.17M of a 2.00M fall, and the
+        remaining <b>0.83M</b> came off the count some other way.</p>
+      <pre class="calc" aria-label="The arithmetic for the unreconciled fortnight">Δqueue   =  12.00M − 14.00M   =  −2.00M
+graded   =  2.50M × 14/30     =   1.17M
+arrivals =  Δqueue + graded   =  −0.83M   ← cannot happen</pre>
+      <p>Arrivals cannot be negative. So one of three things is true: volume left the count without
+        being graded (cancellations, withdrawals, reclassification), the two readings are measured
+        on different bases, or "mid-June" is not the date it appears to be. All three are ordinary.
+        None of them is visible in the headline number.</p>
+      <p><b>That is the whole argument for the engagement.</b> A measurement system that cannot
+        surface an 0.83M discrepancy in its own public series is not a system you can run a recovery
+        on. Finding holes like this one is what the work was for.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ 03 ON THE GROUND ============================ -->
+<section class="ch" id="ground">
+  <div class="wrap">
+    <div class="chead rv"><span class="kicker">03 — On the ground</span></div>
+    <div class="split" style="margin-top:var(--s3);align-items:center">
+      <div class="rv">
+        <h2 style="max-width:15ch">The day the line turned.</h2>
+        <p class="lede" style="margin-top:var(--s3)">None of this was done from a deck. The
+          measurement system was built against the real constraint, in the building where the cards
+          actually move — capacity walked, queues counted, handoffs timed.</p>
+        <p style="margin-top:var(--s3);font-size:16px">The photograph was taken at PSA on
+          <b>30 June 2026</b>, the same reading at which the published queue stopped climbing and
+          turned down, from about 14 million toward 12
+          million.<sup class="c"><a href="#src-5">5</a></sup> The coincidence of dates is a
+          coincidence; a queue of that size turns on thousands of operating decisions, not on a
+          visit. What the date marks is the point at which the measurement was in place and the
+          recovery had something to be run against.</p>
+      </div>
+      <figure class="rv d1">
+        <div class="photo">
+          <img id="psa-hq-photo" src="assets/psa-hq-2026-06-30.jpg"
+               alt="Seven people standing together in the PSA lobby in front of the company's sign, with framed graded cards displayed on the wall behind them."
+               onerror="this.closest('.photo').classList.add('missing');this.remove()">
+          <span class="stamp">PSA HQ · 30 JUN 2026 · 3:15 PM</span>
+        </div>
+        <p class="photocap">On site at PSA, 30 June 2026 — the reading at which the published backlog
+          turned downward.<sup class="c"><a href="#src-5">5</a></sup>
+          <b>Published with permission. No individual is identified.</b></p>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ 04 THE SYSTEM ============================ -->
+<section class="ch" id="approach">
+  <div class="wrap">
+    <div class="chead rv"><span class="kicker">04 — The system</span></div>
+    <h2 class="rv">Three moves, and they only work in this order.</h2>
+    <p class="lede rv d1" style="margin-top:var(--s3)">You cannot govern a number you do not trust,
+      and you cannot trust a number until you know what constrains it. So: find the constraint, turn
+      judgment into rules, then put the rules under an owner.</p>
+
+    <div class="moves">
+      <div class="mv rv"><span class="kicker">Move 01</span>
+        <h3>Find the constraint that actually binds</h3>
+        <p>Separate rated capacity from effective throughput, and locate where flow really caps out.</p>
+        <ul>
+          <li>Capacity against realised throughput, stage by stage</li>
+          <li>Backlog segmented into categories you can act on</li>
+          <li>Held volume identified outside the counted queue</li>
+        </ul>
+      </div>
+      <div class="mv rv d1"><span class="kicker">Move 02</span>
+        <h3>Turn judgment into decision rules</h3>
+        <p>Replace "how does it look this week?" with defined signals tied to specific decisions.</p>
+        <ul>
+          <li>Leading and lagging indicators, kept separate</li>
+          <li>Thresholds with pre-agreed escalation triggers</li>
+          <li>Prioritisation driven by queue behaviour, not by pressure</li>
+        </ul>
+      </div>
+      <div class="mv rv d2"><span class="kicker">Move 03</span>
+        <h3>Make the recovery governable</h3>
+        <p>Every signal gets an owner, a cadence and a defined response. Reopening is earned, not scheduled.</p>
+        <ul>
+          <li>Owners, cadence and review mechanisms</li>
+          <li>Reopening gated on evidence rather than on a calendar</li>
+          <li>Recurrence controls for the next surge</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="ba rv d1">
+      <div class="bah"><span class="kicker">What changed in the room</span></div>
+      <div class="bagrid">
+        <div class="bacol before">
+          <span class="lb">Before</span>
+          <ul>
+            <li>"How does the number look this week?"</li>
+            <li>One count, read as a verdict</li>
+            <li>Reopening tied to a target date</li>
+            <li>Escalation when someone raises it</li>
+            <li>Recovery judged by direction of travel</li>
+          </ul>
+        </div>
+        <div class="bacol after">
+          <span class="lb">After</span>
+          <ul>
+            <li>Five signals, each answering a stated question</li>
+            <li>Level, velocity, aging, held volume and constraint capacity, read together</li>
+            <li>Reopening gated on a threshold, with a named owner</li>
+            <li>Escalation triggered by a breach, not by a person</li>
+            <li>Recovery judged against the path, at every reading</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <figure class="fig rv d1" style="margin-top:var(--s4)">
+      <div class="fighead">
+        <span class="t">The operating loop installed</span>
+        <span class="kicker">Weekly cadence · 5 signals</span>
+      </div>
+      <div id="fig-loop"></div>
+      <figcaption><span>Framework structure shown. Trigger values are set with the client and are not published.</span></figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================ 05 THE STRESS TEST ============================ -->
+<section class="ch" id="stress">
+  <div class="wrap">
+    <div class="chead rv"><span class="kicker">05 — The stress test</span></div>
+    <h2 class="rv">Then the queue went back up.</h2>
+    <p class="lede rv d1" style="margin-top:var(--s3)">On 14 July the backlog touched
+      <b>11.0M</b>.<sup class="c"><a href="#src-6">6</a></sup> Two weeks later it was
+      <b>12.4M</b> — up 1.4 million — as held-back volume
+      returned.<sup class="c"><a href="#src-2">2</a></sup> This is the fortnight the whole system was
+      built for, and it is the reason the chart at the top of this page stopped where it did.</p>
+  </div>
+
+  <div class="bleed" style="margin-top:var(--s4)">
+    <figure class="fig rv">
+      <div class="fighead">
+        <span class="t">The full series — PSA active grading backlog, millions of cards</span>
+        <span class="stamp-live">Last reading 11 Aug 2026</span>
+      </div>
+      <div id="fig-backlog"></div>
+      <figcaption>
+        <span>Zero-based axis · the peak marker carries an uncertainty bar because PSA has not published the peak date · hover, or focus and use ← →</span>
+        <a href="https://www.psacard.com/info/backlog-tracker" target="_blank" rel="noopener">PSA backlog tracker ↗</a>
+      </figcaption>
+    </figure>
+  </div>
+
+  <div class="wrap">
+    <div class="callout rv d1">
+      <span class="kicker">What a calendar promise would have cost</span>
+      <h3>A date would have broken here, in public.</h3>
+      <p>Any commitment of the form <i>"Value tiers reopen when the backlog clears 11 million"</i> —
+        or worse, <i>"reopen on 1 August"</i> — was satisfied on 14 July and violated by 28 July.
+        Reopening on that signal would have released held volume into a queue that was already
+        refilling, on the reading immediately before it rose 1.4 million.</p>
+      <p>Threshold logic treats the rebound as what it is: a signal to review the root cause and keep
+        reopening gated on evidence. That pattern was the latent-volume risk identified during the
+        engagement.<sup class="c"><a href="#src-8">8</a></sup> By 11 August the queue had eased to
+        <b>11.85M</b>.<sup class="c"><a href="#src-2">2</a></sup></p>
+    </div>
+
+    <div class="split" style="margin-top:var(--s4)">
+      <figure class="fig rv">
+        <div class="fighead"><span class="t">The rebound fortnight</span><span class="kicker">Derived</span></div>
+        <div id="fig-fortnight"></div>
+        <figcaption><span>14–28 Jul. The queue rose 1.40M while grading ran at a record, so arrivals
+          were at least 1.40M + 1.24M. This is the same identity that returns an impossible answer for
+          the June window above — which is why the figure is stated as a bound, and why closing that
+          gap is the first thing we would do next.</span></figcaption>
+      </figure>
+      <figure class="fig rv d1">
+        <div class="fighead"><span class="t">Every million, accounted for</span><span class="kicker">Derived</span></div>
+        <div id="fig-waterfall"></div>
+        <figcaption><span>Peak to latest, step by step. Gross drawdown −3.55M against a gross return of +1.40M: 0.39M came back for every 1.00M pushed out.</span></figcaption>
+      </figure>
+    </div>
+
+    <p class="note rv">Recovery is not a straight line, and a page that showed one would be lying.
+      The value of the system is knowing, at every reading, whether you are still on the path — and
+      being able to show your work when someone asks.</p>
+  </div>
+</section>
+
+<!-- ============================ 06 WHERE IT STANDS ============================ -->
+<section class="ch" id="results">
+  <div class="wrap">
+    <div class="chead rv"><span class="kicker">06 — Where it stands</span></div>
+    <h2 class="rv">The queue fell 15%. The time to clear it fell 36%.</h2>
+    <p class="lede rv d1" style="margin-top:var(--s3)">That gap is the result, and most of it came
+      from the denominator. The queue fell to 0.85 of its peak; monthly output rose about 33% over
+      the same span. Multiply the two and cover falls 36% — roughly two thirds of that from output,
+      one third from the drawdown.</p>
+
+    <div class="stats">
+      <div class="stat rv">
+        <span class="v">−<span class="count" data-to="15.4" data-dec="1">15.4</span><u>%</u></span>
+        <span class="k">queue, from the ~14.0M peak to 11.85M on 11 August<sup class="c"><a href="#src-2">2</a>,<a href="#src-4">4</a></sup></span>
+        <span class="basis rep">Reported</span>
+      </div>
+      <div class="stat rv d1">
+        <span class="v">−<span class="count" data-to="36" data-dec="0">36</span><u>%</u></span>
+        <span class="k">months of cover — 6.78 months at the peak to at most 4.31 on 11 August</span>
+        <span class="basis der">Derived · 14.00 ÷ 2.07 → 11.85 ÷ 2.75</span>
+      </div>
+      <div class="stat rv d2">
+        <span class="v"><span class="count" data-to="2.50" data-dec="2">2.50</span><u>M</u></span>
+        <span class="k">graded in June — +21% on May, +74% on a year earlier, an all-time record<sup class="c"><a href="#src-7">7</a></sup></span>
+        <span class="basis rep">Reported</span>
+      </div>
+      <div class="stat rv d3">
+        <span class="v"><span class="count" data-to="99.4" data-dec="1">99.4</span><u>%</u></span>
+        <span class="k">operational success rate, held at maximum throughput<sup class="c"><a href="#src-2">2</a></sup></span>
+        <span class="basis rep">Reported</span>
+      </div>
+    </div>
+
+    <div class="split" style="margin-top:var(--s5)">
+      <figure class="fig rv">
+        <div class="fighead"><span class="t">Monthly cards graded</span><span class="kicker">Reported · derived · not published</span></div>
+        <div id="fig-output"></div>
+        <figcaption><span>Solid is reported, hatched is derived, and the empty slot is the July 2025 figure that does not exist — so there is exactly one year-over-year pair here, not two.</span></figcaption>
+      </figure>
+      <figure class="fig rv d1">
+        <div class="fighead"><span class="t">Months of cover in the queue</span><span class="kicker">Derived</span></div>
+        <div id="fig-cover"></div>
+        <figcaption><span>Queue ÷ the last completed month of output. The August figure is a ceiling, because July's output is published as a floor.</span></figcaption>
+      </figure>
+    </div>
+
+    <p class="note rv">One limit on the 36%: it rests on a derived May output (2.50 ÷ 1.21) and a
+      July floor (2.50 × 1.10), so it is a ratio of two published series rather than a measured
+      quantity. Both figures move if PSA publishes the actuals.</p>
+  </div>
+</section>
+
+<!-- ============================ 07 EVIDENCE ============================ -->
+<section class="ch" id="evidence" data-band="paper">
+  <div class="wrap">
+    <div class="chead rv"><span class="kicker">07 — The evidence</span></div>
+    <h2 class="rv">Every claim, sourced.</h2>
+    <p class="lede rv d1" style="margin-top:var(--s3)">Two primary PSA sources and seven independent
+      reports. Every citation on this page links here, and every entry opens the original.</p>
+    <div class="srcs">
+      <a class="src rv" id="src-1" href="https://www.psacard.com/articles/articleview/15210/service-level-update-may-2026" target="_blank" rel="noopener"><span class="n">01</span><span><span class="t">Service-level update — pause notice, surge scale, reopening logic</span><br><span class="m">PSA · 28 MAY 2026</span></span><span class="tag pri">Primary</span></a>
+      <a class="src rv" id="src-2" href="https://www.psacard.com/info/backlog-tracker" target="_blank" rel="noopener"><span class="n">02</span><span><span class="t">Backlog tracker — live queue, output and quality readings</span><br><span class="m">PSA · BI-WEEKLY · 28 JUL &amp; 11 AUG BASIS</span></span><span class="tag pri">Primary</span></a>
+      <a class="src rv" id="src-3" href="https://www.si.com/collectibles/major-hobby-news-psa-confirms-extended-grading-pause" target="_blank" rel="noopener"><span class="n">03</span><span><span class="t">PSA confirms extended grading pause</span><br><span class="m">SPORTS ILLUSTRATED · 28 MAY 2026</span></span><span class="tag">Press</span></a>
+      <a class="src rv" id="src-4" href="https://athlonsports.com/collectibles/psa-grading-backlog-2026-current-status" target="_blank" rel="noopener"><span class="n">04</span><span><span class="t">Backlog status: the ~14M peak, and the turn toward recovery</span><br><span class="m">ATHLON SPORTS · 13 JUL 2026</span></span><span class="tag">Press</span></a>
+      <a class="src rv" id="src-5" href="https://www.aol.com/articles/psa-grading-backlog-drops-14-155205000.html" target="_blank" rel="noopener"><span class="n">05</span><span><span class="t">Backlog drops from 14 million toward 12 million</span><br><span class="m">AOL · 13 JUL 2026</span></span><span class="tag">Press</span></a>
+      <a class="src rv" id="src-6" href="https://www.si.com/collectibles/psa-bi-weekly-update-shows-11-million-cards-still-backlogged" target="_blank" rel="noopener"><span class="n">06</span><span><span class="t">Bi-weekly update: 11 million cards still in the queue</span><br><span class="m">SPORTS ILLUSTRATED · 15 JUL 2026</span></span><span class="tag">Press</span></a>
+      <a class="src rv" id="src-7" href="https://www.gemrate.com/june-2026-recap" target="_blank" rel="noopener"><span class="n">07</span><span><span class="t">June recap: 2.50M graded, +21% MoM, +74% YoY</span><br><span class="m">GEMRATE · 1 JUL 2026</span></span><span class="tag">Data</span></a>
+      <a class="src rv" id="src-8" href="https://the-report-card.com/blog/psa-backlog-shadow-queue-2026" target="_blank" rel="noopener"><span class="n">08</span><span><span class="t">The shadow queue: why visible backlog understates demand</span><br><span class="m">THE REPORT CARD · 4 JUL 2026</span></span><span class="tag">Analysis</span></a>
+      <a class="src rv" id="src-9" href="https://cardgrade.io/blog/psa-value-tiers-paused-2026" target="_blank" rel="noopener"><span class="n">09</span><span><span class="t">Implications of the Value-tier pause</span><br><span class="m">CARDGRADE · 8 JUL 2026</span></span><span class="tag">Analysis</span></a>
+    </div>
+    <p class="note rv">Independent coverage provides dated operating context; it is not evidence of
+      Luna Sol's contribution and is not presented as such. No client testimonial appears on this
+      page without explicit written approval.</p>
+  </div>
+</section>
+
+<!-- ============================ WHAT'S NEXT + CTA ============================ -->
+<section class="cta">
+  <div class="wrap">
+    <span class="kicker rv" style="color:var(--lime)">What we would do next</span>
+    <div class="bets rv d1">
+      <div><b>Sequence the reopening</b><p>Reopen the four Value tiers one at a time against the
+        held-volume signal, so the return of held submissions is metered rather than absorbed.</p></div>
+      <div><b>Shape the intake</b><p>Move the constraint upstream: price, schedule and gate
+        submissions so the next fee change lands as a curve instead of a wall.</p></div>
+      <div><b>Close the reconciliation gap</b><p>Resolve the 0.83M that grading does not explain, so
+        the public series and the internal series answer to the same definition.</p></div>
+    </div>
+    <h2 class="rv d1" style="margin-top:var(--s5)">Have a queue, a constraint, or a number you can't trust?</h2>
+    <p class="lede rv d2">Bring the decision and the evidence behind it. We will tell you where it is
+      strong, where it is only directional, and what to test before you act on it.</p>
+    <div class="ctarow rv d2">
+      <a class="btn" href="#">Start a conversation →</a>
+      <a class="btn2" href="#evidence">Read the evidence first</a>
+    </div>
+    <div class="ctalinks rv d3">
+      <a href="#">PSA Recovery Digital Twin — the model behind these figures</a>
+      <a href="#">Backlog Recovery Calculator — months of cover for your queue</a>
+      <a href="#">All case studies</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 Luna Sol Group LLC</span>
+    <span>Client marks belong to their owners · Evidence standard · Privacy</span>
+  </div>
+</footer>
+
+<script>
+/* ============================================================================
+   PSA × Luna Sol — data and figures. No dependencies.
+
+   Two rules run through every chart on this page.
+
+   1. PROVENANCE IS DRAWN, NOT FOOTNOTED.
+      Solid          = reported by a cited source.
+      45° hatch      = derived by arithmetic on reported figures.
+      Dotted, empty  = not published; the slot is left open and says so.
+
+   2. NO FLATTERING AXES.
+      The backlog chart is zero-based. A truncated axis would make a 15%
+      reduction look like a collapse, which is the one thing a page about
+      auditable numbers cannot do.
+
+   Palette: validated with the dataviz six-checks, dark, surface #111410 —
+   intake #D2602B / output #4E9BD4, all six PASS, worst adjacent pair
+   ΔE 22.5 deutan, 27.2 normal. Brand lime #B8E34D is a UI accent and the
+   single-series queue hue; PSA red is never a data colour.
+   ========================================================================= */
+const RM = matchMedia('(prefers-reduced-motion: reduce)');
+const NARROW = matchMedia('(max-width: 760px)');
+const C = {
+  ink:'#F4F5F2', body:'#BEC2B6', mute:'#949A90', faint:'#7E837A',
+  hair:'rgba(255,255,255,.13)', hair2:'rgba(255,255,255,.07)',
+  lime:'#B8E34D', intake:'#D2602B', output:'#4E9BD4', warn:'#FF8A4C',
+  bg:'#0B0D0A'
+};
+
+/* ---- the published record ----------------------------------------------- */
+const Q = [
+  {d:'Jun 2',   iso:'2026-06-02', v:10.00, note:'All four Value tiers paused',   src:'1, 3, 9'},
+  {d:'Mid-Jun', iso:'2026-06-16', v:14.00, note:'All-time record peak',          src:'4', key:'peak', fuzzy:true},
+  {d:'Jun 30',  iso:'2026-06-30', v:12.00, note:'Trend turns downward',          src:'5'},
+  {d:'Jul 14',  iso:'2026-07-14', v:11.00, note:'Local low',                     src:'6', key:'low'},
+  {d:'Jul 28',  iso:'2026-07-28', v:12.40, note:'Rebound as held volume returns',src:'2, 8', key:'reb'},
+  {d:'Aug 11',  iso:'2026-08-11', v:11.85, note:'Latest reading',                src:'2', key:'last'}
+];
+
+const NS = 'http://www.w3.org/2000/svg';
+const el = (n, a = {}) => { const e = document.createElementNS(NS, n);
+  for (const k in a) if (a[k] != null) e.setAttribute(k, a[k]); return e; };
+const txt = (s, a) => { const t = el('text', a); t.textContent = s; return t; };
+
+/* Every figure carries a table of the same numbers, so the picture is never
+   the only way to reach them. */
+function srTable(host, caption, cols, rows){
+  /* wrapped in a div: a bare <table> ignores width:1px and expands to its
+     content, which pushes the document sideways */
+  const box = document.createElement('div');
+  box.className = 'sr-only';
+  box.innerHTML = `<table><caption>${caption}</caption><thead><tr>${
+    cols.map(c => `<th scope="col">${c}</th>`).join('')}</tr></thead><tbody>${
+    rows.map(r => `<tr>${r.map((c, i) =>
+      i ? `<td>${c}</td>` : `<th scope="row">${c}</th>`).join('')}</tr>`).join('')}</tbody></table>`;
+  host.appendChild(box);
+}
+const clear = host => { while (host.firstChild) host.removeChild(host.firstChild); };
+
+/* A figure sharing a row renders at about half width, so it takes the same
+   compact geometry a phone does — otherwise its type scales down to 6px. */
+const compact = host => NARROW.matches || !!host.closest('.split');
+
+/* 45° hatch, one per colour, for everything derived */
+function hatchDef(svg, id, colour){
+  const defs = el('defs');
+  const p = el('pattern', {id, width:'7', height:'7',
+    patternUnits:'userSpaceOnUse', patternTransform:'rotate(45)'});
+  p.appendChild(el('line', {x1:'0', y1:'0', x2:'0', y2:'7',
+    stroke:colour, 'stroke-width':'2.4', 'stroke-opacity':'.55'}));
+  defs.appendChild(p); svg.appendChild(defs);
+}
+
+/* ============================================================================
+   1. The backlog. Zero-based, dated, with the pause window behind it.
+
+   `through` truncates the series: the hero shows the climb only, so the
+   reader meets the rebound where it means something rather than in the
+   first screen.
+   ========================================================================= */
+function backlogChart(host, {through = Q.length - 1, teaser = false} = {}){
+  clear(host);
+  const n = NARROW.matches;
+  const W = n ? 460 : 940, H = n ? 330 : 400;
+  const P = n ? {t:56, r:48, b:54, l:46} : {t:64, r:116, b:52, l:60};
+  const MAX = 15;
+  const x = i => P.l + (i / (Q.length - 1)) * (W - P.l - P.r);
+  const y = v => P.t + (1 - v / MAX) * (H - P.t - P.b);
+  const FS = n ? {ax:12, an:12, lab:10.5} : {ax:11.5, an:12, lab:11.5};
+
+  const shown = Q.slice(0, through + 1);
+  const svg = el('svg', {viewBox:`0 0 ${W} ${H}`, role:'group', tabindex:'0',
+    'aria-label': teaser
+      ? 'PSA active grading backlog. About 10 million cards on 2 June 2026, rising to an ' +
+        'all-time record of about 14 million by mid-June. The rest of the series appears ' +
+        'later on this page. The axis starts at zero.'
+      : 'PSA active grading backlog, June to August 2026, on a zero-based axis. ' +
+        '10.0 million on 2 June, about 14.0 million at the mid-June peak, 12.0 on 30 June, ' +
+        '11.0 on 14 July, 12.4 on 28 July, and 11.85 million on 11 August. ' +
+        'Focus the chart and use the arrow keys to read each point.'});
+
+  /* the pause window is a state of the world, so it is a region */
+  svg.appendChild(el('rect', {x:x(0), y:P.t - 20, width:(W - P.r) - x(0),
+    height:H - P.t - P.b + 20, fill:'rgba(184,227,77,.04)'}));
+  svg.appendChild(el('line', {x1:x(0), y1:P.t - 20, x2:x(0), y2:H - P.b,
+    stroke:'rgba(184,227,77,.4)', 'stroke-dasharray':'2 5'}));
+  svg.appendChild(txt(n ? 'TIERS PAUSED FROM 2 JUN'
+      : 'ALL FOUR VALUE TIERS PAUSED FROM 2 JUNE — THE RECORD DOES NOT SAY WHEN THEY REOPENED',
+    {x:x(0) + 8, y:P.t - 28, fill:C.lime, 'font-size':FS.lab,
+     'font-family':'var(--mono)', 'letter-spacing':'.09em'}));
+
+  /* grid, zero-based */
+  for (let g = 0; g <= MAX; g += 5){
+    svg.appendChild(el('line', {x1:P.l, y1:y(g), x2:W - P.r, y2:y(g),
+      stroke:g === 0 ? C.hair : C.hair2}));
+    svg.appendChild(txt(g + 'M', {x:P.l - 10, y:y(g) + 4, fill:C.faint,
+      'font-size':FS.ax, 'text-anchor':'end', 'font-family':'var(--mono)'}));
+  }
+
+  /* the empty region: what the reader has not been shown yet */
+  if (teaser){
+    const x0 = x(through);
+    svg.appendChild(el('rect', {x:x0, y:P.t - 20, width:(W - P.r) - x0,
+      height:H - P.t - P.b + 20, fill:'rgba(8,9,7,.72)'}));
+    svg.appendChild(el('line', {x1:x0, y1:P.t - 20, x2:x0, y2:H - P.b,
+      stroke:C.hair, 'stroke-dasharray':'3 5'}));
+    const mx = (x0 + (W - P.r)) / 2;
+    svg.appendChild(txt('THE REST OF THE SERIES', {x:mx, y:y(7.6), fill:C.faint,
+      'font-size':FS.lab, 'text-anchor':'middle', 'font-family':'var(--mono)',
+      'letter-spacing':'.12em'}));
+    svg.appendChild(txt('IS IN THE STRESS TEST ↓', {x:mx, y:y(7.6) + 18, fill:C.faint,
+      'font-size':FS.lab, 'text-anchor':'middle', 'font-family':'var(--mono)',
+      'letter-spacing':'.12em'}));
+  }
+
+  const pts = shown.map((p, i) => [x(i), y(p.v)]);
+  const d = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+
+  const defs = el('defs');
+  const g = el('linearGradient', {id:'qfill' + (teaser ? '-t' : ''), x1:'0', y1:'0', x2:'0', y2:'1'});
+  g.appendChild(el('stop', {offset:'0%', 'stop-color':C.lime, 'stop-opacity':'.11'}));
+  g.appendChild(el('stop', {offset:'100%','stop-color':C.lime, 'stop-opacity':'0'}));
+  defs.appendChild(g); svg.appendChild(defs);
+  svg.appendChild(el('path', {d:`${d} L ${pts.at(-1)[0]} ${y(0)} L ${pts[0][0]} ${y(0)} Z`,
+    fill:`url(#qfill${teaser ? '-t' : ''})`}));
+  const line = el('path', {d, fill:'none', stroke:C.lime, 'stroke-width':'2.4',
+    'stroke-linejoin':'round', 'stroke-linecap':'round'});
+  svg.appendChild(line);
+
+  /* the peak date is not published — say so in the mark, not in a footnote */
+  const pk = Q.findIndex(p => p.key === 'peak');
+  if (pk <= through){
+    const half = (x(1) - x(0)) * (6 / 14);          /* ±6 days on a 14-day pitch */
+    const yy = y(14.0);
+    svg.appendChild(el('line', {x1:x(pk) - half, y1:yy, x2:x(pk) + half, y2:yy,
+      stroke:C.mute, 'stroke-width':'1.2', 'stroke-opacity':'.85'}));
+    [-1, 1].forEach(s => svg.appendChild(el('line', {x1:x(pk) + s * half, y1:yy - 4,
+      x2:x(pk) + s * half, y2:yy + 4, stroke:C.mute, 'stroke-width':'1.2'})));
+  }
+
+  /* the peak reference rule — measure the recovery against it, don't eyeball it */
+  if (!teaser)
+    svg.appendChild(el('line', {x1:x(pk), y1:y(14), x2:W - P.r, y2:y(14),
+      stroke:C.mute, 'stroke-dasharray':'2 6', 'stroke-opacity':'.5'}));
+
+  const LBL = n ? {
+    peak:['~14.0M', C.ink, -24], low:['11.0M', C.lime, 24],
+    reb:['12.4M', C.warn, -20], last:['11.85M', C.ink, -20]
+  } : {
+    peak:['~14.0M PEAK', C.ink, -26], low:['11.0M LOW', C.lime, 26],
+    reb:['12.4M REBOUND', C.warn, -22], last:['11.85M', C.ink, -22]
+  };
+  shown.forEach((p, i) => {
+    const lb = LBL[p.key], big = !!lb;
+    svg.appendChild(el('circle', {cx:x(i), cy:y(p.v), r:big ? 5 : 3.5,
+      fill:p.key === 'reb' ? C.bg : (big ? C.ink : C.bg),
+      stroke:p.key === 'reb' ? C.warn : C.lime, 'stroke-width':'2'}));
+    if (!n || i % 2 === 0 || i === shown.length - 1)
+      svg.appendChild(txt(p.d.toUpperCase(), {x:x(i), y:H - 20, fill:C.mute,
+        'font-size':FS.ax, 'text-anchor':'middle', 'font-family':'var(--mono)'}));
+    if (lb)
+      svg.appendChild(txt(lb[0], {x:x(i), y:y(p.v) + lb[2], fill:lb[1],
+        'font-size':FS.an, 'font-weight':'600', 'text-anchor':'middle',
+        'font-family':'var(--mono)', 'letter-spacing':'.05em'}));
+  });
+  /* the whisker carries the caveat; the caption says it in words. An in-chart
+     label here collides with either the banner above or the series below. */
+
+  /* the headline delta, drawn rather than asserted */
+  if (!teaser && !n){
+    const xB = x(5) + 26, yP = y(14), yL = y(11.85);
+    svg.appendChild(el('path', {d:`M ${xB - 7} ${yP} H ${xB} V ${yL} H ${xB - 7}`,
+      fill:'none', stroke:C.mute, 'stroke-width':'1'}));
+    svg.appendChild(txt('−2.15M', {x:xB + 9, y:(yP + yL) / 2 - 4, fill:C.ink,
+      'font-size':'13', 'font-family':'var(--mono)', 'font-weight':'500'}));
+    svg.appendChild(txt('−15.4%', {x:xB + 9, y:(yP + yL) / 2 + 12, fill:C.mute,
+      'font-size':'11.5', 'font-family':'var(--mono)'}));
+  }
+
+  const cross = el('line', {y1:P.t - 20, y2:H - P.b, stroke:'rgba(255,255,255,.34)',
+    'stroke-dasharray':'3 4', opacity:'0'});
+  const dot = el('circle', {r:6, fill:C.lime, stroke:C.bg, 'stroke-width':'2', opacity:'0'});
+  svg.append(cross, dot);
+  host.appendChild(svg);
+
+  const tip = document.createElement('div');
+  tip.className = 'tip'; tip.setAttribute('role', 'status'); host.appendChild(tip);
+
+  let cur = -1;
+  const show = i => {
+    cur = i; const p = shown[i], X = x(i), Y = y(p.v);
+    cross.setAttribute('x1', X); cross.setAttribute('x2', X); cross.setAttribute('opacity', 1);
+    dot.setAttribute('cx', X); dot.setAttribute('cy', Y); dot.setAttribute('opacity', 1);
+    tip.innerHTML = `<b>${p.v.toFixed(2)}M</b> · ${p.d}<br><span>${p.note} · src ${p.src}</span>`;
+    const r = svg.getBoundingClientRect(), h = host.getBoundingClientRect();
+    tip.style.left = (r.left - h.left + X / W * r.width) + 'px';
+    tip.style.top  = (r.top  - h.top  + Y / H * r.height) + 'px';
+    tip.classList.add('on');
+  };
+  const hide = () => { cur = -1; tip.classList.remove('on');
+    cross.setAttribute('opacity', 0); dot.setAttribute('opacity', 0); };
+  const nearest = e => {
+    const r = svg.getBoundingClientRect(), mx = (e.clientX - r.left) / r.width * W;
+    let b = 0, bd = 1e9;
+    shown.forEach((_, i) => { const dd = Math.abs(x(i) - mx); if (dd < bd){ bd = dd; b = i; } });
+    show(b);
+  };
+  svg.addEventListener('pointermove', nearest);
+  svg.addEventListener('pointerdown', nearest);
+  svg.addEventListener('pointerleave', hide);
+  svg.addEventListener('blur', hide);
+  svg.addEventListener('keydown', e => {
+    const k = e.key;
+    if (k === 'ArrowRight' || k === 'ArrowLeft'){ e.preventDefault();
+      show(cur < 0 ? 0 : Math.min(shown.length - 1, Math.max(0, cur + (k === 'ArrowRight' ? 1 : -1)))); }
+    else if (k === 'Home'){ e.preventDefault(); show(0); }
+    else if (k === 'End'){ e.preventDefault(); show(shown.length - 1); }
+    else if (k === 'Escape'){ hide(); }
+  });
+
+  srTable(host, teaser
+    ? 'PSA active grading backlog to the mid-June peak'
+    : 'PSA active grading backlog, June to August 2026',
+    ['Reading', 'Date', 'Cards in queue', 'Note', 'Source'],
+    shown.map(p => [p.d, p.fuzzy ? p.iso + ' (assumed; date not published)' : p.iso,
+      p.v.toFixed(2) + ' million', p.note, p.src]));
+
+  if (!RM.matches){
+    const L = line.getTotalLength();
+    line.style.strokeDasharray = L; line.style.strokeDashoffset = L;
+    requestAnimationFrame(() => {
+      line.style.transition = 'stroke-dashoffset 1.4s cubic-bezier(.33,0,.1,1) .15s';
+      line.style.strokeDashoffset = 0;
+    });
+  }
+}
+
+/* ============================================================================
+   2. Waterfall, 14.0 → 11.85. The one derivation in the record that closes
+   exactly, which is why it is worth drawing.
+   ========================================================================= */
+const STEPS = [
+  {l:'Peak',   v:14.00, anchor:true},
+  {l:'Jun 30', d:-2.00}, {l:'Jul 14', d:-1.00},
+  {l:'Jul 28', d:+1.40}, {l:'Aug 11', d:-0.55},
+  {l:'Latest', v:11.85, anchor:true}
+];
+
+function waterfallChart(host){
+  clear(host);
+  const n = compact(host);
+  const W = n ? 440 : 620, H = n ? 300 : 340;
+  const P = {t:48, r:14, b:58, l:42}, MAX = 15;
+  const bw = (W - P.l - P.r) / STEPS.length;
+  const y = v => P.t + (1 - v / MAX) * (H - P.t - P.b);
+  const FS = n ? 10 : 11;
+
+  const svg = el('svg', {viewBox:`0 0 ${W} ${H}`, role:'img',
+    'aria-label':'Waterfall from the 14.0 million mid-June peak to 11.85 million on 11 August: ' +
+      'down 2.00, down 1.00, up 1.40, down 0.55. The steps sum to minus 2.15 million exactly.'});
+  svg.appendChild(el('line', {x1:P.l, y1:y(0), x2:W - P.r, y2:y(0), stroke:C.hair}));
+
+  let run = 0;
+  STEPS.forEach((s, i) => {
+    const x0 = P.l + i * bw + bw * .18, w = bw * .64;
+    if (s.anchor){
+      run = s.v;
+      svg.appendChild(el('rect', {x:x0, y:y(s.v), width:w, height:y(0) - y(s.v), rx:'3',
+        fill:'rgba(244,245,242,.15)', stroke:'rgba(244,245,242,.32)'}));
+      svg.appendChild(txt(s.v.toFixed(2), {x:x0 + w / 2, y:y(s.v) - 10, fill:C.ink,
+        'font-size':n ? '13' : '14', 'text-anchor':'middle',
+        'font-family':'var(--disp)', 'font-weight':'600'}));
+    } else {
+      const from = run, to = run + s.d; run = to;
+      const top = y(Math.max(from, to)), bot = y(Math.min(from, to)), up = s.d > 0;
+      svg.appendChild(el('rect', {x:x0, y:top, width:w, height:Math.max(2, bot - top), rx:'2',
+        fill:up ? C.intake : C.lime, 'fill-opacity':up ? '.92' : '.72'}));
+      svg.appendChild(txt((up ? '+' : '') + s.d.toFixed(2),
+        {x:x0 + w / 2, y:up ? top - 8 : bot + 15, fill:up ? C.warn : C.lime,
+         'font-size':'12', 'text-anchor':'middle', 'font-family':'var(--mono)', 'font-weight':'500'}));
+      svg.appendChild(el('line', {x1:x0 + w, y1:y(to), x2:x0 + bw, y2:y(to),
+        stroke:C.hair2, 'stroke-dasharray':'2 3'}));
+    }
+    svg.appendChild(txt(s.l.toUpperCase(), {x:x0 + w / 2, y:H - 32, fill:C.mute,
+      'font-size':FS, 'text-anchor':'middle', 'font-family':'var(--mono)'}));
+  });
+
+  svg.appendChild(txt(n ? 'Σ = −2.15M · CLOSES EXACTLY'
+      : 'Σ = −2.15M · THE ONLY DERIVATION HERE THAT CLOSES EXACTLY',
+    {x:P.l, y:H - 12, fill:C.faint, 'font-size':FS, 'font-family':'var(--mono)',
+     'letter-spacing':'.08em'}));
+
+  host.appendChild(svg);
+  srTable(host, 'Backlog waterfall from the mid-June peak to 11 August',
+    ['Step', 'Change', 'Level after'],
+    [['Mid-June peak', '—', '14.00 million'],
+     ['to 30 June', '−2.00 million', '12.00 million'],
+     ['to 14 July', '−1.00 million', '11.00 million'],
+     ['to 28 July', '+1.40 million', '12.40 million'],
+     ['to 11 August', '−0.55 million', '11.85 million'],
+     ['Net', '−2.15 million, or −15.4 per cent', '11.85 million']]);
+}
+
+/* ============================================================================
+   3. Monthly output. The empty July-2025 slot is the point: there is exactly
+   one year-over-year pair in the record, and inventing a second would be
+   the easiest lie on the page.
+   ========================================================================= */
+const OUT = [
+  {d:'Jun 2025', v:1.44, kind:'derived', note:'implied by the +74% year-over-year figure: 2.50 ÷ 1.74'},
+  {d:'Jul 2025', v:null, kind:'none',    note:'not published — no July year-over-year pair exists'},
+  {d:'May 2026', v:2.07, kind:'derived', note:'implied by the +21% month-over-month figure: 2.50 ÷ 1.21'},
+  {d:'Jun 2026', v:2.50, kind:'sourced', note:'reported record [7]'},
+  {d:'Jul 2026', v:2.75, kind:'floor',   note:'floor only: reported as more than 10% above June [2]'}
+];
+
+function outputChart(host){
+  clear(host);
+  const n = compact(host);
+  const W = n ? 460 : 900, H = n ? 320 : 340;
+  const P = {t:62, r:14, b:58, l:38}, MAX = 3.2;
+  const bw = (W - P.l - P.r) / OUT.length;
+  const y = v => P.t + (1 - v / MAX) * (H - P.t - P.b);
+
+  const svg = el('svg', {viewBox:`0 0 ${W} ${H}`, role:'img',
+    'aria-label':'Monthly cards graded. June 2025 about 1.44 million, derived. July 2025 not ' +
+      'published. May 2026 about 2.07 million, derived. June 2026 2.50 million, reported. ' +
+      'July 2026 at least 2.75 million, a floor rather than a value.'});
+  hatchDef(svg, 'h-out', C.output);
+  svg.appendChild(el('line', {x1:P.l, y1:y(0), x2:W - P.r, y2:y(0), stroke:C.hair}));
+
+  OUT.forEach((o, i) => {
+    const x0 = P.l + i * bw + bw * .19, w = bw * .62;
+    if (o.kind === 'none'){
+      svg.appendChild(el('rect', {x:x0, y:y(1.25), width:w, height:y(0) - y(1.25), rx:'3',
+        fill:'none', stroke:C.faint, 'stroke-dasharray':'3 4'}));
+      svg.appendChild(txt('NOT', {x:x0 + w / 2, y:y(0.78), fill:C.faint, 'font-size':'10',
+        'text-anchor':'middle', 'font-family':'var(--mono)', 'letter-spacing':'.1em'}));
+      svg.appendChild(txt('PUBLISHED', {x:x0 + w / 2, y:y(0.78) + 13, fill:C.faint,
+        'font-size':'10', 'text-anchor':'middle', 'font-family':'var(--mono)', 'letter-spacing':'.1em'}));
+    } else {
+      const solid = o.kind === 'sourced';
+      svg.appendChild(el('rect', {x:x0, y:y(o.v), width:w, height:y(0) - y(o.v), rx:'3',
+        fill:solid ? C.output : 'url(#h-out)', stroke:solid ? 'none' : C.output,
+        'stroke-width':solid ? 0 : 1.2, 'stroke-opacity':solid ? 1 : .7}));
+      if (o.kind === 'floor')                        /* open top: a bound, not a value */
+        svg.appendChild(el('path', {d:`M ${x0} ${y(o.v)} l ${w / 2} -9 l ${w / 2} 9`,
+          fill:'none', stroke:C.output, 'stroke-width':'1.6'}));
+      svg.appendChild(txt((o.kind === 'floor' ? '≥' : o.kind === 'derived' ? '~' : '') +
+        o.v.toFixed(2) + 'M',
+        {x:x0 + w / 2, y:y(o.v) - (o.kind === 'floor' ? 18 : 11), fill:C.ink,
+         'font-size':n ? '13' : '15', 'text-anchor':'middle',
+         'font-family':'var(--disp)', 'font-weight':'600'}));
+    }
+    svg.appendChild(txt(o.d.toUpperCase(), {x:x0 + w / 2, y:H - 34, fill:C.mute,
+      'font-size':n ? '10' : '11', 'text-anchor':'middle', 'font-family':'var(--mono)'}));
+    svg.appendChild(txt({sourced:'REPORTED', derived:'DERIVED', floor:'FLOOR', none:'NO DATA'}[o.kind],
+      {x:x0 + w / 2, y:H - 18, fill:o.kind === 'sourced' ? C.mute : C.faint,
+       'font-size':'9.5', 'text-anchor':'middle', 'font-family':'var(--mono)', 'letter-spacing':'.1em'}));
+  });
+
+  /* the one legitimate year-over-year pair in the record */
+  const xa = P.l + bw * .5, xb = P.l + 3 * bw + bw * .5;
+  svg.appendChild(el('path', {d:`M ${xa} ${P.t - 22} V ${P.t - 32} H ${xb} V ${P.t - 22}`,
+    fill:'none', stroke:C.mute, 'stroke-width':'1'}));
+  svg.appendChild(txt('+74% YEAR ON YEAR · +1.06M CARDS', {x:(xa + xb) / 2, y:P.t - 40,
+    fill:C.body, 'font-size':n ? '10' : '11.5', 'text-anchor':'middle',
+    'font-family':'var(--mono)', 'letter-spacing':'.07em'}));
+
+  host.appendChild(svg);
+  srTable(host, 'Monthly cards graded, with the basis of each figure',
+    ['Month', 'Cards graded', 'Basis'],
+    OUT.map(o => [o.d, o.v == null ? 'not published'
+      : (o.kind === 'floor' ? 'at least ' : o.kind === 'derived' ? 'about ' : '') +
+        o.v.toFixed(2) + ' million', o.note]));
+}
+
+/* ============================================================================
+   4. Months of cover — the queue divided by the last completed month of
+   output. The queue fell 15%; the time to clear it fell 36%.
+   ========================================================================= */
+function coverChart(host){
+  clear(host);
+  const n = compact(host);
+  const W = n ? 440 : 620, H = 216;
+  const P = {l:56, r:56}, MAX = 8;
+  const x = v => P.l + (v / MAX) * (W - P.l - P.r);
+  const yb = 84, A = 6.78, B = 4.31;
+
+  const svg = el('svg', {viewBox:`0 0 ${W} ${H}`, role:'img',
+    'aria-label':'Months of cover, the queue divided by the last completed month of output, ' +
+      'fell from about 6.78 months at the mid-June peak to at most 4.31 months on 11 August — ' +
+      'a reduction of about 36 per cent.'});
+
+  for (let g = 0; g <= MAX; g += 2){
+    svg.appendChild(el('line', {x1:x(g), y1:yb - 30, x2:x(g), y2:yb + 74,
+      stroke:g === 0 ? C.hair : C.hair2}));
+    svg.appendChild(txt(g + ' mo', {x:x(g), y:yb + 94, fill:C.faint, 'font-size':'10.5',
+      'text-anchor':'middle', 'font-family':'var(--mono)'}));
+  }
+  svg.appendChild(el('line', {x1:x(B), y1:yb, x2:x(A), y2:yb, stroke:C.lime, 'stroke-width':'4'}));
+  svg.appendChild(el('circle', {cx:x(A), cy:yb, r:'8', fill:C.bg, stroke:C.mute, 'stroke-width':'2'}));
+  svg.appendChild(el('circle', {cx:x(B), cy:yb, r:'8', fill:C.lime, stroke:C.bg, 'stroke-width':'2'}));
+
+  const pin = (v, label, sub, up, col) => {
+    const yy = up ? yb - 24 : yb + 32;
+    svg.appendChild(txt(label, {x:x(v), y:yy, fill:col, 'font-size':n ? '15' : '17',
+      'text-anchor':'middle', 'font-family':'var(--disp)', 'font-weight':'600'}));
+    svg.appendChild(txt(sub, {x:x(v), y:yy + (up ? -15 : 15), fill:C.mute, 'font-size':'9.5',
+      'text-anchor':'middle', 'font-family':'var(--mono)', 'letter-spacing':'.07em'}));
+  };
+  pin(A, '6.78 mo', 'AT THE PEAK · 14.00 ÷ 2.07', true, C.body);
+  pin(B, '≤4.31 mo', 'AT AUG 11 · 11.85 ÷ 2.75', false, C.ink);
+  svg.appendChild(txt('−36%', {x:(x(A) + x(B)) / 2, y:yb - 14, fill:C.lime, 'font-size':'12.5',
+    'text-anchor':'middle', 'font-family':'var(--mono)', 'font-weight':'500'}));
+
+  host.appendChild(svg);
+  srTable(host, 'Months of cover at the last completed month of output',
+    ['State', 'Queue', 'Divided by', 'Months of cover'],
+    [['Mid-June peak', '14.00 million', 'May 2026 output, about 2.07 million (derived)', 'about 6.78 months'],
+     ['11 August', '11.85 million', 'July 2026 output, at least 2.75 million (a floor)', 'at most 4.31 months'],
+     ['Change', 'queue × 0.85', 'monthly output × 1.33', 'about −36 per cent']]);
+}
+
+/* ============================================================================
+   5. The rebound fortnight. Both bars are bounds, and the chart says so.
+   ========================================================================= */
+function fortnightChart(host){
+  clear(host);
+  const n = compact(host);
+  const W = n ? 460 : 780, H = n ? 230 : 220;
+  const P = {t:16, r:n ? 82 : 130, l:n ? 104 : 168}, MAX = 2.95;
+  const bh = n ? 36 : 46, gap = n ? 18 : 24;
+  const x = v => P.l + (v / MAX) * (W - P.l - P.r);
+
+  const svg = el('svg', {viewBox:`0 0 ${W} ${H}`, role:'img',
+    'aria-label':'Between 14 and 28 July 2026 the queue rose 1.40 million while cards were being ' +
+      'graded at a record rate, so at least 2.64 million cards arrived against at least 1.24 ' +
+      'million graded — about 2.1 in for every 1 out at the published July floor.'});
+  hatchDef(svg, 'h-in', C.intake);
+  const d2 = el('defs');
+  const p2 = el('pattern', {id:'h-outb', width:'7', height:'7',
+    patternUnits:'userSpaceOnUse', patternTransform:'rotate(45)'});
+  p2.appendChild(el('line', {x1:'0', y1:'0', x2:'0', y2:'7', stroke:C.output,
+    'stroke-width':'2.4', 'stroke-opacity':'.55'}));
+  d2.appendChild(p2); svg.appendChild(d2);
+
+  [{k:'Cards arriving', v:2.64, c:C.intake, p:'url(#h-in)'},
+   {k:'Cards graded',   v:1.24, c:C.output, p:'url(#h-outb)'}].forEach((f, i) => {
+    const yv = P.t + i * (bh + gap);
+    svg.appendChild(txt(f.k, {x:P.l - 14, y:yv + bh / 2 + 5, fill:C.body,
+      'font-size':n ? '12.5' : '14', 'text-anchor':'end', 'font-family':'var(--sans)'}));
+    svg.appendChild(el('rect', {x:P.l, y:yv, width:Math.max(2, x(f.v) - P.l), height:bh, rx:'3',
+      fill:f.p, stroke:f.c, 'stroke-width':'1.2', 'stroke-opacity':'.75'}));
+    svg.appendChild(el('path', {d:`M ${x(f.v)} ${yv} l 9 ${bh / 2} l -9 ${bh / 2}`,
+      fill:'none', stroke:f.c, 'stroke-width':'1.6'}));   /* open end: a floor */
+    svg.appendChild(txt('≥' + f.v.toFixed(2) + 'M', {x:x(f.v) + 16, y:yv + bh / 2 + 6, fill:C.ink,
+      'font-size':n ? '15' : '18', 'font-family':'var(--disp)', 'font-weight':'600'}));
+  });
+
+  const lx = 14, yr = P.t + 2 * (bh + gap) + 2;
+  svg.appendChild(el('line', {x1:lx, y1:yr, x2:W - 14, y2:yr, stroke:C.hair2}));
+  svg.appendChild(txt('≈ 2.1 IN FOR EVERY 1 OUT, AT THE PUBLISHED JULY FLOOR',
+    {x:lx, y:yr + 22, fill:C.ink, 'font-size':n ? '10' : '12',
+     'font-family':'var(--mono)', 'letter-spacing':'.06em'}));
+  svg.appendChild(txt('BOTH BARS ARE LOWER BOUNDS — JULY OUTPUT IS REPORTED AS A MINIMUM',
+    {x:lx, y:yr + 40, fill:C.faint, 'font-size':n ? '9' : '10.5',
+     'font-family':'var(--mono)', 'letter-spacing':'.06em'}));
+
+  host.appendChild(svg);
+  srTable(host, 'Implied arrivals against output, 14 to 28 July 2026',
+    ['Measure', 'Cards', 'How it is derived'],
+    [['Cards arriving', 'at least 2.64 million', 'the queue rose 1.40M plus at least 1.24M graded'],
+     ['Cards graded', 'at least 1.24 million', 'the July floor of 2.75M spread across 31 days, times 14'],
+     ['Ratio', 'about 2.1 to 1', 'at the published July floor; a higher July output lowers the ratio']]);
+}
+
+/* ============================================================================
+   6. The card field — 1,400 marks at the mid-June peak, one per 10,000 cards.
+   The 215 lime marks are the 2.15M cleared by 11 August. Two paths, not
+   1,400 nodes.
+   ========================================================================= */
+function cardField(host){
+  clear(host);
+  const COLS = 50, ROWS = 28, CW = 4, CH = 6, GX = 6, GY = 8, CLEARED = 215;
+  const W = COLS * GX - (GX - CW), H = ROWS * GY - (GY - CH);
+  let a = '', b = '';
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++){
+      const i = r * COLS + c, seg = `M${c * GX} ${r * GY}h${CW}v${CH}h${-CW}z`;
+      if (i < CLEARED) a += seg; else b += seg;
+    }
+  const svg = el('svg', {viewBox:`0 0 ${W} ${H}`, 'aria-hidden':'true',
+    preserveAspectRatio:'xMidYMid meet'});
+  svg.appendChild(el('path', {d:b, fill:'rgba(244,245,242,.17)'}));
+  svg.appendChild(el('path', {d:a, fill:C.lime, 'fill-opacity':'.9'}));
+  host.appendChild(svg);
+}
+
+/* ============================================================================
+   7. Where the flow caps. The constraint is drawn narrow because that is
+   the finding, and the held volume sits outside the counted queue.
+   ========================================================================= */
+function flowDiagram(host){
+  clear(host);
+  const W = 900, H = 280;
+  const svg = el('svg', {viewBox:`0 0 ${W} ${H}`, role:'img',
+    'aria-label':'A pipeline diagram. Submissions enter the counted queue of 11.85 million cards. ' +
+      'Flow then passes through a narrow binding constraint before reaching graded output and ' +
+      'release. Held volume from the paused tiers sits outside the counted queue entirely, so it ' +
+      'never appears in the published number.'});
+  const defs = el('defs');
+  const g = el('linearGradient', {id:'flow', x1:'0', x2:'1'});
+  [['0%', C.intake, '.6'], ['50%', C.intake, '.26'],
+   ['60%', C.output, '.28'], ['100%', C.output, '.6']]
+    .forEach(([o, c, op]) => g.appendChild(el('stop', {offset:o, 'stop-color':c, 'stop-opacity':op})));
+  defs.appendChild(g); svg.appendChild(defs);
+
+  const my = 118, wide = 46, thin = 13;
+  svg.appendChild(el('path', {fill:'url(#flow)', d:
+    `M 40 ${my - wide} C 300 ${my - wide}, 380 ${my - thin}, 452 ${my - thin}
+     L 500 ${my - thin} C 570 ${my - thin}, 620 ${my - 26}, 858 ${my - 26}
+     L 858 ${my + 26} C 620 ${my + 26}, 570 ${my + thin}, 500 ${my + thin}
+     L 452 ${my + thin} C 380 ${my + thin}, 300 ${my + wide}, 40 ${my + wide} Z`}));
+
+  svg.appendChild(el('rect', {x:452, y:my - 54, width:48, height:108, rx:'4',
+    fill:'rgba(11,13,10,.92)', stroke:C.lime, 'stroke-width':'1.5'}));
+  for (let i = -1; i <= 1; i++)
+    svg.appendChild(el('line', {x1:462, y1:my + i * 12, x2:490, y2:my + i * 12,
+      stroke:C.lime, 'stroke-width':'1.5', 'stroke-opacity':'.6'}));
+
+  const cap = (x, y, t, s, col, an) => {
+    svg.appendChild(txt(t, {x, y, fill:col || C.ink, 'font-size':'14',
+      'text-anchor':an || 'middle', 'font-family':'var(--disp)', 'font-weight':'600'}));
+    if (s) svg.appendChild(txt(s, {x, y:y + 17, fill:C.mute, 'font-size':'10.5',
+      'text-anchor':an || 'middle', 'font-family':'var(--mono)', 'letter-spacing':'.08em'}));
+  };
+  cap(40,  42,  'Submissions in',    '≈2.1 IN PER 1 OUT AT THE REBOUND', C.ink, 'start');
+  cap(250, 210, 'The counted queue', '11.85M CARDS · AUG 11');
+  cap(476, 38,  'The constraint',    'WHERE THE RATE IS SET', C.lime);
+  cap(690, 210, 'Graded output',     '≥2.75M IN JULY');
+  cap(858, 42,  'Released',          'BACK TO SUBMITTERS', C.ink, 'end');
+
+  /* the volume that never enters the number */
+  svg.appendChild(el('rect', {x:96, y:my + 78, width:236, height:46, rx:'4',
+    fill:'none', stroke:C.intake, 'stroke-dasharray':'4 4'}));
+  svg.appendChild(txt('HELD VOLUME — PAUSED TIERS', {x:214, y:my + 100, fill:C.intake,
+    'font-size':'11', 'text-anchor':'middle', 'font-family':'var(--mono)', 'letter-spacing':'.08em'}));
+  svg.appendChild(txt('NEVER ENTERS THE COUNT', {x:214, y:my + 116, fill:C.faint,
+    'font-size':'10', 'text-anchor':'middle', 'font-family':'var(--mono)', 'letter-spacing':'.08em'}));
+  svg.appendChild(el('path', {d:`M 214 ${my + 78} V ${my + 54}`, stroke:C.intake,
+    'stroke-width':'1.2', 'stroke-dasharray':'3 4'}));
+
+  host.appendChild(svg);
+}
+
+/* ============================================================================
+   8. The weekly operating loop.
+   ========================================================================= */
+const SIGNALS = [
+  {n:'Backlog level',       q:'How large is the queue?',      a:'Recovery review'},
+  {n:'Velocity',            q:'Burning faster than intake?',  a:'Escalate the constraint'},
+  {n:'Aging',               q:'Is old inventory piling up?',  a:'Targeted action'},
+  {n:'Held volume',         q:'Is the recovery sustainable?', a:'Root-cause review'},
+  {n:'Constraint capacity', q:'Where is throughput capped?',  a:'Resource intervention'}
+];
+
+function loopTable(host){
+  srTable(host, 'The five weekly signals and their defined responses',
+    ['Signal', 'Question it answers', 'Response when the threshold is breached'],
+    SIGNALS.map(s => [s.n, s.q, s.a]));
+}
+
+function governanceLoop(host){
+  clear(host);
+  if (NARROW.matches){                      /* a ring is unreadable at 390px */
+    const ol = document.createElement('ol');
+    ol.className = 'siglist';
+    ol.innerHTML = SIGNALS.map((s, i) => `<li><span class="n">${i + 1}</span><span>` +
+      `<b>${s.n}</b><em>${s.q}</em><span class="act">→ ${s.a}</span></span></li>`).join('');
+    host.appendChild(ol);
+    loopTable(host);
+    return;
+  }
+  const W = 820, H = 430, cx = 410, cy = 212, R = 128;
+  const svg = el('svg', {viewBox:`0 0 ${W} ${H}`, role:'img',
+    'aria-label':'A five-signal weekly loop. Backlog level, velocity, aging, held volume and ' +
+      'constraint capacity are each measured, compared with a threshold, mapped to a defined ' +
+      'response, and re-measured the following week.'});
+  svg.appendChild(el('circle', {cx, cy, r:R, fill:'none', stroke:C.hair, 'stroke-dasharray':'2 6'}));
+  svg.appendChild(txt('Measure → compare', {x:cx, y:cy - 6, fill:C.ink, 'font-size':'15',
+    'text-anchor':'middle', 'font-family':'var(--disp)', 'font-weight':'600'}));
+  svg.appendChild(txt('with threshold → act', {x:cx, y:cy + 14, fill:C.ink, 'font-size':'15',
+    'text-anchor':'middle', 'font-family':'var(--disp)', 'font-weight':'600'}));
+  svg.appendChild(txt('EVERY WEEK', {x:cx, y:cy + 36, fill:C.lime, 'font-size':'10.5',
+    'text-anchor':'middle', 'font-family':'var(--mono)', 'letter-spacing':'.14em'}));
+
+  SIGNALS.forEach((s, i) => {
+    const ang = -Math.PI / 2 + (i / SIGNALS.length) * Math.PI * 2;
+    const px = cx + Math.cos(ang) * R, py = cy + Math.sin(ang) * R;
+    const right = Math.cos(ang) > .05, left = Math.cos(ang) < -.05;
+    const an = right ? 'start' : left ? 'end' : 'middle';
+    const ox = right ? 22 : left ? -22 : 0;
+    const oy = Math.sin(ang) < -.6 ? -32 : Math.sin(ang) > .6 ? 30 : -8;
+    svg.appendChild(el('circle', {cx:px, cy:py, r:'7', fill:C.bg, stroke:C.lime, 'stroke-width':'2'}));
+    svg.appendChild(txt(i + 1, {x:px, y:py + 3.5, fill:C.lime, 'font-size':'9',
+      'text-anchor':'middle', 'font-family':'var(--mono)'}));
+    svg.appendChild(txt(s.n, {x:px + ox, y:py + oy, fill:C.ink, 'font-size':'14.5',
+      'text-anchor':an, 'font-family':'var(--disp)', 'font-weight':'600'}));
+    svg.appendChild(txt(s.q, {x:px + ox, y:py + oy + 17, fill:C.mute, 'font-size':'12',
+      'text-anchor':an, 'font-family':'var(--sans)'}));
+    svg.appendChild(txt('→ ' + s.a.toUpperCase(), {x:px + ox, y:py + oy + 33, fill:C.lime,
+      'font-size':'10', 'text-anchor':an, 'font-family':'var(--mono)', 'letter-spacing':'.09em'}));
+  });
+  host.appendChild(svg);
+  loopTable(host);
+}
+
+/* ============================================================================
+   9. Page behaviour.
+   ========================================================================= */
+/* The markup already carries the final value, so this only ever animates up to
+   what is already on screen — a reader with JS off or motion suppressed sees the
+   number, never a placeholder zero. */
+function runCount(node){
+  if (node.dataset.done || RM.matches) return; node.dataset.done = '1';
+  const to = +node.dataset.to, dec = +(node.dataset.dec || 0);
+  const t0 = performance.now(), dur = 1000;
+  (function tick(t){
+    const p = Math.min((t - t0) / dur, 1), e = 1 - Math.pow(1 - p, 3);
+    node.textContent = (to * e).toFixed(dec);
+    if (p < 1) requestAnimationFrame(tick);
+  })(t0);
+}
+
+const FIGURES = [
+  ['cardfield',     cardField],
+  ['fig-climb',     h => backlogChart(h, {through:1, teaser:true})],
+  ['fig-flow',      flowDiagram],
+  ['fig-loop',      governanceLoop],
+  ['fig-backlog',   h => backlogChart(h)],
+  ['fig-waterfall', waterfallChart],
+  ['fig-fortnight', fortnightChart],
+  ['fig-output',    outputChart],
+  ['fig-cover',     coverChart]
+];
+const drawAll = () => FIGURES.forEach(([id, fn]) => {
+  const h = document.getElementById(id); if (h) fn(h);
+});
+
+function boot(){
+  drawAll();
+
+  /* charts switch geometry rather than just scaling, so redraw across the break */
+  let wasNarrow = NARROW.matches, wasSplit = matchMedia('(max-width: 1180px)').matches, t;
+  addEventListener('resize', () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      const SPLIT = matchMedia('(max-width: 1180px)').matches;
+      if (NARROW.matches !== wasNarrow || SPLIT !== wasSplit){
+        wasNarrow = NARROW.matches; wasSplit = SPLIT; drawAll();
+      }
+    }, 200);
+  }, {passive:true});
+
+  const reveal = new IntersectionObserver(es => {
+    for (const e of es) if (e.isIntersecting){
+      e.target.classList.add('in');
+      e.target.querySelectorAll('.count').forEach(runCount);
+      reveal.unobserve(e.target);
+    }
+  }, {threshold:.1, rootMargin:'0px 0px -5% 0px'});
+  document.querySelectorAll('.rv:not(.in)').forEach(nd => reveal.observe(nd));
+  document.querySelectorAll('.rv.in .count').forEach(runCount);
+
+  /* rail state: whichever section owns the most viewport */
+  const links = [...document.querySelectorAll('.rail nav a')];
+  const byId = new Map(links.map(a => [a.getAttribute('href').slice(1), a]));
+  const ratio = new Map();
+  const spy = new IntersectionObserver(es => {
+    for (const e of es) ratio.set(e.target.id, e.intersectionRatio);
+    let best = null, bv = 0;
+    for (const [id, v] of ratio) if (v > bv){ bv = v; best = id; }
+    links.forEach(a => a.removeAttribute('aria-current'));
+    if (best && byId.has(best)) byId.get(best).setAttribute('aria-current', 'true');
+  }, {threshold:[0, .1, .25, .5, .75, 1], rootMargin:'-8% 0px -40% 0px'});
+  byId.forEach((_, id) => { const s = document.getElementById(id); if (s) spy.observe(s); });
+
+  const bar = document.getElementById('prog');
+  let queued = false;
+  addEventListener('scroll', () => {
+    if (queued) return; queued = true;
+    requestAnimationFrame(() => {
+      const h = document.documentElement;
+      bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + '%';
+      queued = false;
+    });
+  }, {passive:true});
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+else boot();
+
+</script>
+</body>
+</html>
